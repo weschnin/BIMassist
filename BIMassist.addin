@@ -1,0 +1,12 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<RevitAddIns>
+	  <AddIn Type="Application">
+		    <Name>BIMassist</Name>
+		    <Assembly>BIMassist.dll</Assembly>
+		    <FullClassName>BIMassist.App</FullClassName>
+		    <AddInId>982CDD72-3A22-4905-B1CC-CD8C4F0560B8</AddInId>
+		    <VendorId>weschnin@gmail.com</VendorId>
+		    <VendorDescription>weschnin@gmail.com</VendorDescription>
+		    <VendorEmail>weschnin@gmail.com</VendorEmail>
+	  </AddIn>
+</RevitAddIns>
