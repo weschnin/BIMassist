@@ -5,7 +5,6 @@ using System.IO;
 using System.Windows;
 using System.Drawing;
 using System.Runtime.InteropServices;
-
 using System.Reflection;
 using System.Windows.Media.Imaging;
 using System.Windows.Media;
@@ -32,12 +31,12 @@ namespace BIMassist
             try
             {
 
-                btnData = new PushButtonData("BGK-Manager", "BGK-Manager", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.TestCommand")
+                btnData = new PushButtonData("Test", "Test", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.Test_Command")
                 {
-                    ToolTip = "Organisation der Baugruppenkennzeichen",
-                    LongDescription = "Organisation der Baugruppenkennzeichen",
-                    Image = GetImageSource(Resource.add_32px),
-                    //LargeImage = GetImageSource(Resources.Label_24px)
+                    ToolTip = "Test",
+                    LongDescription = "Test",
+                    Image = GetImageSource("add_32px.png"), //GetImageSource("Resources.add_32px),
+                    LargeImage = GetImageSource("add_32px.png")
                 };
                 panel.AddItem(btnData);
 
@@ -55,43 +54,25 @@ namespace BIMassist
         }
 
 
-        private ImageSource GetImageSource(System.Drawing.Image img)
+        public static ImageSource GetImageSource(string name)
         {
-            return System.Windows.Interop.Imaging.CreateBitmapSourceFromHBitmap(
-                img.GetHbitmap(),
-                IntPtr.Zero,
-                Int32Rect.Empty,
-                BitmapSizeOptions.FromEmptyOptions());
+            var assembly = Assembly.GetExecutingAssembly();
+            var resourceName = $"BIMassist.Resources.{name}";
+
+            using Stream stream = assembly.GetManifestResourceStream(resourceName);
+
+            if (stream == null)
+                throw new Exception("Ressource nicht gefunden: " + resourceName);
+
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.StreamSource = stream;
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.EndInit();
+            bitmap.Freeze(); // für Revit wichtig
+
+            return bitmap;
         }
-        //private ImageSource GetImageSource(byte[] img)
-        //{
-        //    if (img == null || img.Length == 0)
-        //        throw new ArgumentException("Byte array is null or empty");
-
-        //    using (MemoryStream memoryStream = new MemoryStream(img))
-        //    {
-        //        using (Bitmap bitmap = new Bitmap(memoryStream))
-        //        {
-        //            IntPtr hBitmap = bitmap.GetHbitmap();
-        //            try
-        //            {
-        //                return Imaging.CreateBitmapSourceFromHBitmap(
-        //                    hBitmap,
-        //                    IntPtr.Zero,
-        //                    Int32Rect.Empty,
-        //                    BitmapSizeOptions.FromEmptyOptions());
-        //            }
-        //            finally
-        //            {
-        //                DeleteObject(hBitmap); // Ressourcen freigeben
-        //            }
-        //        }
-        //    }
-        //}
-
-        //[DllImport("gdi32.dll")]
-        //[return: MarshalAs(UnmanagedType.Bool)]
-        //private static extern bool DeleteObject(IntPtr hObject);
     }
 
 }
