@@ -35,8 +35,8 @@ namespace BIMassist
                 {
                     ToolTip = "Test",
                     LongDescription = "Test",
-                    Image = GetImageSource("add_32px.png"), //GetImageSource("Resources.add_32px),
-                    LargeImage = GetImageSource("add_32px.png")
+                    Image = GetImageSource("arrow_16px.png"), //GetImageSource("Resources.add_32px),
+                    LargeImage = GetImageSource("arrow_24px.png")
                 };
                 panel.AddItem(btnData);
 
