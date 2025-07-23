@@ -31,17 +31,46 @@ namespace BIMassist
 
             try
             {
-                               
-                // Materialien Funktionen
+                // Geometrie-Funktionen
 
-                PulldownButtonData PanelgroupData = new PulldownButtonData("Materialien", "Materialien")
+                PulldownButtonData PanelgroupData = new PulldownButtonData("Geometrien", "Geometrien")
+                {
+                    Image = GetImageSource("solid_16px.png"), //GetImageSource("solid_16px),
+                    LargeImage = GetImageSource("solid_24px.png"), //GetImageSource("solid_24px),
+                };
+                PulldownButton pulldownGroup = panel.AddItem(PanelgroupData) as PulldownButton;
+
+                btnData = new PushButtonData("Neue Familie aus gewählten Geometrien erstellen", "Neue Familie aus gewählten Geometrien erstellen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.SolidsToNewFamilyCommand")
+                {
+                    ToolTip = "Neue Familie aus gewählten Geometrien erstellen",
+                    LongDescription = "Neue Familie aus gewählten Geometrien erstellen",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
+                btnData = new PushButtonData("Gewählte Geometrien zu einer Familie hinzufügen", "Gewählte Geometrien zu einer Familie hinzufügen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.SolidsToFamilyCommand")
+                {
+                    ToolTip = "Gewählte Geometrien zu einer Familie hinzufügen",
+                    LongDescription = "Gewählte Geometrien zu einer Familie hinzufügen",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
+                btnData = new PushButtonData("Eine Extrusion an selektierten Fläche erstellen", "Eine Extrusion an selektierten Fläche erstellen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.CreateExtrusionCommand")
+                {
+                    ToolTip = "Eine Extrusion an selektierten Fläche erstellen",
+                    LongDescription = "Eine Extrusion an selektierten Fläche erstellen",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
+                // Materialien-Funktionen
+
+                PanelgroupData = new PulldownButtonData("Materialien", "Materialien")
                 {
                     Image = GetImageSource("decke_16px.png"), //GetImageSource("decke_16px),
                     LargeImage = GetImageSource("decke_24px.png"), //GetImageSource("decke_24px),
                     ToolTip = "Materialien Werkzeuge",
                     LongDescription = "Zusätzliche Materialien Werkzeuge",
                 };
-                PulldownButton pulldownGroup = panel.AddItem(PanelgroupData) as PulldownButton;
+                pulldownGroup = panel.AddItem(PanelgroupData) as PulldownButton;
 
                 btnData = new PushButtonData("Standard - Material bereinigen", "Standard - Material bereinigen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.MaterialBereinigenCommand")
                 {
