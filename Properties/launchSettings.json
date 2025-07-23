@@ -1,6 +1,6 @@
 {
   "profiles": {
-    "Revit20226 BIMassist": {
+    "Revit 20226": {
       "commandName": "Executable",
       "executablePath": "C:\\Program Files\\Autodesk\\Revit 2026\\Revit.exe"
     }

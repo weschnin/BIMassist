@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Reflection;
 using System.Windows.Media.Imaging;
 using System.Windows.Media;
+using System.Resources;
 
 namespace BIMassist
 {
@@ -39,6 +40,29 @@ namespace BIMassist
                     LargeImage = GetImageSource("arrow_24px.png")
                 };
                 panel.AddItem(btnData);
+
+                PulldownButtonData PanelgroupData = new PulldownButtonData("Materialien", "Materialien")
+                {
+                    Image = GetImageSource("decke_16px.png"), //GetImageSource("decke_16px),
+                    LargeImage = GetImageSource("decke_24px.png"), //GetImageSource("decke_24px),
+                    ToolTip = "Materialien Werkzeuge",
+                    LongDescription = "Zusätzliche Materialien Werkzeuge",
+                };
+                PulldownButton pulldownGroup = panel.AddItem(PanelgroupData) as PulldownButton;
+
+                btnData = new PushButtonData("Standard - Material bereinigen", "Standard - Material bereinigen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.MaterialBereinigenCommand")
+                {
+                    ToolTip = "Standard - Material bereinigen",
+                    LongDescription = "Materialbibliothek vom Element \"Standard\" bereinigen",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
+                btnData = new PushButtonData("Nicht verwendete Materialen entfernen", "Nicht verwendete Materialen entfernen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.MaterialDeleteCommand")
+                {
+                    ToolTip = "Nicht verwendete Materialen entfernen",
+                    LongDescription = "Nicht verwendete Materialen entfernen",
+                };
+                pulldownGroup.AddPushButton(btnData);
 
             }
             catch (Exception ex)
