@@ -31,15 +31,8 @@ namespace BIMassist
 
             try
             {
-
-                btnData = new PushButtonData("Test", "Test", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.Test_Command")
-                {
-                    ToolTip = "Test",
-                    LongDescription = "Test",
-                    Image = GetImageSource("arrow_16px.png"), //GetImageSource("Resources.add_32px),
-                    LargeImage = GetImageSource("arrow_24px.png")
-                };
-                panel.AddItem(btnData);
+                               
+                // Materialien Funktionen
 
                 PulldownButtonData PanelgroupData = new PulldownButtonData("Materialien", "Materialien")
                 {
@@ -63,6 +56,28 @@ namespace BIMassist
                     LongDescription = "Nicht verwendete Materialen entfernen",
                 };
                 pulldownGroup.AddPushButton(btnData);
+
+                // Schnittboxfunktionen
+
+                PanelgroupData = new PulldownButtonData("3D Schnittbereich", "3D Schnittbereich")
+                {
+                    ToolTip = "3D Schnittberecih funktionen",
+                    LongDescription = "3D Schnittberecih funktionen",
+                    Image = GetImageSource("3D Box.png"), //GetImageSource(_3D_Box),
+                    LargeImage = GetImageSource("3D Box.png"),  //GetImageSource(_3D_Box),
+                };
+                pulldownGroup = panel.AddItem(PanelgroupData) as PulldownButton;
+
+                btnData = new PushButtonData("Schnittbereich ausrichten", "Schnittbereich ausrichten", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.Ausrichtung3DCommand");
+                pulldownGroup.AddPushButton(btnData);
+
+                btnData = new PushButtonData("Schnittbereich speichern", "Schnittbereich speichern", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.SaveSectionBoxCommand");
+                pulldownGroup.AddPushButton(btnData);
+
+                btnData = new PushButtonData("Schnittbereich wiederherstellen", "Schnittbereich wiederherstellen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.RestoreSectionBoxCommand");
+                pulldownGroup.AddPushButton(btnData);
+
+                panel.AddSeparator();
 
             }
             catch (Exception ex)
