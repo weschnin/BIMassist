@@ -65,8 +65,8 @@ namespace BIMassist
 
                 PanelgroupData = new PulldownButtonData("Materialien", "Materialien")
                 {
-                    Image = GetImageSource("decke_16px.png"), //GetImageSource("decke_16px),
-                    LargeImage = GetImageSource("decke_24px.png"), //GetImageSource("decke_24px),
+                    Image = GetImageSource("material_16px.png"),
+                    LargeImage = GetImageSource("material_32px.png"),
                     ToolTip = "Materialien Werkzeuge",
                     LongDescription = "Zusätzliche Materialien Werkzeuge",
                 };
@@ -79,7 +79,7 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
-                btnData = new PushButtonData("Nicht verwendete Materialen entfernen", "Nicht verwendete Materialen entfernen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.MaterialDeleteCommand")
+                btnData = new PushButtonData("Nicht verwendete Materialen entfernen", "Nicht verwendete Materialen entfernen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.DeleteUnusedMaterialsWpfCommand")
                 {
                     ToolTip = "Nicht verwendete Materialen entfernen",
                     LongDescription = "Nicht verwendete Materialen entfernen",

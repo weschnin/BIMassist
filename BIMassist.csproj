@@ -77,6 +77,8 @@
     <None Remove="Resources\left_32px.png" />
     <None Remove="Resources\LoadDocu_16px.png" />
     <None Remove="Resources\LoadDocu_24px.png" />
+    <None Remove="Resources\material_16px.png" />
+    <None Remove="Resources\material_32px.png" />
     <None Remove="Resources\one_32px.png" />
     <None Remove="Resources\openDoc_32px.png" />
     <None Remove="Resources\PDFDocu.ico" />
@@ -208,6 +210,8 @@
     <EmbeddedResource Include="Resources\left_32px.png" />
     <EmbeddedResource Include="Resources\LoadDocu_16px.png" />
     <EmbeddedResource Include="Resources\LoadDocu_24px.png" />
+    <EmbeddedResource Include="Resources\material_16px.png" />
+    <EmbeddedResource Include="Resources\material_32px.png" />
     <EmbeddedResource Include="Resources\one_32px.png" />
     <EmbeddedResource Include="Resources\openDoc_32px.png" />
     <EmbeddedResource Include="Resources\PDFDocu.ico" />
