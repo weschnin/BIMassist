@@ -1,333 +1,369 @@
 ﻿using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using Microsoft.Win32;
+using System.Windows.Controls;
 
 namespace BIMassist.Core
 {
+    /// <summary>
+    /// Hilfsklasse zur Verarbeitung und Erstellung von Familien-Geometrien in Revit.
+    /// Enthält Methoden zum Auslesen, Umwandeln, Vereinen und Einfügen von 3D-Geometrien in Familien.
+    /// </summary>
     internal static class FamilyGeometryTools
     {
-        internal static IList<Solid> ReadGeometryFromFamily(Document doc, IList<ElementId> solidsElementIds, bool vereinigung)
+        /// <summary>
+        /// Liest die Geometrie-Objekte (Solids) einer Liste von Elementen aus einer Familie aus.
+        /// Optional können die gefundenen Solids zu einem einzigen Solid vereinigt werden.
+        /// </summary>
+        /// <param name="doc">Das aktuelle Revit-Dokument.</param>
+        /// <param name="solidsElementIds">Liste der ElementIds, aus denen Geometrie ausgelesen werden soll.</param>
+        /// <param name="vereinigung">Gibt an, ob die gefundenen Solids vereinigt werden sollen (Union).</param>
+        /// <returns>Liste der ausgelesenen Solids, oder null bei Fehler.</returns>
+        internal static IList<GeometryObject> ReadGeometryFromFamily(Document doc, IList<ElementId> solidsElementIds)
         {
+            // Optionen für die Geometrie-Auslese im aktuellen View
             Options opt = new Options() { View = doc.ActiveView, ComputeReferences = true };
-            IList<Solid> solids = new List<Solid>();
+            List<GeometryObject> geometryObjs = new List<GeometryObject>();
+            int nichtÜbernommeneMeshes = 0;
 
-            foreach (ElementId elementIds in solidsElementIds)
+            foreach (ElementId elementId in solidsElementIds)
             {
-                
-                Element element = doc.GetElement(elementIds);
-                Element elementTyp = doc.GetElement(element.GetTypeId());
+                Element element = doc.GetElement(elementId);
 
-                var l = element.GetMaterialIds(false).ToList();
+                // Geometrieobjekte (Solids & Meshes) des Elements auslesen
+                var geometryObjects = GetAllGeometryObjects(element, opt);
 
-                var lst = GetAllGeometryObjects(element, opt);
-
-                foreach (var geomObject in lst)
+                foreach (var geomObject in geometryObjects)
                 {
-                    if (geomObject is Solid s)
-                        if (s.Volume > 0)
-                            solids.Add(s);
-
-                    if (geomObject is Mesh mesh)
+                    // Direktes Hinzufügen von Solids mit Volumen > 0
+                    if (geomObject is Solid s && s.Volume > 0)
                     {
-                        TessellatedShapeBuilder builder = new TessellatedShapeBuilder();
-                        builder.OpenConnectedFaceSet(false);
-                        List<XYZ> args = new List<XYZ>(3);
+                        geometryObjs.Add(s);
+                    }
+                    // Umwandlung von Mesh zu Solid via TessellatedShapeBuilder
+                    else if (geomObject is Mesh mesh)
+                    {
+                        bool solidErzeugt = false;
 
-                        for (int i = 0; i < mesh.NumTriangles; i++)
-                        {
-                            MeshTriangle triangle = mesh.get_Triangle(i);
-
-                            args.Clear();
-                            args.Add(triangle.get_Vertex(0));
-                            args.Add(triangle.get_Vertex(1));
-                            args.Add(triangle.get_Vertex(2));
-
-                            TessellatedFace tesseFace = new TessellatedFace(args, ElementId.InvalidElementId);
-
-                            if (builder.DoesFaceHaveEnoughLoopsAndVertices(tesseFace))
-                                builder.AddFace(tesseFace);
-                        }
                         try
                         {
-                            builder.CloseConnectedFaceSet();
+                            TessellatedShapeBuilder builder = new TessellatedShapeBuilder();
+                            builder.OpenConnectedFaceSet(false);
 
+                            // Alle Mesh-Triangles als TessellatedFace hinzufügen
+                            for (int i = 0; i < mesh.NumTriangles; i++)
+                            {
+                                MeshTriangle triangle = mesh.get_Triangle(i);
+                                var vertices = new List<XYZ>
+                            {
+                                triangle.get_Vertex(0),
+                                triangle.get_Vertex(1),
+                                triangle.get_Vertex(2)
+                            };
+
+                                var tessFace = new TessellatedFace(vertices, ElementId.InvalidElementId);
+                                if (builder.DoesFaceHaveEnoughLoopsAndVertices(tessFace))
+                                    builder.AddFace(tessFace);
+                            }
+
+                            builder.CloseConnectedFaceSet();
                             builder.Target = TessellatedShapeBuilderTarget.AnyGeometry;
                             builder.Fallback = TessellatedShapeBuilderFallback.Mesh;
                             builder.Build();
 
                             TessellatedShapeBuilderResult result = builder.GetBuildResult();
-
-                            if (result.GetGeometricalObjects()[0] is Solid sol)
-                                if (sol.Volume > 0)
-                                    solids.Add(sol);
+                            Solid solid = result.GetGeometricalObjects().FirstOrDefault() as Solid;
+                            if (solid != null && solid.Volume > 0)
+                            {
+                                geometryObjs.Add(solid);
+                                solidErzeugt = true;
+                            }
                         }
-                        catch (Exception)
+                        catch
                         {
+                            // Fehler ignorieren
+                        }
+
+                        if (!solidErzeugt && mesh.NumTriangles > 0)
+                        {
+                            nichtÜbernommeneMeshes++;
                         }
                     }
                 }
-                try
-                {
-                    var unionSolid = solids.Aggregate((a, b) => BooleanOperationsUtils.ExecuteBooleanOperation(a, b, BooleanOperationsType.Union));
-                }
-                catch (Exception msg)
-                {
-                    TaskDialog.Show("Fehlermeldung", msg.Message);
-                }
             }
 
-            if (solids.Count > 0)
+            // User-Meldung, falls Meshes nicht in Solid umwandelbar sind
+            if (nichtÜbernommeneMeshes > 0)
             {
-                return solids;
+                TaskDialog.Show("Nicht geschlossene Meshes erkannt",
+                    $"Es wurden {nichtÜbernommeneMeshes} Mesh-Objekt(e) gefunden, die NICHT zu einem Volumenkörper (Solid) konvertiert werden konnten.\n\n" +
+                    "Diese können NICHT automatisch in die Familie übernommen werden!\n\n" +
+                    "Tipp: Reparieren Sie das Mesh (z.B. mit MeshLab, Blender, Netfabb), sodass es geschlossen ist, und importieren Sie es dann erneut."
+                );
             }
+
+            if (geometryObjs.Count > 0)
+                return geometryObjs;
             else
-                TaskDialog.Show("Fehler", "Es wurden keine Geometrien erkannt");
-            return null;
+            {
+                TaskDialog.Show("Fehler", "Es wurden keine (gültigen) Geometrien erkannt");
+                return null;
+            }
         }
+
+        /// <summary>
+        /// Liefert alle Geometrieobjekte (Solids, Meshes, Instanzen und Sub-Komponenten) eines Elements rekursiv zurück.
+        /// NEU: Geht auch beliebig tief in verschachtelte GeometryInstance (z.B. Blockreferenzen aus CAD).
+        /// </summary>
         internal static List<GeometryObject> GetAllGeometryObjects(Element element, Options opt)
         {
             List<GeometryObject> geometryObjects = new List<GeometryObject>();
-
             GeometryElement geometryElement = element.get_Geometry(opt);
 
-            foreach (var geometryObject in geometryElement)
+            if (geometryElement == null)
+                return geometryObjects;
+
+            // --- LOKALE rekursive Funktion, damit du beliebig tief in GeometryInstances (Blocks) gehst ---
+            void ExtractRecursive(GeometryElement geoElem)
             {
-                if (geometryObject is Solid solid && solid.Volume > 0)
-                    if (geometryObjects.Any(obj => obj is Solid && ((Solid)obj).Volume == solid.Volume)) { }
-                    else geometryObjects.Add(geometryObject);
-
-                if(geometryObject is Mesh)
-                    geometryObjects.Add(geometryObject);
-
-
-                if (geometryObject is GeometryInstance geometryInstance)
+                foreach (var geometryObject in geoElem)
                 {
-                    foreach (var item in geometryInstance.GetInstanceGeometry())
+                    if (geometryObject is Solid solid && solid.Volume > 0)
                     {
-                        if (item is Solid soliditem && soliditem.Volume > 0)
-                            if (geometryObjects.Any(obj => obj is Solid && ((Solid)obj).Volume == soliditem.Volume)) { }
-                            else geometryObjects.Add(item);
-
-                        if (item is Mesh)
-                            geometryObjects.Add(item);
-                        
+                        geometryObjects.Add(solid);
+                    }
+                    else if (geometryObject is Mesh mesh)
+                    {
+                        geometryObjects.Add(mesh);
+                    }
+                    else if (geometryObject is GeometryInstance geometryInstance)
+                    {
+                        // REKURSION für weitere Blockreferenzen/Unterfamilien
+                        ExtractRecursive(geometryInstance.GetInstanceGeometry());
                     }
                 }
             }
 
-            if (element is FamilyInstance)
+            ExtractRecursive(geometryElement);
+
+            // Zusätzlich: Für FamilyInstance auch Sub-Komponenten rekursiv durchsuchen (wie gehabt)
+            if (element is FamilyInstance famInst)
             {
-                FamilyInstance famInst = element as FamilyInstance;
-                    
-                var subComponentIds = famInst.GetSubComponentIds();
-                    
-                foreach (ElementId subComponentId in subComponentIds)
+                foreach (ElementId subComponentId in famInst.GetSubComponentIds())
                 {
                     Element subComponent = element.Document.GetElement(subComponentId);
                     if (subComponent != null)
-                    {
-                        // Recursively call the function for each sub-component
-                        List<GeometryObject> subComponentGeometryObjects = GetAllGeometryObjects(subComponent, opt);
-                        geometryObjects.AddRange(subComponentGeometryObjects);
-                    }
+                        geometryObjects.AddRange(GetAllGeometryObjects(subComponent, opt));
                 }
             }
-            
+
             return geometryObjects;
         }
-        internal static IList<XYZ> ReadGeometryPoints(Document doc, Reference faceReference, double LevelOfDetails)
+
+        /// <summary>
+        /// Erzeugt eine Punktwolke (Liste von XYZ) aus einer Face-Referenz, trianguliert mit gewünschtem Detaillierungsgrad.
+        /// </summary>
+        internal static IList<XYZ> ReadGeometryPoints(Document doc, Reference faceReference, double levelOfDetails)
         {
             IList<XYZ> m_points = new List<XYZ>();
             Face elementFace = doc.GetElement(faceReference).GetGeometryObjectFromReference(faceReference) as Face;
-            IList<XYZ> points = elementFace?.Triangulate(LevelOfDetails)?.Vertices;
-            foreach (XYZ m_point in points)
-                m_points.Add(m_point);
 
+            // Prüfen ob Face existiert
+            if (elementFace == null) return m_points;
+
+            IList<XYZ> points = elementFace.Triangulate(levelOfDetails)?.Vertices;
+
+            if (points != null)
+            {
+                foreach (XYZ pt in points)
+                    m_points.Add(pt);
+            }
             return m_points;
         }
-        internal static async void CreateNewFamily(UIApplication uiapp, Document dc, IList<Solid> solids, string FamName, XYZ position = null)
+
+        /// <summary>
+        /// Erstellt eine neue Familien-Datei mit den übergebenen Solids und speichert diese.
+        /// Familieninstanz wird ggf. direkt im aktiven Dokument platziert.
+        /// </summary>
+        internal static void CreateNewFamily(UIApplication uiapp, Document dc, IList<GeometryObject> geos, string famName, XYZ position = null)
         {
-            RevitTask.Initialize(uiapp);
+            // Standard-Vorlagendatei für Familien bestimmen
+            string templatePath = Properties.Settings.Default.PfadVorlageAllgemeineFamilie;
+            if (string.IsNullOrEmpty(templatePath))
+                templatePath = uiapp.Application.FamilyTemplatePath + "\\Allgemeine Familie.rft";
 
-            await RevitTask.RunAsync(app =>
+            Document familyDoc = null;
+            Family family;
+
+            // Vorlagen-Datei laden/auswählen falls nicht vorhanden
+            while (familyDoc == null)
             {
-                string template_path = Properties.Settings.Default.PfadVorlageAllgemeineFamilie;
-                if (string.IsNullOrEmpty(template_path)) template_path = app.Application.FamilyTemplatePath + "\\Vorlage Allgemeine Familie.rft";
-
-                Document family_doc = null;
-                Family fam;
-                bool result = true;
-
-                //Überprüfung auf das Vorhandensein der Vorlagendatei
-
-                while (result)
+                try
                 {
-                    try
+                    familyDoc = uiapp.Application.NewFamilyDocument(templatePath);
+                }
+                catch
+                {
+                    TaskDialog.Show("Fehler", "Vorlagendatei 'Allgemeine Familie.rft' konnte nicht gefunden werden. Bitte wählen Sie die Datei aus.");
+
+                    OpenFileDialog openFileDialog = new OpenFileDialog()
                     {
-                        family_doc = app.Application.NewFamilyDocument(template_path);
-                        result = false;
-                    }
-                    catch (Exception)
+                        Filter = "rft files (*.rft)|*.rft",
+                        InitialDirectory = uiapp.Application.FamilyTemplatePath
+                    };
+                    if (openFileDialog.ShowDialog() == true)
                     {
-                        TaskDialog.Show("Fehler", "Für die Erstellung einer Familie ist eine Vorlagendatei für Allgemeine Familien erforderlich. " +
-                            "Der voreingestellte Pfad für \"Vorlage Allgemeine Familie.rft\" konnte nicht gefunden werden. " +
-                            "Bitte die Vorlagendatei auswählen");
-
-                        OpenFileDialog openFileDialog = new OpenFileDialog()
-                        {
-                            Filter = "rft files (*.rft)|*.rft",
-                            InitialDirectory = app.Application.FamilyTemplatePath
-                        };
-
-                        if (openFileDialog.ShowDialog() == DialogResult.OK)
-                        {
-                            template_path = openFileDialog.FileName;
-                            Properties.Settings.Default.PfadVorlageAllgemeineFamilie = template_path;
-                            Properties.Settings.Default.Save();
-                        }
-                        else
-                            return;
+                        templatePath = openFileDialog.FileName;
+                        Properties.Settings.Default.PfadVorlageAllgemeineFamilie = templatePath;
+                        Properties.Settings.Default.Save();
                     }
-                }
-
-                // Geometrien einfügen
-
-                FamilyManager fammanage = family_doc?.FamilyManager;
-
-                FreeFormElement freeform;
-                Solid solid = null;
-
-                using (Transaction t = new Transaction(family_doc, "Neue Familien mit ausgewählten Geometrien erstellen"))
-                {
-                    t.Start();
-
-                    fammanage.CurrentType = fammanage?.NewType("Geometrie");
-
-                    foreach (var solidItem in solids)
-                                freeform = FreeFormElement.Create(family_doc, solidItem);
-                    t.Commit();
-                }
-
-                fam = family_doc?.LoadFamily(dc, new JtFamilyLoadOptions());
-                family_doc?.Close(false);
-
-                using (Transaction t = new Transaction(dc, "Neue Familien mit ausgewählten Geometrien erstellen"))
-                {
-                    t.Start();
-                    fam.Name = FamName;
-                    t.Commit();
-                }
-
-                if (!dc.IsFamilyDocument)
-                {
-                    if (position == null)
-                        AddFamilyinstance(dc, fam);
                     else
-                        AddFamilyinstance(dc, fam, position);
+                        return; // Abbruch durch Nutzer
                 }
-                else
-                    TaskDialog.Show("Fehler", "Die Familie wurde erstellt. Eine Familieninstanz kann jedoch nicht in einem Familiendokument erstellt werden. Bitte Familieinstanz manuell erstellen.");
-            });
-        }
-        internal static async void AddSolidsToFamily(UIApplication uiapp, Document doc, IList<Solid> solids, ElementId targetDocId)
-        {
-            RevitTask.Initialize(uiapp);
+            }
 
-            await RevitTask.RunAsync(app =>
+            // Geometrien einfügen
+            FamilyManager fammanage = familyDoc.FamilyManager;
+            using (Transaction t = new Transaction(familyDoc, "Neue Familie mit Geometrien erstellen"))
             {
-                Document targetfamily_doc = null;
-                Family fam;
-                FamilyManager targetFammanage = null;
-                FreeFormElement freeform;
+                t.Start();
 
-                Element element = doc.GetElement(targetDocId);
-                if (element is FamilyInstance)
-                {
-                    FamilyInstance familyInstance = element as FamilyInstance;
-                    Family family = familyInstance.Symbol.Family;
-                    targetfamily_doc = doc.EditFamily(family);
-                    targetFammanage = targetfamily_doc?.FamilyManager;
-                }
+                FamilyType famType = fammanage.Types.Size > 0
+                    ? fammanage.Types.Cast<FamilyType>().First()
+                    : fammanage.NewType("Geometrie");
 
-                // Geometrien einfügen
+                fammanage.CurrentType = famType;
 
-                using (Transaction t = new Transaction(targetfamily_doc, "Neue Familien mit ausgewählten Geometrien erstellen"))
-                {
-                    t.Start();
+                foreach (var obj in geos)
+                    if (obj is Solid solid)
+                        FreeFormElement.Create(familyDoc, solid);
 
-                    //targetFammanage.CurrentType = targetFammanage?.NewType("Geometrie");
+                t.Commit();
+            }
 
-                    foreach (var solidItem in solids)
-                        freeform = FreeFormElement.Create(targetfamily_doc, solidItem);
+            // Familie ins Projekt laden
+            family = familyDoc.LoadFamily(dc, new JtFamilyLoadOptions());
+            familyDoc.Close(false);
 
-                    t.Commit();
-                }
+            // Familie umbenennen
+            using (Transaction t = new Transaction(dc, "Familienname anpassen"))
+            {
+                t.Start();
+                family.Name = famName;
+                t.Commit();
+            }
 
-                fam = targetfamily_doc?.LoadFamily(doc, new JtFamilyLoadOptions());
-                targetfamily_doc?.Close(false);
-            });
+            // Familie im Dokument platzieren, falls kein FamilyDoc
+            if (!dc.IsFamilyDocument)
+            {
+                if (position == null)
+                    AddFamilyinstance(dc, family);
+                else
+                    AddFamilyinstance(dc, family, position);
+            }
+            else
+            {
+                TaskDialog.Show("Hinweis", "Familie wurde erstellt. Instanziierung im Familien-Dokument ist nicht möglich.");
+            }
         }
+
+        /// <summary>
+        /// Fügt eine oder mehrere Solids zu einer bestehenden Familien-Dokumentdatei hinzu.
+        /// </summary>
+        internal static void AddSolidsToFamily(UIApplication uiapp, Document doc, IList<GeometryObject> geos, ElementId targetDocId)
+        {
+            Document targetFamilyDoc = null;
+            FamilyManager targetFamManager = null;
+
+            Element element = doc.GetElement(targetDocId);
+            if (element is FamilyInstance familyInstance)
+            {
+                Family family = familyInstance.Symbol.Family;
+                targetFamilyDoc = doc.EditFamily(family);
+                targetFamManager = targetFamilyDoc.FamilyManager;
+            }
+
+            if (targetFamilyDoc == null) return;
+
+            using (Transaction t = new Transaction(targetFamilyDoc, "Geometrien zu bestehender Familie hinzufügen"))
+            {
+                t.Start();
+
+                foreach (var obj in geos)
+                {
+                    if (obj is Solid solid)
+                        FreeFormElement.Create(targetFamilyDoc, solid);
+                    // Meshes können NICHT eingefügt werden (siehe vorherige Antwort)
+                    // else if (obj is Mesh mesh)
+                    //     FreeFormElement.Create(targetFamilyDoc, mesh); // --> funktioniert NICHT in der Revit API!
+                }
+
+                t.Commit();
+            }
+
+            targetFamilyDoc.LoadFamily(doc, new JtFamilyLoadOptions());
+            targetFamilyDoc.Close(false);
+        }
+
+        /// <summary>
+        /// Erstellt eine neue Instanz der Familie im aktuellen Projekt-Dokument (an zufälliger Position).
+        /// </summary>
         internal static void AddFamilyinstance(Document docu, Family fam)
         {
-            var fsLst = new FilteredElementCollector(docu).WherePasses(new FamilySymbolFilter(fam.Id)).ToElementIds();
-            FamilySymbol fs;
+            var fsLst = new FilteredElementCollector(docu)
+                .OfClass(typeof(FamilySymbol))
+                .Cast<FamilySymbol>()
+                .Where(fs => fs.Family.Id == fam.Id && fs.Name == "Geometrie") // nur Typ „Geometrie“
+                .ToList();
 
-            foreach (ElementId item in fsLst)
+            if (fsLst.Count == 0)
             {
-                fs = docu.GetElement(item) as FamilySymbol;
-                Document fdoc = docu.EditFamily(fs.Family);
+                TaskDialog.Show("Fehler", "Kein FamilySymbol mit Namen 'Geometrie' gefunden!");
+                return;
+            }
 
-                //var ellst = new FilteredElementCollector(fdoc).OfClass(typeof(FreeFormElement)).ToElements();
+            FamilySymbol fs = fsLst.First();
 
-                fdoc.LoadFamily(docu, new JtFamilyLoadOptions());
-                fdoc.Close(false);
-
-                FamilyInstance faminst;
-
-                using (Transaction t = new Transaction(docu, "Eine Instanz der neuen Familie im Dokument hinzufügen"))
-                {
-                    t.Start();
-                    if (!fs.IsActive) fs.Activate();
-                    try
-                    {
-                        docu.Create.NewFamilyInstance(new XYZ(), fs, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
-                    }
-                    catch (Exception msg)
-                    {
-                        TaskDialog.Show("Fehler", msg.Message);
-                    }
-
-                    t.Commit();
-                }
+            using (Transaction t = new Transaction(docu, "Familieninstanz 'Geometrie' platzieren"))
+            {
+                t.Start();
+                if (!fs.IsActive) fs.Activate();
+                docu.Create.NewFamilyInstance(new XYZ(), fs, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+                t.Commit();
             }
         }
-        internal static void AddFamilyinstance(Document dc, Family fam, XYZ position)
+
+        /// <summary>
+        /// Erstellt eine neue Instanz der Familie an einer definierten Position.
+        /// </summary>
+        internal static void AddFamilyinstance(Document docu, Family fam, XYZ position)
         {
-            var fsLst = new FilteredElementCollector(dc).WherePasses(new FamilySymbolFilter(fam.Id)).ToElementIds();
-            FamilySymbol fs;
+            var symbolIds = new FilteredElementCollector(docu)
+                .WherePasses(new FamilySymbolFilter(fam.Id))
+                .ToElementIds();
 
-            foreach (ElementId item in fsLst)
+            foreach (ElementId id in symbolIds)
             {
-                fs = dc.GetElement(item) as FamilySymbol;
-                Document fdoc = dc.EditFamily(fs.Family);
+                FamilySymbol symbol = docu.GetElement(id) as FamilySymbol;
+                if (symbol == null)
+                    continue;
 
-                //var ellst = new FilteredElementCollector(fdoc).OfClass(typeof(FreeFormElement)).ToElements();
+                // NUR wenn der Typ-Name "Geometrie" ist:
+                if (symbol.Name != "Geometrie")
+                    continue;
 
-                fdoc.LoadFamily(dc, new JtFamilyLoadOptions());
-                fdoc.Close(false);
-
-                FamilyInstance faminst;
-
-                using (Transaction t = new Transaction(dc, "Eine Instanz der neuen Familie im Dokument hinzufügen"))
+                using (Transaction t = new Transaction(docu, "Familieninstanz 'Geometrie' platzieren"))
                 {
                     t.Start();
-                    if (!fs.IsActive) fs.Activate();
+                    if (!symbol.IsActive) symbol.Activate();
 
-                    faminst = dc.Create.NewFamilyInstance(position, fs, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+                    // Beispiel: an Ursprung platzieren, kann natürlich positioniert werden!
+                    docu.Create.NewFamilyInstance(new XYZ(), symbol, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
 
                     t.Commit();
                 }
             }
         }
-        
     }
+
 }

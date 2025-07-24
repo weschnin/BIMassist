@@ -192,6 +192,8 @@
     <EmbeddedResource Include="Resources\floppy-disk.png" />
     <EmbeddedResource Include="Resources\Fortschritt_16px.png" />
     <EmbeddedResource Include="Resources\Fortschritt_24px.png" />
+    <EmbeddedResource Include="Resources\geometrie_16px.png" />
+    <EmbeddedResource Include="Resources\geometrie_32px.png" />
     <EmbeddedResource Include="Resources\IFC.png" />
     <EmbeddedResource Include="Resources\ifcexport_16px.png" />
     <EmbeddedResource Include="Resources\ifcexport_24px.png" />
@@ -284,5 +286,9 @@
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
   </ItemGroup>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="xcopy /y /d &quot;$(TargetPath)&quot; &quot;C:\ProgramData\Autodesk\Revit\Addins\2026\&quot;&#xA;xcopy /y /d &quot;$(ProjectDir)*.addin&quot; &quot;C:\ProgramData\Autodesk\Revit\Addins\2026\&quot;&#xA;" />
+  </Target>
 
 </Project>

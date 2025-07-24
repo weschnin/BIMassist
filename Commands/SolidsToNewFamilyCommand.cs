@@ -27,13 +27,13 @@ namespace BIMassist.Commands
 
                 var family = doc.GetElement(solidsElementIds[0]) as FamilyInstance;
 
-                IList<Solid> Solids = FamilyGeometryTools.ReadGeometryFromFamily(doc, solidsElementIds, true);
-                if (Solids?.Count > 0)
+                IList<GeometryObject> geos = FamilyGeometryTools.ReadGeometryFromFamily(doc, solidsElementIds);
+                if (geos?.Count > 0)
                 {
                     string Textinput = Microsoft.VisualBasic.Interaction.InputBox("Bitte einen neuen Familienamen eingeben:",
                         "Texteingabe", "");
 
-                    FamilyGeometryTools.CreateNewFamily(uiapp, doc, Solids, Textinput);
+                    FamilyGeometryTools.CreateNewFamily(uiapp, doc, geos, Textinput);
                 }
             }
             catch (Exception msg)

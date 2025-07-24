@@ -25,16 +25,16 @@ namespace BIMassist.Commands
                 else
                     solidsElementIds = uidoc.Selection.PickObjects(ObjectType.Element, "Auswählen von Geometrien").Select(x => x.ElementId).ToList();
 
-                //var position = doc.GetElement(solidsElementIds[0]).Location as LocationPoint;
+                
 
                 var family = doc.GetElement(solidsElementIds[0]) as FamilyInstance;
 
-                IList<Solid> Solids = FamilyGeometryTools.ReadGeometryFromFamily(doc, solidsElementIds, true);
+                IList<GeometryObject> geos = FamilyGeometryTools.ReadGeometryFromFamily(doc, solidsElementIds);
 
-                if (Solids?.Count > 0)
+                if (geos?.Count > 0)
                 {
                     Reference r = uidoc.Selection.PickObject(ObjectType.Element, "Ziel Familie auswählen");
-                    FamilyGeometryTools.AddSolidsToFamily(uiapp, doc, Solids, r.ElementId);
+                    FamilyGeometryTools.AddSolidsToFamily(uiapp, doc, geos, r.ElementId);
                 }
             }
             catch (Exception msg)

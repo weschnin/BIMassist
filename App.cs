@@ -35,8 +35,8 @@ namespace BIMassist
 
                 PulldownButtonData PanelgroupData = new PulldownButtonData("Geometrien", "Geometrien")
                 {
-                    Image = GetImageSource("solid_16px.png"), //GetImageSource("solid_16px),
-                    LargeImage = GetImageSource("solid_24px.png"), //GetImageSource("solid_24px),
+                    Image = GetImageSource("geometrie_16px.png"),
+                    LargeImage = GetImageSource("geometrie_32px.png"),
                 };
                 PulldownButton pulldownGroup = panel.AddItem(PanelgroupData) as PulldownButton;
 
