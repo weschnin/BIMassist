@@ -10,41 +10,28 @@ namespace BIMassist.Models
     // =========================
     public static class MetadataStorage
     {
-        public static Entity LoadMetadata(Document doc, Family family)
+        public static Entity LoadMetadata(Document famDoc, Family family)
         {
+            // Sucht den ExtensibleStorage-Eintrag auf family selbst (nicht DataStorage im Projekt!)
             Schema schema = MetadataSchemaHelper.GetOrCreateSchema();
-            FilteredElementCollector collector = new FilteredElementCollector(doc)
-                .OfClass(typeof(DataStorage));
-
-            foreach (DataStorage ds in collector)
-            {
-                Entity ent = ds.GetEntity(schema);
-                if (ent.IsValid() && ent.Schema.GUID == schema.GUID)
-                {
-                    if (ent.Get<string>(schema.GetField("Owner")) == family.Name)
-                    {
-                        return ent;
-                    }
-                }
-            }
-            return null;
+            if (family == null) return null;
+            Entity entity = family.GetEntity(schema);
+            if (entity == null || !entity.IsValid() || entity.Schema.GUID != schema.GUID)
+                return null;
+            return entity;
         }
 
-        public static void SaveMetadata(Document doc, Family family, Dictionary<string, string> values)
+        public static void SaveMetadata(Document famDoc, Family family, Dictionary<string, string> values)
         {
             Schema schema = MetadataSchemaHelper.GetOrCreateSchema();
             Entity entity = new Entity(schema);
-
             foreach (var kvp in values)
-            {
                 entity.Set(schema.GetField(kvp.Key), kvp.Value);
-            }
 
-            using (Transaction t = new Transaction(doc, "Save Family Metadata"))
+            using (Transaction t = new Transaction(famDoc, "Save Family Metadata"))
             {
                 t.Start();
-                DataStorage ds = DataStorage.Create(doc);
-                ds.SetEntity(entity);
+                family.SetEntity(entity);
                 t.Commit();
             }
         }
@@ -62,30 +49,20 @@ namespace BIMassist.Models
             }
         }
 
-        public static void CopyMetadata(Document doc, Family source, Family target)
+        public static void CopyMetadata(Document famDoc, Family source, Family target)
         {
             Schema schema = MetadataSchemaHelper.GetOrCreateSchema();
-            Entity sourceEntity = LoadMetadata(doc, source);
-
-            if (sourceEntity == null)
-                return;
-
-            string sourceHash = sourceEntity.Get<string>(schema.GetField("PasswordHash"));
-            string inputPassword = Microsoft.VisualBasic.Interaction.InputBox("Passwort für Quellfamilie eingeben:", "Kopieren bestätigen");
-            if (sourceHash != ComputeMD5(inputPassword))
-                return;
+            Entity sourceEntity = source.GetEntity(schema);
+            if (sourceEntity == null || !sourceEntity.IsValid()) return;
 
             Entity targetEntity = new Entity(schema);
             foreach (Field field in schema.ListFields())
-            {
                 targetEntity.Set(field, sourceEntity.Get<object>(field));
-            }
 
-            using (Transaction t = new Transaction(doc, "Copy Metadata"))
+            using (Transaction t = new Transaction(famDoc, "Copy Metadata"))
             {
                 t.Start();
-                DataStorage ds = DataStorage.Create(doc);
-                ds.SetEntity(targetEntity);
+                target.SetEntity(targetEntity);
                 t.Commit();
             }
         }

@@ -10,7 +10,7 @@ namespace BIMassist.Handlers
         {
             try
             {
-                ViewModel.ExecuteSave(app.ActiveUIDocument.Document);
+                ViewModel.ExecuteSave(app);
             }
             catch (Exception ex)
             {

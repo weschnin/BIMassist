@@ -1,4 +1,5 @@
 ﻿using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.ExtensibleStorage;
 using Autodesk.Revit.UI;
 using BIMassist.Core;
 using BIMassist.Handlers;
@@ -16,8 +17,9 @@ namespace BIMassist.ViewModels
     // =========================
     public class MetadataViewModel : INotifyPropertyChanged, IDisposable
     {
-        public Document Document { get; }
-        public UIDocument UIDocument { get; }
+        public UIApplication UIApp { get; }
+        public UIDocument UIDocument => UIApp?.ActiveUIDocument;
+        public Document Document => UIDocument?.Document;
 
         private DispatcherTimer _selectionTimer;
         private ElementId _lastSelectionId;
@@ -47,24 +49,11 @@ namespace BIMassist.ViewModels
         private UnlockMetadataHandler _unlockHandler;
 
 
-        public MetadataViewModel(Document doc, UIDocument uidoc)
+        public MetadataViewModel(UIApplication uiapp)
         {
-            if (doc == null) throw new ArgumentNullException(nameof(doc));
-            if (uidoc == null) throw new ArgumentNullException(nameof(uidoc));
-            Document = doc;
-            UIDocument = uidoc;
+            UIApp = uiapp ?? throw new ArgumentNullException(nameof(uiapp));
 
-            UnlockCommand = new RelayCommand(Unlock);
-            SaveCommand = new RelayCommand(() => ExecuteSave(Document));
-            CopyCommand = new RelayCommand(() => ExecuteCopy(Document));
-
-            _selectionTimer = new DispatcherTimer
-            {
-                Interval = TimeSpan.FromSeconds(1)
-            };
-            _selectionTimer.Tick += (s, e) => RefreshSelectedFamily();
-            _selectionTimer.Start();
-
+            // Commands initialisieren
             _saveHandler = new SaveMetadataHandler { ViewModel = this };
             _copyHandler = new CopyMetadataHandler { ViewModel = this };
             _unlockHandler = new UnlockMetadataHandler { ViewModel = this };
@@ -76,14 +65,22 @@ namespace BIMassist.ViewModels
             SaveCommand = new RelayCommand(() => SaveEvent.Raise());
             CopyCommand = new RelayCommand(() => CopyEvent.Raise());
             UnlockCommand = new RelayCommand(() => UnlockEvent.Raise());
+
+            // Timer für Family-Auswahl
+            _selectionTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            _selectionTimer.Tick += (s, e) => RefreshSelectedFamily();
+            _selectionTimer.Start();
         }
 
-        public void ExecuteSave(Document doc)
+        public void ExecuteSave(UIApplication uiapp)
         {
             var family = GetSelectedFamily();
             if (family == null) return;
 
-            // Prüfe, ob Metadaten mit Passwort existieren
+            // Prüfe Passwortschutz wie bisher
             var entity = MetadataStorage.LoadMetadata(Document, family);
             var hasPw = false;
             string oldHash = "";
@@ -104,7 +101,6 @@ namespace BIMassist.ViewModels
                 }
             }
 
-            // Jetzt darf gespeichert werden!
             Dictionary<string, string> values = new Dictionary<string, string>
             {
                 { "DeveloperFirstName", DeveloperFirstName },
@@ -113,20 +109,29 @@ namespace BIMassist.ViewModels
                 { "Email", Email },
                 { "EditDate", EditDate?.ToString("dd.MM.yyyy") ?? "" },
                 { "Description", Description },
-                { "PasswordHash", MetadataStorage.ComputeMD5(PasswordInput) }, // falls neues PW vergeben
+                { "PasswordHash", MetadataStorage.ComputeMD5(PasswordInput) },
             };
 
-            MetadataStorage.SaveMetadata(Document, family, values);
+            // Neue Speicher-Logik:
+            bool ok = FamilyFileHelper.OpenFamilyAndSaveMetadata(uiapp, family, values);
 
-            IsReadOnly = true;
-            PasswordInput = string.Empty;
-            StatusMessage = "Gespeichert.";
+            if (ok)
+            {
+                IsReadOnly = true;
+                PasswordInput = string.Empty;
+                StatusMessage = "Gespeichert (in Familie-Datei)!";
+            }
+            else
+            {
+                StatusMessage = "Speichern abgebrochen oder fehlgeschlagen!";
+            }
+
             OnPropertyChanged("IsReadOnly");
             OnPropertyChanged("PasswordInput");
             OnPropertyChanged(nameof(StatusMessage));
         }
 
-        public void ExecuteCopy(Document doc)
+        public void ExecuteCopy(UIApplication uiapp)
         {
             var selectedIds = UIDocument.Selection.GetElementIds().ToList();
             if (selectedIds.Count < 2)
@@ -136,6 +141,7 @@ namespace BIMassist.ViewModels
                 return;
             }
 
+            // 1. Quelle: Immer das erste Element
             var firstInst = Document.GetElement(selectedIds[0]) as FamilyInstance;
             var sourceFamily = firstInst?.Symbol?.Family;
             if (sourceFamily == null || !sourceFamily.IsEditable)
@@ -145,13 +151,21 @@ namespace BIMassist.ViewModels
                 return;
             }
 
-            // Prüfe Passwort-Schutz in der Quelle
-            var entity = MetadataStorage.LoadMetadata(Document, sourceFamily);
-            string sourceHash = entity?.Get<string>("PasswordHash");
-            if (!string.IsNullOrEmpty(sourceHash))
+            // 2. Metadaten aus rfa der Quellfamilie laden!
+            Dictionary<string, string> sourceValues = FamilyFileHelper.LoadMetadataFromFamilyFile(uiapp, sourceFamily);
+            if (sourceValues == null)
+            {
+                StatusMessage = "In der Quellfamilie wurden keine Metadaten gefunden.";
+                OnPropertyChanged(nameof(StatusMessage));
+                return;
+            }
+
+            // 3. Prüfe Passwortschutz
+            var sourcePwHash = sourceValues.GetValueOrDefault("PasswordHash", "");
+            if (!string.IsNullOrEmpty(sourcePwHash))
             {
                 string enteredHash = MetadataStorage.ComputeMD5(PasswordInput ?? "");
-                if (enteredHash != sourceHash)
+                if (enteredHash != sourcePwHash)
                 {
                     StatusMessage = "Ungültiges Passwort – Kopieren abgebrochen!";
                     OnPropertyChanged(nameof(StatusMessage));
@@ -159,6 +173,7 @@ namespace BIMassist.ViewModels
                 }
             }
 
+            // 4. Kopieren auf alle weiteren Ziel-Familien
             int copied = 0;
             for (int i = 1; i < selectedIds.Count; i++)
             {
@@ -166,8 +181,8 @@ namespace BIMassist.ViewModels
                 var targetFamily = inst?.Symbol?.Family;
                 if (targetFamily != null && targetFamily.IsEditable)
                 {
-                    MetadataStorage.CopyMetadata(Document, sourceFamily, targetFamily);
-                    copied++;
+                    bool ok = FamilyFileHelper.OpenFamilyAndSaveMetadata(uiapp, targetFamily, sourceValues);
+                    if (ok) copied++;
                 }
             }
 
@@ -213,7 +228,6 @@ namespace BIMassist.ViewModels
 
         private void RefreshSelectedFamily()
         {
-            // Prüfen, ob das DockablePane sichtbar ist
             var uiapp = UIDocument.Application;
             var paneId = new DockablePaneId(GuidCollection.GetMetadataDockablePaneID());
             var pane = uiapp.GetDockablePane(paneId);
@@ -251,10 +265,11 @@ namespace BIMassist.ViewModels
             FamilyName = family.Name;
             OnPropertyChanged(nameof(FamilyName));
 
-            var entity = MetadataStorage.LoadMetadata(Document, family);
-
-            if (entity == null)
+            // Metadaten aus der rfa holen:
+            Dictionary<string, string> meta = FamilyFileHelper.LoadMetadataFromFamilyFile(uiapp, family);
+            if (meta == null)
             {
+                // Wenn keine Metadaten in rfa gefunden
                 DeveloperFirstName = "";
                 DeveloperLastName = "";
                 Owner = "";
@@ -262,36 +277,31 @@ namespace BIMassist.ViewModels
                 EditDate = null;
                 Description = "";
                 PasswordInput = "";
-                IsReadOnly = false; // <-- Jetzt editierbar, wenn keine Metadaten vorhanden!
-                StatusMessage = "Keine Metadaten gefunden.";
+                IsReadOnly = false;
+                StatusMessage = "Keine Metadaten in der Familie gefunden.";
             }
             else
             {
-                DeveloperFirstName = entity.Get<string>("DeveloperFirstName");
-                DeveloperLastName = entity.Get<string>("DeveloperLastName");
-                Owner = entity.Get<string>("Owner");
-                Email = entity.Get<string>("Email");
-
-                if (DateTime.TryParse(entity.Get<string>("EditDate"), out var date))
+                DeveloperFirstName = meta.GetValueOrDefault("DeveloperFirstName", "");
+                DeveloperLastName = meta.GetValueOrDefault("DeveloperLastName", "");
+                Owner = meta.GetValueOrDefault("Owner", "");
+                Email = meta.GetValueOrDefault("Email", "");
+                if (DateTime.TryParse(meta.GetValueOrDefault("EditDate", ""), out var date))
                     EditDate = date;
                 else
                     EditDate = null;
-
-                Description = entity.Get<string>("Description");
-
-                var pwHash = entity.Get<string>("PasswordHash");
+                Description = meta.GetValueOrDefault("Description", "");
+                var pwHash = meta.GetValueOrDefault("PasswordHash", "");
                 bool hasPassword = !string.IsNullOrEmpty(pwHash);
 
-                PasswordInput = "";  // *** Immer leer lassen! ***
+                PasswordInput = "";  // Niemals anzeigen!
                 IsReadOnly = hasPassword;
 
-                if (hasPassword)
-                    StatusMessage = "Metadaten sind passwortgeschützt.";
-                else
-                    StatusMessage = "Metadaten geladen (ohne Passwortschutz).";
+                StatusMessage = hasPassword
+                    ? "Metadaten sind passwortgeschützt."
+                    : "Metadaten geladen (ohne Passwortschutz).";
             }
 
-            // Nur noch 1x pro Property den Change raisen (schöner)
             OnPropertyChanged(nameof(DeveloperFirstName));
             OnPropertyChanged(nameof(DeveloperLastName));
             OnPropertyChanged(nameof(Owner));

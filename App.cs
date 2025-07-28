@@ -180,9 +180,7 @@ namespace BIMassist
                 
                 if (MetadataPaneProvider.MetadataCtrlInstance != null && uiapp?.ActiveUIDocument != null)
                 {
-                    MetadataPaneProvider.MetadataCtrlInstance.DataContext = new MetadataViewModel(
-                        uiapp.ActiveUIDocument.Document,
-                        uiapp.ActiveUIDocument);
+                    MetadataPaneProvider.MetadataCtrlInstance.DataContext = new MetadataViewModel(uiapp);
                 }
 
                 DockablePane dp = uiapp.ActiveUIDocument.Application.GetDockablePane(new DockablePaneId(GuidCollection.GetMetadataDockablePaneID()));

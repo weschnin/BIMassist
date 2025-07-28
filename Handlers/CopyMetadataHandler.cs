@@ -11,7 +11,7 @@ namespace BIMassist.Handlers
         {
             try
             {
-                ViewModel.ExecuteCopy(app.ActiveUIDocument.Document);
+                ViewModel.ExecuteCopy(app);
             }
             catch (Exception ex)
             {

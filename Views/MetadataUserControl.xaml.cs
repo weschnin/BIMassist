@@ -27,7 +27,7 @@ namespace BIMassist.Views
 
         public void InitDataContext(UIApplication uiapp, string str)
         {
-            DataContext = new MetadataViewModel(uiapp.ActiveUIDocument.Document, uiapp.ActiveUIDocument);
+            DataContext = new MetadataViewModel(uiapp);
         }
 
         private void Unlock_Click(object sender, RoutedEventArgs e)
