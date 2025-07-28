@@ -1,19 +1,23 @@
-﻿using System.Reflection;
-using Autodesk.Revit.UI;
-using System;
+﻿using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Events;
+using BIMassist.Commands;
+using BIMassist.Core;
+using BIMassist.Helpers;
+using BIMassist.ViewModels;
+using BIMassist.Views;
 using System.IO;
-using System.Windows;
-using System.Drawing;
-using System.Runtime.InteropServices;
 using System.Reflection;
-using System.Windows.Media.Imaging;
 using System.Windows.Media;
-using System.Resources;
+using System.Windows.Media.Imaging;
 
 namespace BIMassist
 {
     internal class App : IExternalApplication
     {
+
+        public static MetadataUserControl MetadataCtrl;
+        bool MetadataCtrlPane = false;
+
         internal static App _app = null;
         public static App Instance
         {
@@ -31,6 +35,32 @@ namespace BIMassist
 
             try
             {
+                a.ViewActivated += new EventHandler<ViewActivatedEventArgs>(viewActivated);
+
+                MetadataCtrl = new MetadataUserControl();
+                a.RegisterDockablePane(new DockablePaneId(GuidCollection.GetMetadataDockablePaneID()),
+                    "Metadaten",
+                    new MetadataPaneProvider());
+            }
+            catch
+            {
+                
+            }
+
+
+            try
+            {
+                //Matadata-Funktionen
+                
+                btnData = new PushButtonData("Metadaten", "Metadaten", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.MetadataCommandStartup")
+                {
+                    ToolTip = "Metadaten lesen/bearbeiten",
+                    LongDescription = "Metadaten der Familien lesen/bearbeiten",
+                    Image = GetImageSource("metadata_16px.png"),
+                    LargeImage = GetImageSource("metadata_32px.png")
+                };
+                panel.AddItem(btnData);
+
                 // Geometrie-Funktionen
 
                 PulldownButtonData PanelgroupData = new PulldownButtonData("Geometrien", "Geometrien")
@@ -113,6 +143,7 @@ namespace BIMassist
             {
                 TaskDialog.Show("Meldung", ex.Message);
             }
+
             return Result.Succeeded;
         }
 
@@ -120,7 +151,6 @@ namespace BIMassist
         {
             return Result.Succeeded;
         }
-
 
         public static ImageSource GetImageSource(string name)
         {
@@ -141,6 +171,33 @@ namespace BIMassist
 
             return bitmap;
         }
+
+        private void viewActivated(object sender, ViewActivatedEventArgs e)
+        {
+            try
+            {
+                UIApplication uiapp = sender as UIApplication;
+                
+                if (MetadataPaneProvider.MetadataCtrlInstance != null && uiapp?.ActiveUIDocument != null)
+                {
+                    MetadataPaneProvider.MetadataCtrlInstance.DataContext = new MetadataViewModel(
+                        uiapp.ActiveUIDocument.Document,
+                        uiapp.ActiveUIDocument);
+                }
+
+                DockablePane dp = uiapp.ActiveUIDocument.Application.GetDockablePane(new DockablePaneId(GuidCollection.GetMetadataDockablePaneID()));
+                if (!MetadataCtrlPane && dp.IsShown())
+                {
+                    dp.Hide();
+                    MetadataCtrlPane = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                TaskDialog.Show("Error", ex.Message);
+            }
+        }
+
     }
 
 }

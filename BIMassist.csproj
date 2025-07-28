@@ -79,6 +79,7 @@
     <None Remove="Resources\LoadDocu_24px.png" />
     <None Remove="Resources\material_16px.png" />
     <None Remove="Resources\material_32px.png" />
+    <None Remove="Resources\metadata_32px.png" />
     <None Remove="Resources\one_32px.png" />
     <None Remove="Resources\openDoc_32px.png" />
     <None Remove="Resources\PDFDocu.ico" />
@@ -124,12 +125,6 @@
     <None Remove="Resources\Zuweisen_24px.png" />
     <None Remove="Resources\Zuweisen_32px.ico" />
     <None Remove="Resources\Zuweisen_32px.png" />
-  </ItemGroup>
-
-   <ItemGroup>
-    <Reference Include="PresentationCore" />
-    <Reference Include="PresentationFramework" />
-    <Reference Include="WindowsBase" />
   </ItemGroup>
 
   <ItemGroup>
@@ -212,8 +207,10 @@
     <EmbeddedResource Include="Resources\left_32px.png" />
     <EmbeddedResource Include="Resources\LoadDocu_16px.png" />
     <EmbeddedResource Include="Resources\LoadDocu_24px.png" />
+    <EmbeddedResource Include="Resources\metadata_16px.png" />
     <EmbeddedResource Include="Resources\material_16px.png" />
     <EmbeddedResource Include="Resources\material_32px.png" />
+    <EmbeddedResource Include="Resources\metadata_32px.png" />
     <EmbeddedResource Include="Resources\one_32px.png" />
     <EmbeddedResource Include="Resources\openDoc_32px.png" />
     <EmbeddedResource Include="Resources\PDFDocu.ico" />
@@ -285,6 +282,12 @@
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Page Update="Views\MetadataUserControl.xaml">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </Page>
   </ItemGroup>
 
   <Target Name="PostBuild" AfterTargets="PostBuildEvent">
