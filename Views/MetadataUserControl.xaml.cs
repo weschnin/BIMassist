@@ -36,7 +36,18 @@ namespace BIMassist.Views
             {
                 vm.PasswordInput = PasswordBox.Password;
                 vm.UnlockCommand.Execute(null);
+                PasswordBox.Password = string.Empty;
             }
         }
+        private void Save_Click(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is MetadataViewModel vm)
+            {
+                vm.PasswordInput = PasswordBox.Password;
+                vm.SaveCommand.Execute(null);
+                PasswordBox.Password = string.Empty;
+            }
+        }
+
     }
 }

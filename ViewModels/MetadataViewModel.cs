@@ -90,16 +90,16 @@ namespace BIMassist.ViewModels
                 hasPw = !string.IsNullOrEmpty(oldHash);
             }
 
-            if (hasPw)
-            {
-                string enteredHash = MetadataStorage.ComputeMD5(PasswordInput ?? "");
-                if (enteredHash != oldHash)
-                {
-                    StatusMessage = "Ungültiges Passwort. Änderungen wurden nicht gespeichert!";
-                    OnPropertyChanged(nameof(StatusMessage));
-                    return;
-                }
-            }
+            //if (hasPw)
+            //{
+            //    string enteredHash = MetadataStorage.ComputeMD5(PasswordInput ?? "");
+            //    if (enteredHash != oldHash)
+            //    {
+            //        StatusMessage = "Ungültiges Passwort. Änderungen wurden nicht gespeichert!";
+            //        OnPropertyChanged(nameof(StatusMessage));
+            //        return;
+            //    }
+            //}
 
             Dictionary<string, string> values = new Dictionary<string, string>
             {
@@ -117,7 +117,9 @@ namespace BIMassist.ViewModels
 
             if (ok)
             {
-                IsReadOnly = true;
+                // Bestimme neu, ob jetzt Passwortschutz besteht!
+                string newPwHash = values.GetValueOrDefault("PasswordHash", "");
+                IsReadOnly = !string.IsNullOrEmpty(newPwHash);
                 PasswordInput = string.Empty;
                 StatusMessage = "Gespeichert (in Familie-Datei)!";
             }
@@ -126,8 +128,8 @@ namespace BIMassist.ViewModels
                 StatusMessage = "Speichern abgebrochen oder fehlgeschlagen!";
             }
 
-            OnPropertyChanged("IsReadOnly");
-            OnPropertyChanged("PasswordInput");
+            OnPropertyChanged(nameof(IsReadOnly));
+            OnPropertyChanged(nameof(PasswordInput));
             OnPropertyChanged(nameof(StatusMessage));
         }
 
@@ -160,18 +162,18 @@ namespace BIMassist.ViewModels
                 return;
             }
 
-            // 3. Prüfe Passwortschutz
-            var sourcePwHash = sourceValues.GetValueOrDefault("PasswordHash", "");
-            if (!string.IsNullOrEmpty(sourcePwHash))
-            {
-                string enteredHash = MetadataStorage.ComputeMD5(PasswordInput ?? "");
-                if (enteredHash != sourcePwHash)
-                {
-                    StatusMessage = "Ungültiges Passwort – Kopieren abgebrochen!";
-                    OnPropertyChanged(nameof(StatusMessage));
-                    return;
-                }
-            }
+            //// 3. Prüfe Passwortschutz
+            //var sourcePwHash = sourceValues.GetValueOrDefault("PasswordHash", "");
+            //if (!string.IsNullOrEmpty(sourcePwHash))
+            //{
+            //    string enteredHash = MetadataStorage.ComputeMD5(PasswordInput ?? "");
+            //    if (enteredHash != sourcePwHash)
+            //    {
+            //        StatusMessage = "Ungültiges Passwort – Kopieren abgebrochen!";
+            //        OnPropertyChanged(nameof(StatusMessage));
+            //        return;
+            //    }
+            //}
 
             // 4. Kopieren auf alle weiteren Ziel-Familien
             int copied = 0;
@@ -291,6 +293,7 @@ namespace BIMassist.ViewModels
                 else
                     EditDate = null;
                 Description = meta.GetValueOrDefault("Description", "");
+
                 var pwHash = meta.GetValueOrDefault("PasswordHash", "");
                 bool hasPassword = !string.IsNullOrEmpty(pwHash);
 
