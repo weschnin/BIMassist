@@ -36,6 +36,38 @@ namespace BIMassist.ViewModels
         public bool IsReadOnly { get; set; } = false;
         public string StatusMessage { get; set; }
         public string FamilyName { get; set; }
+
+        private bool _isCopyTargetPhase = false;
+        private ElementId _copySourceFamilyId = null;
+        private Dictionary<string, string> _copySourceValues = null;
+
+        private bool _isMetadataLoaded;
+        public bool IsMetadataLoaded
+        {
+            get => _isMetadataLoaded;
+            set
+            {
+                if (_isMetadataLoaded != value)
+                {
+                    _isMetadataLoaded = value;
+                    OnPropertyChanged(nameof(IsMetadataLoaded));
+                }
+            }
+        }
+
+        private bool _isInCopyMode;
+        public bool IsInCopyMode
+        {
+            get => _isInCopyMode;
+            set
+            {
+                if (_isInCopyMode != value)
+                {
+                    _isInCopyMode = value;
+                    OnPropertyChanged(nameof(IsInCopyMode));
+                }
+            }
+        }
         public ICommand UnlockCommand { get; }
         public ICommand SaveCommand { get; }
         public ICommand CopyCommand { get; }
@@ -125,42 +157,68 @@ namespace BIMassist.ViewModels
 
         public void ExecuteCopy(UIApplication uiapp)
         {
+            if (!IsMetadataLoaded)
+            {
+                StatusMessage = "Bitte zuerst eine Quellfamilie auswählen und Metadaten laden!";
+                OnPropertyChanged(nameof(StatusMessage));
+                return;
+            }
+
             var selectedIds = UIDocument.Selection.GetElementIds().ToList();
-            if (selectedIds.Count < 2)
+
+            if (!_isCopyTargetPhase)
             {
-                StatusMessage = "Bitte wählen Sie zuerst die Quellfamilie, dann Zielfamilien!";
+                // Kopierphase starten, Quelle merken, Metadaten laden
+                if (selectedIds.Count != 1)
+                {
+                    StatusMessage = "Bitte genau eine Quellfamilie auswählen, um mit dem Kopiervorgang zu starten!";
+                    OnPropertyChanged(nameof(StatusMessage));
+                    return;
+                }
+                var firstInst = Document.GetElement(selectedIds[0]) as FamilyInstance;
+                var sourceFamily = firstInst?.Symbol?.Family;
+                if (sourceFamily == null || !sourceFamily.IsEditable)
+                {
+                    StatusMessage = "Die Quellfamilie ist keine ladbare Familie.";
+                    OnPropertyChanged(nameof(StatusMessage));
+                    return;
+                }
+                // Metadaten holen und merken
+                Dictionary<string, string> sourceValues = FamilyFileHelper.LoadMetadataFromLoadedFamily(Document, sourceFamily);
+                if (sourceValues == null)
+                {
+                    StatusMessage = "In der Quellfamilie wurden keine Metadaten gefunden.";
+                    OnPropertyChanged(nameof(StatusMessage));
+                    return;
+                }
+                _copySourceFamilyId = selectedIds[0];
+                _copySourceValues = sourceValues;
+                _isCopyTargetPhase = true;
+
+                StatusMessage = "Bitte wählen Sie nun eine oder mehrere Ziel-Familien aus und klicken Sie erneut auf 'Kopieren'.";
                 OnPropertyChanged(nameof(StatusMessage));
                 return;
             }
 
-            // 1. Quelle: Immer das erste Element
-            var firstInst = Document.GetElement(selectedIds[0]) as FamilyInstance;
-            var sourceFamily = firstInst?.Symbol?.Family;
-            if (sourceFamily == null || !sourceFamily.IsEditable)
+            // Jetzt im Zielauswahlmodus:
+            if (selectedIds.Count < 1)
             {
-                StatusMessage = "Die Quellfamilie ist keine ladbare Familie.";
+                StatusMessage = "Bitte wählen Sie mindestens eine Ziel-Familie aus!";
                 OnPropertyChanged(nameof(StatusMessage));
                 return;
             }
 
-            // 2. Metadaten aus geladener Familie lesen
-            Dictionary<string, string> sourceValues = FamilyFileHelper.LoadMetadataFromLoadedFamily(Document, sourceFamily);
-            if (sourceValues == null)
-            {
-                StatusMessage = "In der Quellfamilie wurden keine Metadaten gefunden.";
-                OnPropertyChanged(nameof(StatusMessage));
-                return;
-            }
-
-            // 4. Kopieren auf alle weiteren Ziel-Familien
             int copied = 0;
-            for (int i = 1; i < selectedIds.Count; i++)
+            foreach (var id in selectedIds)
             {
-                var inst = Document.GetElement(selectedIds[i]) as FamilyInstance;
+                // Die Quellfamilie selbst überspringen
+                if (id == _copySourceFamilyId)
+                    continue;
+                var inst = Document.GetElement(id) as FamilyInstance;
                 var targetFamily = inst?.Symbol?.Family;
                 if (targetFamily != null && targetFamily.IsEditable)
                 {
-                    bool ok = FamilyFileHelper.SaveMetadataToLoadedFamily(Document, targetFamily, sourceValues);
+                    bool ok = FamilyFileHelper.SaveMetadataToLoadedFamily(Document, targetFamily, _copySourceValues);
                     if (ok) copied++;
                 }
             }
@@ -173,6 +231,11 @@ namespace BIMassist.ViewModels
                 StatusMessage = $"Metadaten auf {copied} Familien kopiert.";
 
             OnPropertyChanged(nameof(StatusMessage));
+
+            // Reset für nächsten Kopiervorgang
+            _isCopyTargetPhase = false;
+            _copySourceFamilyId = null;
+            _copySourceValues = null;
         }
 
         public void Unlock()
@@ -211,19 +274,43 @@ namespace BIMassist.ViewModels
             var paneId = new DockablePaneId(GuidCollection.GetMetadataDockablePaneID());
             var pane = uiapp.GetDockablePane(paneId);
 
+            if (_isCopyTargetPhase)
+                return; // Während Kopiermodus keine Felder leeren
+
             if (pane == null || !pane.IsShown())
                 return;
 
             if (UIDocument == null || UIDocument.Selection == null)
             {
                 StatusMessage = "Kein aktives Revit-Dokument!";
+                IsMetadataLoaded = false;
+                ClearAllFields();
                 OnPropertyChanged(nameof(StatusMessage));
                 return;
             }
 
             var selIds = UIDocument.Selection.GetElementIds();
-            if (selIds == null || selIds.Count == 0)
-                return;
+
+
+            if (!IsInCopyMode)
+            {
+                if (selIds == null || selIds.Count == 0)
+                {
+                    StatusMessage = "Bitte wählen Sie eine ladbare Familie!";
+                    ClearAllFields();
+                    IsMetadataLoaded = false;
+                    OnPropertyChanged(nameof(StatusMessage));
+                    return;
+                }
+                if (selIds.Count > 1)
+                {
+                    StatusMessage = "Mehrere Elemente ausgewählt – bitte nur eine ladbare Familie auswählen!";
+                    ClearAllFields();
+                    IsMetadataLoaded = false;
+                    OnPropertyChanged(nameof(StatusMessage));
+                    return;
+                }
+            }
 
             var selId = selIds.FirstOrDefault();
             if (selId == null || selId == _lastSelectionId)
@@ -237,6 +324,7 @@ namespace BIMassist.ViewModels
             if (family == null || !family.IsEditable)
             {
                 StatusMessage = "Bitte wählen Sie eine ladbare Familie (keine Systemfamilie).";
+                IsMetadataLoaded = false;
                 OnPropertyChanged(nameof(StatusMessage));
                 return;
             }
@@ -262,6 +350,7 @@ namespace BIMassist.ViewModels
                 Description = "";
                 PasswordInput = "";
                 IsReadOnly = false;
+                IsMetadataLoaded = false;
                 StatusMessage = "Keine Metadaten in der Familie gefunden.";
             }
             else
@@ -281,7 +370,7 @@ namespace BIMassist.ViewModels
 
                 PasswordInput = "";  // Niemals anzeigen!
                 IsReadOnly = hasPassword;
-
+                IsMetadataLoaded = true;
                 StatusMessage = hasPassword
                     ? "Metadaten sind passwortgeschützt."
                     : "Metadaten geladen (ohne Passwortschutz).";
@@ -296,6 +385,31 @@ namespace BIMassist.ViewModels
             OnPropertyChanged(nameof(PasswordInput));
             OnPropertyChanged(nameof(IsReadOnly));
             OnPropertyChanged(nameof(StatusMessage));
+        }
+
+        // Neue Hilfsmethode:
+        private void ClearAllFields()
+        {
+            DeveloperFirstName = "";
+            DeveloperLastName = "";
+            Owner = "";
+            Email = "";
+            EditDate = null;
+            Description = "";
+            PasswordInput = "";
+            IsReadOnly = false;
+            FamilyName = "";
+            FamilyPath = "";
+            OnPropertyChanged(nameof(DeveloperFirstName));
+            OnPropertyChanged(nameof(DeveloperLastName));
+            OnPropertyChanged(nameof(Owner));
+            OnPropertyChanged(nameof(Email));
+            OnPropertyChanged(nameof(EditDate));
+            OnPropertyChanged(nameof(Description));
+            OnPropertyChanged(nameof(PasswordInput));
+            OnPropertyChanged(nameof(IsReadOnly));
+            OnPropertyChanged(nameof(FamilyName));
+            OnPropertyChanged(nameof(FamilyPath));
         }
 
         public Family GetSelectedFamily()
