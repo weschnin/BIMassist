@@ -12,9 +12,8 @@ namespace BIMassist.Models
     {
         public static Entity LoadMetadata(Document famDoc, Family family)
         {
-            // Sucht den ExtensibleStorage-Eintrag auf family selbst (nicht DataStorage im Projekt!)
-            Schema schema = MetadataSchemaHelper.GetOrCreateSchema();
             if (family == null) return null;
+            Schema schema = MetadataSchemaHelper.GetOrCreateSchema();
             Entity entity = family.GetEntity(schema);
             if (entity == null || !entity.IsValid() || entity.Schema.GUID != schema.GUID)
                 return null;
@@ -23,17 +22,15 @@ namespace BIMassist.Models
 
         public static void SaveMetadata(Document famDoc, Family family, Dictionary<string, string> values)
         {
+            if (family == null)
+                throw new ArgumentNullException(nameof(family), "Family darf nicht null sein!");
+
             Schema schema = MetadataSchemaHelper.GetOrCreateSchema();
             Entity entity = new Entity(schema);
             foreach (var kvp in values)
                 entity.Set(schema.GetField(kvp.Key), kvp.Value);
 
-            using (Transaction t = new Transaction(famDoc, "Save Family Metadata"))
-            {
-                t.Start();
-                family.SetEntity(entity);
-                t.Commit();
-            }
+            family.SetEntity(entity);
         }
 
         public static string ComputeMD5(string input)
@@ -51,20 +48,30 @@ namespace BIMassist.Models
 
         public static void CopyMetadata(Document famDoc, Family source, Family target)
         {
+            // Source-Family aus famDoc holen (falls nötig)
+            Family famSource = new FilteredElementCollector(famDoc)
+                .OfClass(typeof(Family))
+                .Cast<Family>()
+                .FirstOrDefault(f => f.Name == source.Name);
+
+            // Target-Family aus famDoc holen (falls nötig)
+            Family famTarget = new FilteredElementCollector(famDoc)
+                .OfClass(typeof(Family))
+                .Cast<Family>()
+                .FirstOrDefault(f => f.Name == target.Name);
+
+            if (famSource == null || famTarget == null)
+                throw new InvalidOperationException("Family-Objekt im Family-Dokument nicht gefunden!");
+
             Schema schema = MetadataSchemaHelper.GetOrCreateSchema();
-            Entity sourceEntity = source.GetEntity(schema);
+            Entity sourceEntity = famSource.GetEntity(schema);
             if (sourceEntity == null || !sourceEntity.IsValid()) return;
 
             Entity targetEntity = new Entity(schema);
             foreach (Field field in schema.ListFields())
                 targetEntity.Set(field, sourceEntity.Get<object>(field));
 
-            using (Transaction t = new Transaction(famDoc, "Copy Metadata"))
-            {
-                t.Start();
-                target.SetEntity(targetEntity);
-                t.Commit();
-            }
+            famTarget.SetEntity(targetEntity);
         }
     }
 }

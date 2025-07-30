@@ -9,6 +9,7 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
+using System.Text.Json;
 
 namespace BIMassist.ViewModels
 {
@@ -25,6 +26,7 @@ namespace BIMassist.ViewModels
         private ElementId _lastSelectionId;
 
         public string DeveloperFirstName { get; set; }
+        public string FamilyPath { get; set; }
         public string DeveloperLastName { get; set; }
         public string Owner { get; set; }
         public string Email { get; set; }
@@ -90,17 +92,6 @@ namespace BIMassist.ViewModels
                 hasPw = !string.IsNullOrEmpty(oldHash);
             }
 
-            //if (hasPw)
-            //{
-            //    string enteredHash = MetadataStorage.ComputeMD5(PasswordInput ?? "");
-            //    if (enteredHash != oldHash)
-            //    {
-            //        StatusMessage = "Ungültiges Passwort. Änderungen wurden nicht gespeichert!";
-            //        OnPropertyChanged(nameof(StatusMessage));
-            //        return;
-            //    }
-            //}
-
             Dictionary<string, string> values = new Dictionary<string, string>
             {
                 { "DeveloperFirstName", DeveloperFirstName },
@@ -112,16 +103,15 @@ namespace BIMassist.ViewModels
                 { "PasswordHash", MetadataStorage.ComputeMD5(PasswordInput) },
             };
 
-            // Neue Speicher-Logik:
-            bool ok = FamilyFileHelper.OpenFamilyAndSaveMetadata(uiapp, family, values);
+            // Verwende die neue Speicherfunktion
+            bool ok = FamilyFileHelper.SaveMetadataToLoadedFamily(Document, family, values);
 
             if (ok)
             {
-                // Bestimme neu, ob jetzt Passwortschutz besteht!
                 string newPwHash = values.GetValueOrDefault("PasswordHash", "");
                 IsReadOnly = !string.IsNullOrEmpty(newPwHash);
                 PasswordInput = string.Empty;
-                StatusMessage = "Gespeichert (in Familie-Datei)!";
+                StatusMessage = "Gespeichert (in geladener Familie)!";
             }
             else
             {
@@ -153,27 +143,14 @@ namespace BIMassist.ViewModels
                 return;
             }
 
-            // 2. Metadaten aus rfa der Quellfamilie laden!
-            Dictionary<string, string> sourceValues = FamilyFileHelper.LoadMetadataFromFamilyFile(uiapp, sourceFamily);
+            // 2. Metadaten aus geladener Familie lesen
+            Dictionary<string, string> sourceValues = FamilyFileHelper.LoadMetadataFromLoadedFamily(Document, sourceFamily);
             if (sourceValues == null)
             {
                 StatusMessage = "In der Quellfamilie wurden keine Metadaten gefunden.";
                 OnPropertyChanged(nameof(StatusMessage));
                 return;
             }
-
-            //// 3. Prüfe Passwortschutz
-            //var sourcePwHash = sourceValues.GetValueOrDefault("PasswordHash", "");
-            //if (!string.IsNullOrEmpty(sourcePwHash))
-            //{
-            //    string enteredHash = MetadataStorage.ComputeMD5(PasswordInput ?? "");
-            //    if (enteredHash != sourcePwHash)
-            //    {
-            //        StatusMessage = "Ungültiges Passwort – Kopieren abgebrochen!";
-            //        OnPropertyChanged(nameof(StatusMessage));
-            //        return;
-            //    }
-            //}
 
             // 4. Kopieren auf alle weiteren Ziel-Familien
             int copied = 0;
@@ -183,7 +160,7 @@ namespace BIMassist.ViewModels
                 var targetFamily = inst?.Symbol?.Family;
                 if (targetFamily != null && targetFamily.IsEditable)
                 {
-                    bool ok = FamilyFileHelper.OpenFamilyAndSaveMetadata(uiapp, targetFamily, sourceValues);
+                    bool ok = FamilyFileHelper.SaveMetadataToLoadedFamily(Document, targetFamily, sourceValues);
                     if (ok) copied++;
                 }
             }
@@ -267,8 +244,13 @@ namespace BIMassist.ViewModels
             FamilyName = family.Name;
             OnPropertyChanged(nameof(FamilyName));
 
+            // Pfad der geladenen Familie anzeigen (sofern vorhanden)
+            string famPath = family.Document?.PathName;
+            FamilyPath = string.IsNullOrEmpty(famPath) ? "Nicht aus Datei geladen" : famPath;
+            OnPropertyChanged(nameof(FamilyPath));
+
             // Metadaten aus der rfa holen:
-            Dictionary<string, string> meta = FamilyFileHelper.LoadMetadataFromFamilyFile(uiapp, family);
+            Dictionary<string, string> meta = FamilyFileHelper.LoadMetadataFromLoadedFamily(Document, family);
             if (meta == null)
             {
                 // Wenn keine Metadaten in rfa gefunden
@@ -355,6 +337,74 @@ namespace BIMassist.ViewModels
             {
                 _selectionTimer?.Stop();
                 _selectionTimer.Tick -= (s, e) => RefreshSelectedFamily();
+            }
+        }
+
+        // Metadaten-Vorlage
+        public void SaveTemplate()
+        {
+            var template = new Dictionary<string, string>
+    {
+        { "DeveloperFirstName", DeveloperFirstName },
+        { "DeveloperLastName", DeveloperLastName },
+        { "Owner", Owner },
+        { "Email", Email },
+        { "Description", Description },
+        { "EditDate", EditDate?.ToString("dd.MM.yyyy") ?? "" }
+        // Passwort NICHT mit speichern!
+    };
+            try
+            {
+                string json = JsonSerializer.Serialize(template);
+                Properties.Settings.Default.MetadataTemplate = json;
+                Properties.Settings.Default.Save();
+                StatusMessage = "Vorlage gespeichert.";
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = "Fehler beim Speichern der Vorlage: " + ex.Message;
+            }
+            OnPropertyChanged(nameof(StatusMessage));
+        }
+
+        public void LoadTemplate()
+        {
+            try
+            {
+                string json = Properties.Settings.Default.MetadataTemplate;
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    StatusMessage = "Keine Vorlage gespeichert.";
+                    OnPropertyChanged(nameof(StatusMessage));
+                    return;
+                }
+                var template = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+
+                if (template != null)
+                {
+                    DeveloperFirstName = template.GetValueOrDefault("DeveloperFirstName", "");
+                    DeveloperLastName = template.GetValueOrDefault("DeveloperLastName", "");
+                    Owner = template.GetValueOrDefault("Owner", "");
+                    Email = template.GetValueOrDefault("Email", "");
+                    Description = template.GetValueOrDefault("Description", "");
+                    if (DateTime.TryParse(template.GetValueOrDefault("EditDate", ""), out var dt))
+                        EditDate = dt;
+                    else
+                        EditDate = null;
+
+                    StatusMessage = "Vorlage geladen. Änderungen noch nicht gespeichert!";
+                    OnPropertyChanged(nameof(DeveloperFirstName));
+                    OnPropertyChanged(nameof(DeveloperLastName));
+                    OnPropertyChanged(nameof(Owner));
+                    OnPropertyChanged(nameof(Email));
+                    OnPropertyChanged(nameof(Description));
+                    OnPropertyChanged(nameof(EditDate));
+                }
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = "Fehler beim Laden der Vorlage: " + ex.Message;
+                OnPropertyChanged(nameof(StatusMessage));
             }
         }
     }

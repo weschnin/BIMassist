@@ -49,5 +49,20 @@ namespace BIMassist.Views
             }
         }
 
+        private void SaveTemplate_Click(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is MetadataViewModel vm)
+            {
+                vm.SaveTemplate();
+            }
+        }
+
+        private void LoadTemplate_Click(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is MetadataViewModel vm)
+            {
+                vm.LoadTemplate();
+            }
+        }
     }
 }

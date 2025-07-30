@@ -2,8 +2,8 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:helpers="clr-namespace:BIMassist.Helpers"
-             Width="320"
-             Background="White">
+             Width="310"
+             Background="White" Height="625">
 
     <UserControl.Resources>
         <helpers:InverseBoolConverter x:Key="InverseBoolConverter"/>
@@ -70,7 +70,7 @@
         </Style>
     </UserControl.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,12,20,20">
         <Grid Margin="10">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
@@ -89,18 +89,23 @@
             </StackPanel>
 
             <!-- Eingabebereich -->
-            <StackPanel Grid.Row="1" Orientation="Vertical">
-                <TextBlock Text="REVIT-Familienname:" Style="{StaticResource LabelStyle}"/>
+            <StackPanel Grid.Row="1" Orientation="Vertical" Margin="0,0,-12,22" Grid.RowSpan="2">
+                <TextBlock Text="Revit-Familienname:" Style="{StaticResource LabelStyle}"/>
                 <TextBox Text="{Binding FamilyName}" IsReadOnly="True"/>
 
-                <TextBlock Text="Entwickler Vorname:" Style="{StaticResource LabelStyle}"/>
-                <TextBox Text="{Binding DeveloperFirstName}" IsReadOnly="{Binding IsReadOnly}"/>
+                <TextBlock Text="Speicherpfad Revit-Familie:" Style="{StaticResource LabelStyle}"/>
+                <TextBox Text="{Binding FamilyPath}" IsReadOnly="True" Width="250"/>
 
-                <TextBlock Text="Entwickler Nachname:" Style="{StaticResource LabelStyle}"/>
+                <!-- Entwickler Vorname -->
+                <!--<TextBlock Text="Entwickler Vorname:" Style="{StaticResource LabelStyle}"/>
+                <TextBox Text="{Binding DeveloperFirstName}" IsReadOnly="{Binding IsReadOnly}"/>-->
+
+                <TextBlock Text="Entwickler / Name:" Style="{StaticResource LabelStyle}"/>
                 <TextBox Text="{Binding DeveloperLastName}" IsReadOnly="{Binding IsReadOnly}"/>
 
-                <TextBlock Text="Eigentümer/Organisation:" Style="{StaticResource LabelStyle}"/>
-                <TextBox Text="{Binding Owner}" IsReadOnly="{Binding IsReadOnly}"/>
+                <TextBlock Text="Entwickler / Organisation:" Style="{StaticResource LabelStyle}"/>
+                <TextBox Text="{Binding Owner}" IsReadOnly="{Binding IsReadOnly}" Height="40"
+                         TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
 
                 <TextBlock Text="E-Mail:" Style="{StaticResource LabelStyle}"/>
                 <TextBox Text="{Binding Email}" IsReadOnly="{Binding IsReadOnly}"/>
@@ -110,8 +115,9 @@
                             IsEnabled="{Binding IsReadOnly, Converter={StaticResource InverseBoolConverter}}"/>
 
                 <TextBlock Text="Beschreibung:" Style="{StaticResource LabelStyle}"/>
-                <TextBox Text="{Binding Description}" AcceptsReturn="True" Height="45"
-                         TextWrapping="Wrap" IsReadOnly="{Binding IsReadOnly}" Width="250" Margin="0,0,0,4"/>
+                <TextBox Text="{Binding Description}" AcceptsReturn="True" Height="50"
+                         TextWrapping="Wrap" IsReadOnly="{Binding IsReadOnly}" Width="250"
+                         VerticalScrollBarVisibility="Auto" Margin="0,0,0,4"/>
 
                 <!-- Passwortzeile -->
                 <StackPanel Orientation="Horizontal" Margin="0,4,0,4">
@@ -121,9 +127,17 @@
                 </StackPanel>
 
                 <!-- Aktionsbuttons -->
-                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                    <Button Content="Speichern" Click="Save_Click" Width="95" Margin="0,0,6,0"/>
-                    <Button Content="Daten kopieren" Command="{Binding CopyCommand}" Width="110"/>
+                <StackPanel Orientation="Vertical" Margin="0,10,0,0">
+                    <!-- Erste Button-Zeile -->
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Speichern" Click="Save_Click" Width="75" Margin="0,0,4,0"/>
+                        <Button Content="Kopieren" Command="{Binding CopyCommand}" Width="75"/>
+                    </StackPanel>
+                    <!-- Zweite Button-Zeile (Vorlagen) -->
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <Button Content="Vorlage speichern" Click="SaveTemplate_Click" Width="110" Margin="0,0,4,0"/>
+                        <Button Content="Vorlage laden" Click="LoadTemplate_Click" Width="100"/>
+                    </StackPanel>
                 </StackPanel>
             </StackPanel>
 
