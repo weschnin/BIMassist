@@ -15,9 +15,6 @@
     <None Remove="Resources\Aktualisieren 24.png" />
     <None Remove="Resources\arrow_16px.png" />
     <None Remove="Resources\arrow_24px.png" />
-    <None Remove="Resources\BGKOrg-16.png" />
-    <None Remove="Resources\BGKOrg-24.ico" />
-    <None Remove="Resources\BGKOrg-24.png" />
     <None Remove="Resources\boolean_16px.png" />
     <None Remove="Resources\boolean_24px.png" />
     <None Remove="Resources\boolean_32px.png" />
@@ -71,9 +68,7 @@
     <None Remove="Resources\info_16px.png" />
     <None Remove="Resources\info_24px.png" />
     <None Remove="Resources\Label_16px.png" />
-    <None Remove="Resources\Label_24px.ico" />
-    <None Remove="Resources\Label_24px.png" />
-    <None Remove="Resources\Label_32px.png" />
+    <None Remove="Resources\label_24px.png" />
     <None Remove="Resources\left_32px.png" />
     <None Remove="Resources\LoadDocu_16px.png" />
     <None Remove="Resources\LoadDocu_24px.png" />
@@ -144,9 +139,6 @@
     <EmbeddedResource Include="Resources\Aktualisieren 24.png" />
     <EmbeddedResource Include="Resources\arrow_16px.png" />
     <EmbeddedResource Include="Resources\arrow_24px.png" />
-    <EmbeddedResource Include="Resources\BGKOrg-16.png" />
-    <EmbeddedResource Include="Resources\BGKOrg-24.ico" />
-    <EmbeddedResource Include="Resources\BGKOrg-24.png" />
     <EmbeddedResource Include="Resources\boolean_16px.png" />
     <EmbeddedResource Include="Resources\boolean_24px.png" />
     <EmbeddedResource Include="Resources\boolean_32px.png" />
@@ -200,10 +192,8 @@
     <EmbeddedResource Include="Resources\import_24px.png" />
     <EmbeddedResource Include="Resources\info_16px.png" />
     <EmbeddedResource Include="Resources\info_24px.png" />
-    <EmbeddedResource Include="Resources\Label_16px.png" />
-    <EmbeddedResource Include="Resources\Label_24px.ico" />
-    <EmbeddedResource Include="Resources\Label_24px.png" />
-    <EmbeddedResource Include="Resources\Label_32px.png" />
+    <EmbeddedResource Include="Resources\label_16px.png" />
+    <EmbeddedResource Include="Resources\label_24px.png" />
     <EmbeddedResource Include="Resources\left_32px.png" />
     <EmbeddedResource Include="Resources\LoadDocu_16px.png" />
     <EmbeddedResource Include="Resources\LoadDocu_24px.png" />

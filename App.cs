@@ -16,7 +16,9 @@ namespace BIMassist
     {
 
         public static MetadataUserControl MetadataCtrl;
+        public static BGKManagerUserControl BGKManagerCtrl;
         bool MetadataCtrlPane = false;
+        bool BGKManagerCtrlPane = false;
 
         internal static App _app = null;
         public static App Instance
@@ -41,6 +43,10 @@ namespace BIMassist
                 a.RegisterDockablePane(new DockablePaneId(GuidCollection.GetMetadataDockablePaneID()),
                     "Metadaten",
                     new MetadataPaneProvider());
+
+                BGKManagerCtrl = new BGKManagerUserControl();
+                a.RegisterDockablePane(new DockablePaneId(GuidCollection.GetBGKManagerDockablePaneID()),
+                    "BGK-Manager", new BGKManagerPaneProvider());
             }
             catch
             {
@@ -50,8 +56,20 @@ namespace BIMassist
 
             try
             {
+
+                // BGK Manager
+
+                btnData = new PushButtonData("BGK-Manager", "BGK-Manager", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.BGKManagerCommandStartup")
+                {
+                    ToolTip = "BGK-Manager öffnen",
+                    LongDescription = "Öffnet das BGK-Manager Fenster",
+                    Image = GetImageSource("label_16px.png"),
+                    LargeImage = GetImageSource("label_24px.png")
+                };
+                panel.AddItem(btnData);
+
                 //Matadata-Funktionen
-                
+
                 btnData = new PushButtonData("Metadaten", "Metadaten", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.MetadataCommandStartup")
                 {
                     ToolTip = "Metadaten lesen/bearbeiten",
@@ -183,7 +201,19 @@ namespace BIMassist
                     MetadataPaneProvider.MetadataCtrlInstance.DataContext = new MetadataViewModel(uiapp);
                 }
 
-                DockablePane dp = uiapp.ActiveUIDocument.Application.GetDockablePane(new DockablePaneId(GuidCollection.GetMetadataDockablePaneID()));
+                if (BGKManagerPaneProvider.BGKManagerCtrlInstance != null && uiapp?.ActiveUIDocument != null)
+                {
+                    BGKManagerPaneProvider.BGKManagerCtrlInstance.DataContext = new BGKManagerViewModel(uiapp);
+                }
+
+                DockablePane dp = uiapp.ActiveUIDocument.Application.GetDockablePane(new DockablePaneId(GuidCollection.GetBGKManagerDockablePaneID()));
+                if (!BGKManagerCtrlPane && dp.IsShown())
+                {
+                    dp.Hide();
+                    BGKManagerCtrlPane = true;
+                }
+
+                dp = uiapp.ActiveUIDocument.Application.GetDockablePane(new DockablePaneId(GuidCollection.GetMetadataDockablePaneID()));
                 if (!MetadataCtrlPane && dp.IsShown())
                 {
                     dp.Hide();
