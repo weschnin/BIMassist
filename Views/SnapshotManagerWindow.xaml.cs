@@ -127,15 +127,23 @@ namespace BIMassist.Views
                     return;
                 }
 
-                // Box im Window berechnen (ohne Transaction)
+                // Box und Ansichtorientierung im Window berechnen (ohne Transaction)
                 var box = BuildBoxFromEntity(entity);
+
+                // Orientierung aus Entity lesen
+                var eyePos = DataStorageManagement.StringToXYZ(SafeGet(entity, "EyePosition"));
+                var forward = DataStorageManagement.StringToXYZ(SafeGet(entity, "ForwardDirection"));
+                var up = DataStorageManagement.StringToXYZ(SafeGet(entity, "UpDirection"));
 
                 _handler.Pending = new SectionBoxAction
                 {
                     Type = SectionBoxActionType.Apply,
                     StorageId = selected.Storage.Id,
                     Schema = _schema,
-                    Box = box
+                    Box = box,
+                    EyePosition = eyePos,
+                    ForwardDirection = forward,
+                    UpDirection = up
                 };
 
                 _exEvent.Raise();
@@ -231,6 +239,17 @@ namespace BIMassist.Views
 
         private void OnCloseClick(object sender, RoutedEventArgs e)
         {
+            // Prevent the ExternalEvent handler from invoking UI callbacks after the window is closed
+            try
+            {
+                _handler.SetStatus = null;
+                _handler.Pending = null;
+            }
+            catch
+            {
+                // ignore
+            }
+
             Close();
         }
 
