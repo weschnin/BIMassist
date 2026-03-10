@@ -2,74 +2,60 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.ExtensibleStorage;
 using Autodesk.Revit.UI;
-using BIMassist.Core;
+using BIMassist.Views;
+using System;
 
 namespace BIMassist.Commands
 {
     [Transaction(TransactionMode.Manual)]
     public class RestoreSectionBoxCommand : IExternalCommand
     {
+        // identisch zur AWESBox-Logik: Schema-GUID für benannte Snapshots
+        private static readonly Guid NamedSchemaGuid = new Guid("A1E7D2C4-9E19-4A1F-B9A0-8D0E0C6C4F11");
+
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
             UIDocument uiDoc = commandData.Application.ActiveUIDocument;
             Document doc = uiDoc.Document;
 
-            View3D view3D = doc.ActiveView as View3D;
-
-            // Validierung
-            if (view3D == null || view3D.IsTemplate)
+            try
             {
-                TaskDialog.Show("Fehler", "Die Ausführung dieser Funktion ist nur innerhalb eines Projektes und einer 3D-Ansicht möglich.");
+                Schema schema = GetOrCreateNamedSchema();
+
+                var manager = new SnapshotManagerWindow(commandData.Application, doc, schema);
+                WpfOwner.ShowModeless(manager, commandData.Application);
+                return Result.Succeeded;
+            }
+            catch (Exception ex)
+            {
+                message = ex.Message;
                 return Result.Failed;
             }
-
-            RestoreSectionBoxFromDataStorage(doc, view3D);
-
-            return Result.Succeeded;
         }
-        private void RestoreSectionBoxFromDataStorage(Document doc, View3D view)
+
+        private static Schema GetOrCreateNamedSchema()
         {
-            DataStorage storage = DataStorageManagement.GetOrCreateDataStorage(doc);
-            Entity entity = storage.GetEntity(DataStorageManagement.GetOrCreateSchema());
+            Schema schema = Schema.Lookup(NamedSchemaGuid);
+            if (schema != null) return schema;
 
-            if (!entity.IsValid()) return;
+            SchemaBuilder sb = new SchemaBuilder(NamedSchemaGuid);
+            sb.SetSchemaName("AWESBox_SectionBoxSnapshot");
+            sb.SetReadAccessLevel(AccessLevel.Public);
+            sb.SetWriteAccessLevel(AccessLevel.Public);
 
-            XYZ localMin = DataStorageManagement.StringToXYZ(entity.Get<string>("localMin"));
-            XYZ localMax = DataStorageManagement.StringToXYZ(entity.Get<string>("localMax"));
-            XYZ origin = DataStorageManagement.StringToXYZ(entity.Get<string>("Origin"));
-            XYZ basisX_raw = DataStorageManagement.StringToXYZ(entity.Get<string>("BasisX"));
-            XYZ basisZ_raw = DataStorageManagement.StringToXYZ(entity.Get<string>("BasisZ"));
+            sb.AddSimpleField("Name", typeof(string));
+            sb.AddSimpleField("localMin", typeof(string));
+            sb.AddSimpleField("localMax", typeof(string));
+            sb.AddSimpleField("Origin", typeof(string));
+            sb.AddSimpleField("BasisX", typeof(string));
+            sb.AddSimpleField("BasisY", typeof(string));
+            sb.AddSimpleField("BasisZ", typeof(string));
 
-            // Basisvektoren rekonstruieren
-            XYZ basisZ = basisZ_raw.Normalize();
-            XYZ basisX = basisX_raw.Normalize();
-            XYZ basisY = basisZ.CrossProduct(basisX).Normalize(); // Nur dieser CrossProduct
-            basisX = basisY.CrossProduct(basisZ).Normalize();
+            sb.AddSimpleField("EyePosition", typeof(string));
+            sb.AddSimpleField("ForwardDirection", typeof(string));
+            sb.AddSimpleField("UpDirection", typeof(string));
 
-            Transform t = Transform.Identity;
-            t.Origin = origin;
-            t.BasisX = basisX;
-            t.BasisY = basisY;
-            t.BasisZ = basisZ;
-
-            // Min/Max wieder in Weltkoordinaten
-            XYZ min = t.OfPoint(localMin);
-            XYZ max = t.OfPoint(localMax);
-
-            BoundingBoxXYZ box = new BoundingBoxXYZ
-            {
-                Transform = t,
-                Min = min,
-                Max = max
-            };
-
-            using (Transaction tx = new Transaction(doc, "Restore SectionBox"))
-            {
-                tx.Start();
-                view.IsSectionBoxActive = true;
-                view.SetSectionBox(box);
-                tx.Commit();
-            }
+            return sb.Finish();
         }
     }
 }

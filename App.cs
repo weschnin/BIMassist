@@ -151,7 +151,7 @@ namespace BIMassist
                 btnData = new PushButtonData("Schnittbereich speichern", "Schnittbereich speichern", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.SaveSectionBoxCommand");
                 pulldownGroup.AddPushButton(btnData);
 
-                btnData = new PushButtonData("Schnittbereich wiederherstellen", "Schnittbereich wiederherstellen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.RestoreSectionBoxCommand");
+                btnData = new PushButtonData("Schnittbereich verwalten/auswählen", "Schnittbereich verwalten/auswählen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.RestoreSectionBoxCommand");
                 pulldownGroup.AddPushButton(btnData);
 
                 panel.AddSeparator();

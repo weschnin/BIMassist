@@ -286,7 +286,7 @@
   </ItemGroup>
 
   <Target Name="PostBuild" AfterTargets="PostBuildEvent">
-    <Exec Command="xcopy /y /d &quot;$(TargetPath)&quot; &quot;C:\ProgramData\Autodesk\Revit\Addins\2026\&quot;&#xA;xcopy /y /d &quot;$(ProjectDir)*.addin&quot; &quot;C:\ProgramData\Autodesk\Revit\Addins\2026\&quot;&#xA;" />
+    <Exec Command="xcopy /y /d &quot;$(TargetPath)&quot; &quot;C:\Users\wesch\AppData\Roaming\Autodesk\Revit\Addins\2026&quot;&#xA;xcopy /y /d &quot;$(ProjectDir)*.addin&quot; &quot;C:\Users\wesch\AppData\Roaming\Autodesk\Revit\Addins\2026&quot;&#xA;" />
   </Target>
 
 </Project>

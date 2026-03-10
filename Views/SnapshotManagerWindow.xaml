@@ -1,0 +1,34 @@
+﻿<Window x:Class="BIMassist.Views.SnapshotManagerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SectionBox-Snapshots" Height="420" Width="520"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanMinimize" ShowInTaskbar="False">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="8"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="12"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Gespeicherte SectionBoxes:" FontWeight="SemiBold"/>
+
+        <ListBox x:Name="List" Grid.Row="2" DisplayMemberPath="Name"
+                 MouseDoubleClick="List_MouseDoubleClick" />
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="BtnShow" Content="Zeigen/Aktivieren" Margin="0,0,8,0" Click="OnShowClick" IsDefault="True"/>
+            <Button x:Name="BtnRename" Content="Umbenennen" Margin="0,0,8,0" Click="OnRenameClick"/>
+            <Button x:Name="BtnDelete" Content="Löschen" Margin="0,0,8,0" Click="OnDeleteClick"/>
+            <Button x:Name="BtnClose" Content="Schließen" Click="OnCloseClick" />
+        </StackPanel>
+
+        <StatusBar Grid.Row="5" Margin="0,8,0,0">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="" />
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>
