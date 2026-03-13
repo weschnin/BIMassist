@@ -26,13 +26,13 @@ namespace BIMassist.Commands
             string depthStr = Microsoft.VisualBasic.Interaction.InputBox("Tiefe der Extrusion (in Metern):", "Tiefe", "1.0");
             if (!double.TryParse(depthStr.Replace(',', '.'), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double depthMeters) || depthMeters <= 0)
             {
-                TaskDialog.Show("Fehler", "Ungültige Tiefe.");
+                Autodesk.Revit.UI.TaskDialog.Show("Fehler", "Ungültige Tiefe.");
                 return Result.Failed;
             }
 
             double extrusionDepth = UnitUtils.ConvertToInternalUnits(depthMeters, UnitTypeId.Meters);
 
-            TaskDialogResult dir = TaskDialog.Show("Richtung", "Extrusionsrichtung?\nJa = Vorwärts\nNein = Rückwärts", TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No);
+            TaskDialogResult dir = Autodesk.Revit.UI.TaskDialog.Show("Richtung", "Extrusionsrichtung?\nJa = Vorwärts\nNein = Rückwärts", TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No);
             bool reverse = dir == TaskDialogResult.No;
 
             // 2. Fläche wählen
@@ -56,7 +56,7 @@ namespace BIMassist.Commands
 
                 if (!File.Exists(templatePath))
                 {
-                    TaskDialog.Show("Fehler", "Vorlage nicht gefunden:\n" + templatePath);
+                    Autodesk.Revit.UI.TaskDialog.Show("Fehler", "Vorlage nicht gefunden:\n" + templatePath);
                     return Result.Failed;
                 }
 
@@ -122,11 +122,11 @@ namespace BIMassist.Commands
                     }
                 }
 
-                TaskDialog.Show("Fertig", $"Familie '{familyName}' wurde platziert.");
+                Autodesk.Revit.UI.TaskDialog.Show("Fertig", $"Familie '{familyName}' wurde platziert.");
             }
             else
             {
-                TaskDialog.Show("Fertig", $"Extrusion in Familien-Dokument eingefügt.");
+                Autodesk.Revit.UI.TaskDialog.Show("Fertig", $"Extrusion in Familien-Dokument eingefügt.");
             }
 
             return Result.Succeeded;

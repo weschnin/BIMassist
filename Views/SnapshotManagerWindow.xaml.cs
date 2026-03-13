@@ -213,7 +213,7 @@ namespace BIMassist.Views
                 return;
             }
 
-            var result = MessageBox.Show(this,
+            var result = System.Windows.MessageBox.Show(this,
                 "Diesen Snapshot löschen?\n\n" + selected.Name,
                 "Löschen bestätigen",
                 MessageBoxButton.YesNo, MessageBoxImage.Question);

@@ -39,7 +39,7 @@ namespace BIMassist.Commands
             }
             catch (Exception msg)
             {
-                TaskDialog.Show("Fehler", msg.Message);
+                Autodesk.Revit.UI.TaskDialog.Show("Fehler", msg.Message);
             }
 
             return Result.Succeeded;

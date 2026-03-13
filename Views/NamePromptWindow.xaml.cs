@@ -17,7 +17,7 @@ namespace BIMassist.Views
             string name = NameBox.Text != null ? NameBox.Text.Trim() : string.Empty;
             if (string.IsNullOrEmpty(name))
             {
-                MessageBox.Show(this, "Bitte eine Bezeichnung eingeben.", "Hinweis",
+                System.Windows.MessageBox.Show(this, "Bitte eine Bezeichnung eingeben.", "Hinweis",
                                 MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }

@@ -106,7 +106,7 @@ namespace BIMassist.Core
                 return geometryObjs;
             else
             {
-                TaskDialog.Show("Fehler", "Es wurden keine (gültigen) Geometrien erkannt");
+                Autodesk.Revit.UI.TaskDialog.Show("Fehler", "Es wurden keine (gültigen) Geometrien erkannt");
                 return null;
             }
         }
@@ -204,9 +204,9 @@ namespace BIMassist.Core
                 }
                 catch
                 {
-                    TaskDialog.Show("Fehler", "Vorlagendatei 'Allgemeine Familie.rft' konnte nicht gefunden werden. Bitte wählen Sie die Datei aus.");
+                    Autodesk.Revit.UI.TaskDialog.Show("Fehler", "Vorlagendatei 'Allgemeine Familie.rft' konnte nicht gefunden werden. Bitte wählen Sie die Datei aus.");
 
-                    OpenFileDialog openFileDialog = new OpenFileDialog()
+                    Microsoft.Win32.OpenFileDialog openFileDialog = new Microsoft.Win32.OpenFileDialog()
                     {
                         Filter = "rft files (*.rft)|*.rft",
                         InitialDirectory = uiapp.Application.FamilyTemplatePath
@@ -263,7 +263,7 @@ namespace BIMassist.Core
             }
             else
             {
-                TaskDialog.Show("Hinweis", "Familie wurde erstellt. Instanziierung im Familien-Dokument ist nicht möglich.");
+                Autodesk.Revit.UI.TaskDialog.Show("Hinweis", "Familie wurde erstellt. Instanziierung im Familien-Dokument ist nicht möglich.");
             }
         }
 

@@ -24,7 +24,7 @@ namespace BIMassist.Commands
             }
             catch (Exception msg)
             {
-                TaskDialog.Show("Warnung", msg.Message);
+                Autodesk.Revit.UI.TaskDialog.Show("Warnung", msg.Message);
             }
 
             return Result.Succeeded;

@@ -112,8 +112,8 @@ namespace BIMassist.ViewModels
 
                 // Werte aus Auswahl
                 string kategorie = SelectedBaugruppe?.Key ?? string.Empty;
-                string typnummer = SelectedTypmarkierung.Typnummer ?? string.Empty;
-                string beschreibung = SelectedTypmarkierung.Beschreibung ?? string.Empty;
+                string typnummer = SelectedTypmarkierung?.Typnummer.ToString() ?? string.Empty;
+                string beschreibung = SelectedTypmarkierung?.Typbezeichnung ?? string.Empty;
 
                 var pBGK = type.get_Parameter(BuiltInParameter.ASSEMBLY_CODE);
                 var pTypeComment = type.get_Parameter(BuiltInParameter.ALL_MODEL_TYPE_COMMENTS);
@@ -163,7 +163,7 @@ namespace BIMassist.ViewModels
         {
             try
             {
-                var dlg = new OpenFileDialog
+                var dlg = new Microsoft.Win32.OpenFileDialog
                 {
                     Title = "CSV importieren",
                     Filter = "CSV / Text (*.csv;*.txt)|*.csv;*.txt|Alle Dateien (*.*)|*.*",
@@ -224,7 +224,8 @@ namespace BIMassist.ViewModels
                     dict[kat] = bg;
                 }
 
-                bg.Typmarkierungen.Add(new Typmarkierung { Typnummer = typ, Beschreibung = bes });
+                if (!int.TryParse(typ, out int parsedTyp)) parsedTyp = 0;
+                bg.Typmarkierungen.Add(new Typmarkierung { Typnummer = parsedTyp, Typbezeichnung = bes });
             }
 
             var neu = dict.Values
@@ -232,7 +233,7 @@ namespace BIMassist.ViewModels
                           .Select(b =>
                           {
                               b.Typmarkierungen = new ObservableCollection<Typmarkierung>(
-                                  b.Typmarkierungen.OrderBy(t => t.Typnummer, StringComparer.CurrentCultureIgnoreCase));
+                                  b.Typmarkierungen.OrderBy(t => t.Typnummer));
                               return b;
                           });
 

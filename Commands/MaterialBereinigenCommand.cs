@@ -51,7 +51,7 @@ namespace BIMassist.Commands
                 if (materialsToDelete.Count > 0)
                 {
                     // Benutzerabfrage: Löschen bestätigen
-                    var result = MessageBox.Show(
+                    var result = System.Windows.MessageBox.Show(
                         $"Sollen {materialsToDelete.Count} 'Standard'-Materialelement(e) gelöscht werden?",
                         "Materialbibliothek bereinigen",
                         MessageBoxButton.YesNoCancel
@@ -71,13 +71,13 @@ namespace BIMassist.Commands
                 else
                 {
                     // Keine passenden Elemente gefunden
-                    TaskDialog.Show("Materialbereinigung", "Es wurden keine 'Standard'-Materialelemente gefunden.");
+                    Autodesk.Revit.UI.TaskDialog.Show("Materialbereinigung", "Es wurden keine 'Standard'-Materialelemente gefunden.");
                 }
             }
             catch (Exception ex)
             {
                 // Fehlerbehandlung: Meldung ausgeben und Fehler zurückgeben
-                TaskDialog.Show("Fehler bei der Materialbereinigung", ex.Message);
+                Autodesk.Revit.UI.TaskDialog.Show("Fehler bei der Materialbereinigung", ex.Message);
                 message = ex.Message;
                 return Result.Failed;
             }

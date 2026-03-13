@@ -34,7 +34,7 @@ namespace BIMassist.Fenster
         {
             if (SelectedMaterials.Count == 0)
             {
-                MessageBox.Show("Bitte mindestens ein Material auswählen.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                System.Windows.MessageBox.Show("Bitte mindestens ein Material auswählen.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
             DialogResult = true;

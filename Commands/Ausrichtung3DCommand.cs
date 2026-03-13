@@ -190,7 +190,7 @@ namespace BIMassist.Commands
             catch (Exception ex)
             {
                 message = ex.Message;
-                TaskDialog.Show("Fehler", ex.ToString());
+                Autodesk.Revit.UI.TaskDialog.Show("Fehler", ex.ToString());
                 return Result.Failed;
             }
         }

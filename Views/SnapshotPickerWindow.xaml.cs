@@ -35,7 +35,7 @@ namespace BIMassist.Views
             }
             else
             {
-                MessageBox.Show(this, "Bitte zuerst einen Eintrag auswählen.", "Hinweis",
+                System.Windows.MessageBox.Show(this, "Bitte zuerst einen Eintrag auswählen.", "Hinweis",
                                 MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }

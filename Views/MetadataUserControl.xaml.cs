@@ -8,7 +8,7 @@ namespace BIMassist.Views
     /// <summary>
     /// Interaktionslogik für MetadataUserControl.xaml
     /// </summary>
-    public partial class MetadataUserControl : UserControl
+    public partial class MetadataUserControl : System.Windows.Controls.UserControl
     {
         public MetadataUserControl()
         {

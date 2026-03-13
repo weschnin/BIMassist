@@ -22,7 +22,7 @@ namespace BIMassist.Commands
             View3D view3D = doc.ActiveView as View3D;
             if (view3D == null || view3D.IsTemplate)
             {
-                TaskDialog.Show("Fehler", "Bitte eine 3D-Ansicht aktivieren.");
+                Autodesk.Revit.UI.TaskDialog.Show("Fehler", "Bitte eine 3D-Ansicht aktivieren.");
                 return Result.Failed;
             }
 

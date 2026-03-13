@@ -10,11 +10,11 @@ namespace BIMassist.Commands
 {
     public class BGKManagerPaneProvider : IDockablePaneProvider
     {
-        public static BGKManagerUserControl BGKManagerCtrlInstance;
+        public static BIMassist.Hauptfenster BGKManagerCtrlInstance;
 
         public void SetupDockablePane(DockablePaneProviderData data)
         {
-            BGKManagerCtrlInstance = new BGKManagerUserControl();
+            BGKManagerCtrlInstance = new BIMassist.Hauptfenster();
             data.FrameworkElement = BGKManagerCtrlInstance;
             data.InitialState = new DockablePaneState
             {

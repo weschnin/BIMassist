@@ -38,7 +38,7 @@ namespace BIMassist.Commands
             }
             catch (Exception msg)
             {
-                TaskDialog.Show("Error", msg.Message);
+                Autodesk.Revit.UI.TaskDialog.Show("Error", msg.Message);
             }
 
             return Result.Succeeded;

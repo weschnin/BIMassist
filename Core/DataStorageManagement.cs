@@ -16,8 +16,11 @@ namespace BIMassist.Core
 
             SchemaBuilder schemaBuilder = new SchemaBuilder(SchnittbereichSchemaGuid);
             schemaBuilder.SetReadAccessLevel(AccessLevel.Public);
-            schemaBuilder.SetWriteAccessLevel(AccessLevel.Public);
-            schemaBuilder.SetVendorId("gmail.com.weschnin");
+            // Prevent cross-addin write conflicts when switching/opening documents.
+            // Public write access can trigger Revit's "Datenkonflikt - Add-Ons" dialog if another add-in
+            // uses colliding schema metadata.
+            schemaBuilder.SetWriteAccessLevel(AccessLevel.Vendor);
+            schemaBuilder.SetVendorId("com.weschnin.bimassist");
             
             schemaBuilder.AddSimpleField("localMin", typeof(string));
             schemaBuilder.AddSimpleField("localMax", typeof(string));
@@ -26,7 +29,7 @@ namespace BIMassist.Core
             schemaBuilder.AddSimpleField("BasisY", typeof(string));
             schemaBuilder.AddSimpleField("BasisZ", typeof(string));
 
-            schemaBuilder.SetSchemaName("SectionBoxStorage");
+            schemaBuilder.SetSchemaName("BIMassist_SectionBoxStorage");
             return schemaBuilder.Finish();
         }
         public static DataStorage GetOrCreateDataStorage(Document doc)

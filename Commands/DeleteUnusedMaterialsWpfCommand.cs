@@ -34,7 +34,7 @@ namespace BIMassist.Commands
 
             if (unused.Count == 0)
             {
-                TaskDialog.Show("Materialien löschen", "Keine unbenutzten Materialien gefunden.");
+                Autodesk.Revit.UI.TaskDialog.Show("Materialien löschen", "Keine unbenutzten Materialien gefunden.");
                 return Result.Succeeded;
             }
 
@@ -56,7 +56,7 @@ namespace BIMassist.Commands
                 t.Commit();
             }
 
-            TaskDialog.Show("Fertig", $"{dialog.SelectedMaterials.Count} Materialien gelöscht.");
+            Autodesk.Revit.UI.TaskDialog.Show("Fertig", $"{dialog.SelectedMaterials.Count} Materialien gelöscht.");
             return Result.Succeeded;
         }
 

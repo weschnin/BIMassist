@@ -29,7 +29,7 @@ namespace BIMassist.Helpers
 
                 if (fam == null)
                 {
-                    TaskDialog.Show("Fehler", "Family im Family-Editor nicht gefunden.");
+                    Autodesk.Revit.UI.TaskDialog.Show("Fehler", "Family im Family-Editor nicht gefunden.");
                     famDoc.Close(false);
                     return false;
                 }
@@ -47,7 +47,7 @@ namespace BIMassist.Helpers
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Fehler beim Speichern", ex.ToString());
+                Autodesk.Revit.UI.TaskDialog.Show("Fehler beim Speichern", ex.ToString());
                 if (famDoc != null && famDoc.IsModifiable)
                     famDoc.Close(false);
                 return false;
