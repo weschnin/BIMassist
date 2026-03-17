@@ -171,6 +171,17 @@ namespace BIMassist
         {
             try
             {
+                // When Revit is shutting down, there may be no active document/UI anymore.
+                // Avoid prompting in that case.
+                // We don't have a valid UIApplication here (only ControlledApplication).
+                // Be conservative: if there is no known data file or no data loaded, don't prompt.
+                // This avoids prompts after all documents are already closed.
+                if (BGKManagerPaneProvider.BGKManagerCtrlInstance?.DataContext is MainViewModel mv2)
+                {
+                    if (mv2.Baugruppen == null || mv2.Baugruppen.Count == 0)
+                        return Result.Succeeded;
+                }
+
                 // If BGK manager has unsaved changes, ask to save on shutdown
                 if (BGKManagerPaneProvider.BGKManagerCtrlInstance != null && BGKManagerPaneProvider.BGKManagerCtrlInstance.DataContext is MainViewModel mv)
                 {
@@ -201,6 +212,8 @@ namespace BIMassist
                                 mv.SaveData("true");
                             }
                         }
+                        // Prevent repeated prompts during shutdown
+                        mv.changed = false;
                     }
                 }
             }
@@ -227,20 +240,26 @@ namespace BIMassist
             try
             {
                 UIApplication uiapp = sender as UIApplication;
+
+                // If there's no document (e.g. all documents closed), don't run project-switch logic
+                // and don't trigger save prompts.
+                if (uiapp?.ActiveUIDocument?.Document == null)
+                    return;
                 
                 if (MetadataPaneProvider.MetadataCtrlInstance != null && uiapp?.ActiveUIDocument != null)
                 {
                     MetadataPaneProvider.MetadataCtrlInstance.DataContext = new MetadataViewModel(uiapp);
                 }
 
-                if (BGKManagerPaneProvider.BGKManagerCtrlInstance != null && uiapp?.ActiveUIDocument != null)
+                 if (BGKManagerPaneProvider.BGKManagerCtrlInstance != null)
                 {
                     // Detect project/document switch: prompt to save BGK changes if any
                     try
                     {
                         var doc = uiapp.ActiveUIDocument.Document;
                         var currentPath = !string.IsNullOrWhiteSpace(doc?.PathName) ? doc.PathName : doc?.Title ?? string.Empty;
-                        if (!string.IsNullOrWhiteSpace(_lastActiveDocumentPath) && !_lastActiveDocumentPath.Equals(currentPath, System.StringComparison.OrdinalIgnoreCase))
+                        if (!string.IsNullOrWhiteSpace(_lastActiveDocumentPath)
+                            && !_lastActiveDocumentPath.Equals(currentPath, System.StringComparison.OrdinalIgnoreCase))
                         {
                             var pane = BGKManagerPaneProvider.BGKManagerCtrlInstance;
                             if (pane != null && pane.DataContext is MainViewModel mv && mv.changed)
@@ -274,6 +293,21 @@ namespace BIMassist
                                             mv.SaveData("true");
                                         }
                                     }
+                                    else
+                                    {
+                                        // User chose not to save: discard changes by re-loading configured data file
+                                        var settingsPath = Properties.Settings.Default.PfadBGKDatei;
+                                        try
+                                        {
+                                            if (!string.IsNullOrWhiteSpace(settingsPath) && File.Exists(settingsPath))
+                                            {
+                                                mv.LoadDataFromPath(settingsPath);
+                                            }
+                                        }
+                                        catch { }
+                                    }
+                                    // Either saved or user chose not to save; don't ask again for this switch.
+                                    mv.changed = false;
                                 }
                             }
                         }

@@ -22,7 +22,9 @@ namespace BIMassist
             set => Set(ref _description, value);
         }
 
+        [XmlIgnore]
         private string _NodeComment;
+        [XmlIgnore]
         public string NodeComment
         {
             get => _NodeComment;

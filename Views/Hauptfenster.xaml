@@ -7,7 +7,7 @@
     xmlns:md="clr-namespace:BIMassist"
     xmlns:conv="clr-namespace:BIMassist"
     xmlns:conv2="clr-namespace:BIMassist.Converters"
-    xmlns:controls="clr-namespace:BIMassist"
+    xmlns:controls="clr-namespace:BIMassist" 
     x:Name="Hauptfenstr" Title="Baugruppenkennzeichen verwalten"
     x:Class="BIMassist.Hauptfenster"
     mc:Ignorable="d" Height="700" Width="500" Background="White">
@@ -16,7 +16,7 @@
         <conv:SearchTextConverter x:Key="SearchTextBackgroundColor"/>
         <conv2:BooleanNegationConverter x:Key="BooleanNegationConverter"/>
         <Style x:Key="ProtectedNode" TargetType="{x:Type StackPanel}">
-            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Background" Value="Transparent"/>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding NodeProtection, UpdateSourceTrigger=PropertyChanged}" Value="True">
                     <Setter Property="Background" Value="LightGray" />
@@ -58,7 +58,7 @@
         </Style>
     </Page.Resources>
 
-    <Grid Margin="0,0,3.6,-0.6" AllowDrop="True"  >
+    <Grid Margin="0,0,3.6,-0.6" AllowDrop="True">
 
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="10"/>
@@ -68,19 +68,19 @@
             <ColumnDefinition Width="25"/>
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
-            <RowDefinition Height="25"/>
-            <RowDefinition Height="39*"/>
-            <RowDefinition Height="30"/>
-            <RowDefinition Height="30"/>
-            <RowDefinition Height="30"/>
-            <RowDefinition Height="24"/>
-            <RowDefinition Height="37*"/>
-            <RowDefinition Height="60"/>
-            <RowDefinition Height="46.4"/>
-            <RowDefinition Height="40"/>
+            <RowDefinition Height="32"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Menu Grid.Row="0" Grid.ColumnSpan="4" VerticalAlignment="Center" Height="17" Margin="0,4,0,3.8">
+        <Menu Grid.ColumnSpan="4" VerticalAlignment="Center" Height="16">
             <MenuItem Header="_Datei">
                 <MenuItem Header="_Neu" Command="{Binding NewOwnDataCommand}"/>
                 <Separator/>
@@ -91,7 +91,7 @@
             <MenuItem Header="Einstellungen" Command="{Binding Einstellungen}"/>
         </Menu>
 
-        <TreeView x:Name="BG_Liste" Margin="3.4,0.2,3,9.4" Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="1" ItemsSource="{Binding Baugruppen, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" >
+        <TreeView x:Name="BG_Liste" Margin="5,3,5,3" Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="1" ItemsSource="{Binding Baugruppen, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Stretch" >
             <TreeView.Resources>
                 <DataTemplate x:Key="EditTemplate">
                     <StackPanel x:Name="TreeViewNode" Style="{StaticResource ProtectedNode}" Orientation="Horizontal">
@@ -158,7 +158,7 @@
             </TreeView.ItemContainerStyle>
         </TreeView>
 
-        <DockPanel LastChildFill="True" Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="2" VerticalAlignment="Center" Height="27" Margin="0.4,1.6,0,1.8">
+        <DockPanel LastChildFill="True" Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="2" VerticalAlignment="Center" Margin="5,0,5,0" HorizontalAlignment="Stretch">
 
             <Button Style="{StaticResource ItemButtonStyle}" Command="{Binding AddLabel}" ToolTip="neues Element hinzufügen" IsEnabled="{Binding SelectedNode.NodeProtection, Converter={StaticResource BooleanNegationConverter}, FallbackValue=True}"
                     CommandParameter="{Binding SelectedNode, UpdateSourceTrigger=PropertyChanged}">
@@ -189,75 +189,68 @@
                 <Image Source="/BIMassist;component/Resources/right_32px.png"/>
             </Button>
             <Button Style="{StaticResource ItemButtonSendValuesStyle}" Command="{Binding ExpandCloseNodesCmd}" ToolTip="Unterelemente öffnen/schließen"
-                    CommandParameter="{Binding SelectedNode, UpdateSourceTrigger=PropertyChanged}">
+                    CommandParameter="{Binding SelectedNode, UpdateSourceTrigger=PropertyChanged}" Width="36" HorizontalAlignment="Left">
                 <Image Source="/BIMassist;component/Resources/expand_collapsed2_32px.png"/>
             </Button>
 
-            <TextBlock x:Name="textBoxSearch" Text="Suchen " Margin="5" TextWrapping="Wrap"/>
-            <TextBox x:Name="txtSearchEntry" Text="" Margin="5" TextWrapping="Wrap"/>
+            <ToggleButton x:Name="ProtectedToggleButton" Background="Transparent" BorderThickness="1" BorderBrush="#FFB0B0B0" Margin="2,0,0,0"
+              IsChecked="{Binding SelectedNode.NodeProtection, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="36" Height="23" VerticalAlignment="Center">
+                <Image Width="16" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Image.Style>
+                        <Style TargetType="{x:Type Image}">
+                            <Setter Property="Source" Value="/BIMassist;component/Resources/Schloss_auf_32.png"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsChecked, ElementName=ProtectedToggleButton}" Value="True">
+                                    <Setter Property="Source" Value="/BIMassist;component/Resources/Schloss_zu_32.png" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsChecked, ElementName=ProtectedToggleButton}" Value="False">
+                                    <Setter Property="Source" Value="/BIMassist;component/Resources/Schloss_auf_32.png" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Image.Style>
+                </Image>
+            </ToggleButton>
+
+            <Button Style="{StaticResource ItemButtonSendValuesStyle}" Command="{Binding SaveOwnDataCommand}" ToolTip="Daten in der voreingestellten Datei speichern" Margin="10,0,0,0"
+                    CommandParameter="False">
+                <Image Source="/BIMassist;component/Resources/floppy-disk.png" />
+            </Button>
+            <Button Style="{StaticResource ItemButtonSendValuesStyle}" Command="{Binding LoadOwnDataFromConfiguredPathCommand}" ToolTip="Daten aus der voreingestellten XML-Datei laden" Margin="10,0,0,0">
+                <Image Source="/BIMassist;component/Resources/openDoc_32px.png" />
+            </Button>
+
+            <Button Style="{StaticResource ItemButtonSendValuesStyle}" Command="{Binding SaveOwnDataCommand}" ToolTip="Speichern unter" Margin="5,0,0,0"
+                    CommandParameter="True">
+                <Image Source="/BIMassist;component/Resources/SaveDocu_24px.png" />
+            </Button>
+            <Button Style="{StaticResource ItemButtonSendValuesStyle}" Command="{Binding Einstellungen}" ToolTip="Einstellungen" Margin="5,0,0,0" Width="30" >
+                <Image Source="/BIMassist;component/Resources/Einstellungen 24.png" />
+            </Button>
 
         </DockPanel>
 
-        <DockPanel Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="3" LastChildFill="True" Margin="0.4,0.2,0.2,29.2" Grid.RowSpan="2">
-            <TextBlock DockPanel.Dock="Left" Text="Baugruppe:" Margin="5" />
-            <controls:TextBoxOwnControl Text="{Binding SelectedNode.Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,5,5,5" MinWidth="80" 
-                     IsReadOnly="{Binding SelectedNode.NodeProtection, UpdateSourceTrigger=PropertyChanged}"/>
-            <controls:TextBoxOwnControl Text="{Binding SelectedNode.Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="5,5,5,5"
-                     IsReadOnly="{Binding SelectedNode.NodeProtection, UpdateSourceTrigger=PropertyChanged}"  />
+        <DockPanel Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="3" LastChildFill="True" Margin="5,3,5,0" VerticalAlignment="Center">
+            <TextBlock DockPanel.Dock="Left" Text="Baugruppe:" Margin="5" Width="61" VerticalAlignment="Center" />
+            <controls:TextBoxOwnControl Text="{Binding SelectedNode.Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="2,5,4,5" MinWidth="80" 
+                     IsReadOnly="{Binding SelectedNode.NodeProtection, UpdateSourceTrigger=PropertyChanged}" Height="24" VerticalAlignment="Center"/>
+            <controls:TextBoxOwnControl Text="{Binding SelectedNode.Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="4,5,0,5"
+                     IsReadOnly="{Binding SelectedNode.NodeProtection, UpdateSourceTrigger=PropertyChanged}" Height="24" HorizontalAlignment="Stretch" />
+            <!-- Schloss-Button wurde in die Toolbar-Zeile verschoben -->
         </DockPanel>
 
-        <ToggleButton x:Name="ProtectedToggleButton" Grid.Column="4" Grid.Row="3" Background="Transparent"  BorderThickness="2" Margin="4.8,5.2,5,5.2"
-                      IsChecked="{Binding SelectedNode.NodeProtection, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
-            <ToggleButton.Style>
-                <Style TargetType="{x:Type ToggleButton}">
-                    <Setter Property="Template">
-                        <Setter.Value>
-                            <ControlTemplate TargetType="{x:Type ToggleButton}">
-                                <Border BorderBrush="{TemplateBinding BorderBrush}" Background="{TemplateBinding Background}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                            </ControlTemplate>
-                        </Setter.Value>
-                    </Setter>
-                    <Style.Triggers>
-                        <Trigger Property="IsChecked" Value="True">
-                            <Setter Property="Background" Value="Transparent" />
-                        </Trigger>
-                    </Style.Triggers>
-                </Style>
-            </ToggleButton.Style>
-            <Image Width="16" Height="16" RenderTransformOrigin="0.975,1">
-                <Image.Style>
-                    <Style TargetType="{x:Type Image}">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedNode.NodeProtection, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Value="true">
-                                <Setter Property="Source">
-                                    <Setter.Value>
-                                        <BitmapImage UriSource="/BIMassist;component/Resources/Schloss_zu_32.png" />
-                                    </Setter.Value>
-                                </Setter>
-                            </DataTrigger>
-                            <DataTrigger Binding="{Binding SelectedNode.NodeProtection, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Value="false">
-                                <Setter Property="Source">
-                                    <Setter.Value>
-                                        <BitmapImage UriSource="/BIMassist;component/Resources/Schloss_auf_32.png" />
-                                    </Setter.Value>
-                                </Setter>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Image.Style>
-            </Image>
-        </ToggleButton>
+        <DockPanel Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="5" LastChildFill="True" VerticalAlignment="Top" Height="24" Margin="5,3,5,0" HorizontalAlignment="Stretch">
+            <TextBlock Text="Suchen" Margin="5,0,5,0" Width="39" />
+            <TextBox x:Name="txtSearchEntry" Margin="2,0,0,0" HorizontalAlignment="Stretch" />
 
-        <DockPanel Grid.Column="2" Grid.Row="3" Grid.ColumnSpan="2" LastChildFill="True" Margin="0.4,30.2,0,22.2" Grid.RowSpan="3">
-            <TextBlock Margin="5" DockPanel.Dock="Left"><Run Text="BGK-"/><Run Text="Kommentar "/></TextBlock>
-            <controls:TextBoxOwnControl Text="{Binding SelectedNode.NodeComment, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}" DockPanel.Dock="Bottom" Margin="0.4,5,5,5"
-                     IsReadOnly="{Binding SelectedNode.NodeProtection, UpdateSourceTrigger=PropertyChanged}"/>
         </DockPanel>
-        <DataGrid x:Name="Typmarkierung" CanUserResizeRows="False" HorizontalScrollBarVisibility="Visible"  VerticalScrollBarVisibility="Auto" Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="6" Margin="4.4,2.8,4,0"
+
+        <TextBlock x:Name="textBlock1" Grid.Column="2" HorizontalAlignment="Left" Margin="5,6,5,2" Grid.Row="6" TextWrapping="Wrap" Text="Typenliste" VerticalAlignment="Center" Width="74" Height="16"/>
+
+        <!-- BGK-Kommentar wurde entfernt -->
+        <DataGrid x:Name="Typmarkierung" CanUserResizeRows="False" HorizontalScrollBarVisibility="Visible"  VerticalScrollBarVisibility="Auto" Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="7" Margin="5,0,5,3"
                       AutoGenerateColumns="False" CanUserDeleteRows="False" CanUserAddRows="False" CanUserResizeColumns="True" CanUserSortColumns="True" SelectionMode="Single"
-                      ItemsSource="{Binding SelectedNode.Typmarkierungen, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="213" VerticalAlignment="Top">
+                      ItemsSource="{Binding SelectedNode.Typmarkierungen, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Typnummer" MinWidth="75" Binding="{Binding Typnummer, UpdateSourceTrigger=LostFocus, Mode=TwoWay}"/>
                 <DataGridTextColumn Header="Typbezeichnung" MinWidth="250" Width="*" Binding="{Binding Typbezeichnung, UpdateSourceTrigger=LostFocus, Mode=TwoWay}"/>
@@ -271,10 +264,10 @@
             <DataGrid.InputBindings>
                 <KeyBinding Key="Delete" Command="{Binding DelTypenmarkierung}" CommandParameter="{Binding SelectedItem, ElementName=Typmarkierung, UpdateSourceTrigger=PropertyChanged}"/>
             </DataGrid.InputBindings>
-               
+
         </DataGrid>
 
-        <StackPanel Orientation="Horizontal" Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="8" VerticalAlignment="Center" Margin="0.4,6,0.2,6">
+        <StackPanel Orientation="Horizontal" Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="8" VerticalAlignment="Center" Height="23" Margin="5,0,5,3" HorizontalAlignment="Left">
             <Button Style="{StaticResource ItemButtonStyle}" Command="{Binding AddTypenmarkierung}" ToolTip="neues Element hinzufügen" Margin="5,0,0,0" IsEnabled="{Binding SelectedNode.NodeProtection, Converter={StaticResource BooleanNegationConverter}, FallbackValue=True}"
                     CommandParameter="{Binding SelectedNode, UpdateSourceTrigger=PropertyChanged}">
                 <Image Source="/BIMassist;component/Resources/add_32px.png"/>
@@ -283,11 +276,11 @@
                     CommandParameter="{Binding SelectedItem, ElementName=Typmarkierung, UpdateSourceTrigger=PropertyChanged}">
                 <Image Source="/BIMassist;component/Resources/copy_32.png"/>
             </Button>
-            <Button Style="{StaticResource ItemButtonStyle}" Command="{Binding MoveUpTypenmarkierung}" ToolTip="Element löschen" Margin="10,0,0,0" IsEnabled="{Binding SelectedNode.NodeProtection, Converter={StaticResource BooleanNegationConverter}, FallbackValue=True}"
+            <Button Style="{StaticResource ItemButtonStyle}" Command="{Binding MoveUpTypenmarkierung}" ToolTip="Element nach oben verschieben" Margin="10,0,0,0" IsEnabled="{Binding SelectedNode.NodeProtection, Converter={StaticResource BooleanNegationConverter}, FallbackValue=True}"
                     CommandParameter="{Binding SelectedItem, ElementName=Typmarkierung, UpdateSourceTrigger=PropertyChanged}">
                 <Image Source="/BIMassist;component/Resources/up_32.png"/>
             </Button>
-            <Button Style="{StaticResource ItemButtonStyle}" Command="{Binding MoveDownTypenmarkierung}" ToolTip="Element löschen" Margin="10,0,0,0" IsEnabled="{Binding SelectedNode.NodeProtection, Converter={StaticResource BooleanNegationConverter}, FallbackValue=True}"
+            <Button Style="{StaticResource ItemButtonStyle}" Command="{Binding MoveDownTypenmarkierung}" ToolTip="Element nach unten verschieben" Margin="10,0,0,0" IsEnabled="{Binding SelectedNode.NodeProtection, Converter={StaticResource BooleanNegationConverter}, FallbackValue=True}"
                     CommandParameter="{Binding SelectedItem, ElementName=Typmarkierung, UpdateSourceTrigger=PropertyChanged}">
                 <Image Source="/BIMassist;component/Resources/down_32.png"/>
             </Button>
@@ -300,21 +293,12 @@
                 <Image Source="/BIMassist;component/Resources/writeIntoFamily_32px.png"/>
             </Button>
             <TextBlock Width="10" />
-            <Button Style="{StaticResource ItemButtonSendValuesStyle}" Command="{Binding SaveOwnDataCommand}" ToolTip="Daten in der voreingestellten Datei speichern" Margin="10,0,0,0"
-                    CommandParameter="False">
-                <Image Source="/BIMassist;component/Resources/floppy-disk.png" />
-            </Button>
-            <Button Style="{StaticResource ItemButtonSendValuesStyle}" Command="{Binding LoadOwnDataFromConfiguredPathCommand}" ToolTip="Daten aus der voreingestellten XML-Datei laden" Margin="10,0,0,0">
-                <Image Source="/BIMassist;component/Resources/openDoc_32px.png" />
-            </Button>
         </StackPanel>
 
-        <Border Grid.Column="0" Grid.ColumnSpan="5" Grid.Row="9" Margin="0,2,0,0" VerticalAlignment="Stretch" Background="#FFF3F3F3" BorderBrush="#FFDDDDDD" BorderThickness="1" Padding="6">
+        <Border Grid.Column="0" Grid.ColumnSpan="5" Grid.Row="9" Margin="0,2,0,0" Background="#FFF3F3F3" BorderBrush="#FFDDDDDD" BorderThickness="1" Padding="6">
             <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" />
         </Border>
-        <TextBlock x:Name="textBlock" Grid.Column="2" HorizontalAlignment="Left" Margin="5.4,5.2,0,0" Grid.Row="7" TextWrapping="Wrap" Text="Typ-Kommentar" VerticalAlignment="Top" Width="96" Height="16"/>
-        <TextBox x:Name="txtboxTypkommentar" Grid.Column="2" Height="50" Margin="101.4,5.2,5,0" Grid.Row="7" TextWrapping="Wrap" Text="{Binding SelectedItem.Typkommentar, ElementName=Typmarkierung, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Top" Grid.ColumnSpan="2" VerticalScrollBarVisibility="Visible"/>
-        <TextBlock x:Name="textBlock1" Grid.Column="2" HorizontalAlignment="Left" Margin="5.4,5.8,0,0" Grid.Row="5" TextWrapping="Wrap" Text="Typenliste" VerticalAlignment="Top" Width="74" Height="16"/>
+        <!-- Typ-Kommentar wurde entfernt -->
 
     </Grid>
 </Page>

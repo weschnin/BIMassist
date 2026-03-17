@@ -38,7 +38,9 @@ namespace BIMassist
             set => Set(ref _typlabel, value);
         }
 
+        [XmlIgnore]
         private string _typKommentar;
+        [XmlIgnore]
         public string Typkommentar
         {
             get => _typKommentar;

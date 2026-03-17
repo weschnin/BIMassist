@@ -168,6 +168,13 @@ namespace BIMassist
             FamilyManager famManager = famDoc.FamilyManager;
             if (famManager == null) return;
 
+            // Ensure a current type is selected; if none, fall back to first type.
+            if (famManager.CurrentType == null)
+            {
+                var first = famManager.Types?.Cast<FamilyType>()?.FirstOrDefault();
+                if (first != null) famManager.CurrentType = first;
+            }
+
             using (Transaction tx = new Transaction(famDoc, "BGK-Parameter verifizieren und zuweisen"))
             {
                 tx.Start();

@@ -344,13 +344,18 @@ namespace BIMassist
             ParameterListeFüllen();
             changed = false;
 
-            // Mark ViewModel property changes as edits (ignore the changed flag itself)
+            // Mark ViewModel property changes as edits.
+            // Important: ignore status/UI-only properties, otherwise actions like "Übertragen" or status updates
+            // can incorrectly trigger the "BGK-Daten wurden verändert" prompt.
             this.PropertyChanged += (s, e) =>
             {
                 try
                 {
-                    if (!_suspendChangeTracking && e?.PropertyName != nameof(changed))
-                        changed = true;
+                    if (_suspendChangeTracking) return;
+                    if (e?.PropertyName == null) return;
+                    if (e.PropertyName == nameof(changed)) return;
+                    if (e.PropertyName == nameof(StatusMessage)) return;
+                    changed = true;
                 }
                 catch { }
             };
@@ -415,16 +420,63 @@ namespace BIMassist
                 var node = FindNodeContainingTyp(selectedTyp);
                 if (node == null) return;
 
-                var ids = uidoc?.Selection?.GetElementIds()?.ToList() ?? new List<ElementId>();
+                // Document/UIDocument can change in Revit (project <-> family editor). Don't rely on cached fields.
+                var currentUiDoc = uiapp?.ActiveUIDocument;
+                var currentDoc = currentUiDoc?.Document;
+                if (currentDoc == null)
+                {
+                    ShowStatus("Kein aktives Dokument.");
+                    return;
+                }
+
+                // If we are editing a family, write into the currently active family type.
+                if (currentDoc.IsFamilyDocument)
+                {
+                    _assignHandler.SetRequest(new BgkAssignRequest
+                    {
+                        Mode = AssignMode.ActiveFamilyDoc,
+                        ElementIds = null,
+                        BgkKey = node.Key,
+                        BgkDescription = node.Description,
+                        TypNummer = selectedTyp.Typnummer.ToString(),
+                        Typbeschreibung = selectedTyp.Typbezeichnung,
+                        BestaetigungBGKZUweisung = BestaetigungBGKZUweisung,
+                        FamilyAutoSave = FamilyAutoSave
+                    });
+
+                    _assignEvent.Raise();
+                    // Übertragen ändert keine BGK-Daten
+                    changed = false;
+                    ShowStatus("Daten in aktive Familie übertragen.");
+                    return;
+                }
+
+                var ids = currentUiDoc?.Selection?.GetElementIds()?.ToList() ?? new List<ElementId>();
                 if (ids.Count == 0)
                 {
-                    ShowStatus("Keine Elemente selektiert – Werte nicht übertragen.");
-                    return;
+                    try
+                    {
+                        ShowStatus("Bitte Elemente auswählen und mit ENTER bestätigen...");
+                        var picked = currentUiDoc.Selection.PickObjects(Autodesk.Revit.UI.Selection.ObjectType.Element,
+                            "Bitte Elemente auswählen und mit ENTER bestätigen");
+                        ids = picked?.Select(r => r.ElementId).Distinct().ToList() ?? new List<ElementId>();
+                    }
+                    catch (Autodesk.Revit.Exceptions.OperationCanceledException)
+                    {
+                        ShowStatus("Auswahl abgebrochen – Werte nicht übertragen.");
+                        return;
+                    }
+
+                    if (ids.Count == 0)
+                    {
+                        ShowStatus("Keine Elemente ausgewählt – Werte nicht übertragen.");
+                        return;
+                    }
                 }
 
                 _assignHandler.SetRequest(new BgkAssignRequest
                 {
-                    Mode = (doc != null && doc.IsFamilyDocument) ? AssignMode.ActiveFamilyDoc : AssignMode.ProjectSelection,
+                    Mode = AssignMode.ProjectSelection,
                     ElementIds = ids,
                     BgkKey = node.Key,
                     BgkDescription = node.Description,
@@ -435,6 +487,8 @@ namespace BIMassist
                 });
 
                 _assignEvent.Raise();
+                // Übertragen ändert keine BGK-Daten
+                changed = false;
                 ShowStatus("Daten übertragen.");
             }
             catch (Exception ex)
@@ -695,7 +749,20 @@ namespace BIMassist
         {
             if (node == null) return;
 
-            node.PropertyChanged += (s, e) => { if (!_suspendChangeTracking) changed = true; };
+            node.PropertyChanged += (s, e) =>
+            {
+                if (_suspendChangeTracking) return;
+                // Ignore pure UI/state properties to avoid false "unsaved changes" prompts
+                if (e?.PropertyName == nameof(Baugruppe.IsSelectedNode)
+                    || e.PropertyName == nameof(Baugruppe.ExpandNode)
+                    || e.PropertyName == nameof(Baugruppe.RootNode)
+                    || e.PropertyName == nameof(Baugruppe.Level))
+                {
+                    return;
+                }
+
+                changed = true;
+            };
             node.PropertyChanged += (s, e) =>
             {
                 if (e?.PropertyName == nameof(Baugruppe.IsSelectedNode) && node.IsSelectedNode)
