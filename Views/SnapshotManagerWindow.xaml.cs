@@ -96,7 +96,7 @@ namespace BIMassist.Views
 
         private static string SafeGet(Entity e, string field)
         {
-            try { return e.Get<string>(field); }
+            try { return BIMassist.Core.DataStorageManagement.TryGetString(e, field) ?? string.Empty; }
             catch { return string.Empty; }
         }
 
@@ -131,9 +131,13 @@ namespace BIMassist.Views
                 var box = BuildBoxFromEntity(entity);
 
                 // Orientierung aus Entity lesen
-                var eyePos = DataStorageManagement.StringToXYZ(SafeGet(entity, "EyePosition"));
-                var forward = DataStorageManagement.StringToXYZ(SafeGet(entity, "ForwardDirection"));
-                var up = DataStorageManagement.StringToXYZ(SafeGet(entity, "UpDirection"));
+                if (!DataStorageManagement.TryStringToXYZ(SafeGet(entity, "EyePosition"), out var eyePos) ||
+                    !DataStorageManagement.TryStringToXYZ(SafeGet(entity, "ForwardDirection"), out var forward) ||
+                    !DataStorageManagement.TryStringToXYZ(SafeGet(entity, "UpDirection"), out var up))
+                {
+                    SetStatus("Die gespeicherte Ansichtsorientierung ist unvollständig oder ungültig.");
+                    return;
+                }
 
                 _handler.Pending = new SectionBoxAction
                 {
@@ -262,12 +266,15 @@ namespace BIMassist.Views
         // === SectionBox anwenden ===
         private BoundingBoxXYZ BuildBoxFromEntity(Entity entity)
         {
-            XYZ localMin = DataStorageManagement.StringToXYZ(entity.Get<string>("localMin"));
-            XYZ localMax = DataStorageManagement.StringToXYZ(entity.Get<string>("localMax"));
-            XYZ origin = DataStorageManagement.StringToXYZ(entity.Get<string>("Origin"));
-            XYZ basisX = DataStorageManagement.StringToXYZ(entity.Get<string>("BasisX"));
-            XYZ basisY = DataStorageManagement.StringToXYZ(entity.Get<string>("BasisY"));
-            XYZ basisZ = DataStorageManagement.StringToXYZ(entity.Get<string>("BasisZ"));
+            if (!DataStorageManagement.TryStringToXYZ(SafeGet(entity, "localMin"), out var localMin) ||
+                !DataStorageManagement.TryStringToXYZ(SafeGet(entity, "localMax"), out var localMax) ||
+                !DataStorageManagement.TryStringToXYZ(SafeGet(entity, "Origin"), out var origin) ||
+                !DataStorageManagement.TryStringToXYZ(SafeGet(entity, "BasisX"), out var basisX) ||
+                !DataStorageManagement.TryStringToXYZ(SafeGet(entity, "BasisY"), out var basisY) ||
+                !DataStorageManagement.TryStringToXYZ(SafeGet(entity, "BasisZ"), out var basisZ))
+            {
+                throw new InvalidOperationException("Ungültige/fehlende SectionBox-Daten im Snapshot.");
+            }
 
             Transform t = Transform.Identity;
             t.Origin = origin;

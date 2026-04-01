@@ -81,6 +81,16 @@ namespace BIMassist
                 };
                 panel.AddItem(btnData);
 
+                // Borehole Manager
+                btnData = new PushButtonData("BoreholeManager", "Borehole\nManager", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.BoreholeManagerCommand")
+                {
+                    ToolTip = "Borehole Manager öffnen",
+                    LongDescription = "Öffnet den Borehole Manager (nicht-modales Fenster)",
+                    Image = GetImageSource("import_16px.png"),
+                    LargeImage = GetImageSource("import_24px.png")
+                };
+                panel.AddItem(btnData);
+
                 // Geometrie-Funktionen
 
                 PulldownButtonData PanelgroupData = new PulldownButtonData("Geometrien", "Geometrien")

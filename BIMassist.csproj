@@ -15,6 +15,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="AWESBox\**\*.cs" />
+    <Page Remove="AWESBox\**\*.xaml" />
+    <EmbeddedResource Remove="AWESBox\**\*" />
+    <Resource Remove="AWESBox\**\*" />
+    <None Remove="AWESBox\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="RevitAPI">
       <HintPath>..\..\..\..\..\Program Files\Autodesk\Revit 2026\RevitAPI.dll</HintPath>
     </Reference>

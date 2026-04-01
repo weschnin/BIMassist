@@ -12,7 +12,11 @@ namespace BIMassist.Commands
     [Transaction(TransactionMode.Manual)]
     public class SaveSectionBoxCommand : IExternalCommand
     {
-        private static readonly Guid NamedSchemaGuid = new Guid("A1E7D2C4-9E19-4A1F-B9A0-8D0E0C6C4F11");
+        // NOTE: Extensible Storage schemas are immutable per GUID.
+        // If a document already contains an older schema under the old GUID,
+        // writing fields that don't exist there will throw.
+        // Therefore we version the schema GUID when the field layout changes.
+        private static readonly Guid NamedSchemaGuidV2 = new Guid("2C8E07C2-1F70-45C5-9C0F-1A9464D1F4E6");
 
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
@@ -44,11 +48,11 @@ namespace BIMassist.Commands
 
         private static Schema GetOrCreateNamedSchema()
         {
-            Schema schema = Schema.Lookup(NamedSchemaGuid);
+            Schema schema = Schema.Lookup(NamedSchemaGuidV2);
             if (schema != null) return schema;
 
-            SchemaBuilder sb = new SchemaBuilder(NamedSchemaGuid);
-            sb.SetSchemaName("AWESBox_SectionBoxSnapshot");
+            var sb = new SchemaBuilder(NamedSchemaGuidV2);
+            sb.SetSchemaName("AWESBox_SectionBoxSnapshot_V2");
             sb.SetReadAccessLevel(AccessLevel.Public);
             sb.SetWriteAccessLevel(AccessLevel.Public);
 
@@ -60,7 +64,11 @@ namespace BIMassist.Commands
             sb.AddSimpleField("BasisY", typeof(string));
             sb.AddSimpleField("BasisZ", typeof(string));
 
-            // KEIN Datum/Uhrzeit-Feld notwendig
+            // View orientation (was missing in V1 and caused field mismatch exceptions)
+            sb.AddSimpleField("EyePosition", typeof(string));
+            sb.AddSimpleField("ForwardDirection", typeof(string));
+            sb.AddSimpleField("UpDirection", typeof(string));
+
             return sb.Finish();
         }
 
@@ -72,18 +80,18 @@ namespace BIMassist.Commands
             Schema schema = GetOrCreateNamedSchema();
             Entity entity = new Entity(schema);
 
-            entity.Set("Name", name);
-            entity.Set("localMin", DataStorageManagement.XYZToString(box.Min));
-            entity.Set("localMax", DataStorageManagement.XYZToString(box.Max));
-            entity.Set("Origin", DataStorageManagement.XYZToString(t.Origin));
-            entity.Set("BasisX", DataStorageManagement.XYZToString(t.BasisX));
-            entity.Set("BasisY", DataStorageManagement.XYZToString(t.BasisY));
-            entity.Set("BasisZ", DataStorageManagement.XYZToString(t.BasisZ));
+            DataStorageManagement.TrySet(entity, "Name", name);
+            DataStorageManagement.TrySet(entity, "localMin", DataStorageManagement.XYZToString(box.Min));
+            DataStorageManagement.TrySet(entity, "localMax", DataStorageManagement.XYZToString(box.Max));
+            DataStorageManagement.TrySet(entity, "Origin", DataStorageManagement.XYZToString(t.Origin));
+            DataStorageManagement.TrySet(entity, "BasisX", DataStorageManagement.XYZToString(t.BasisX));
+            DataStorageManagement.TrySet(entity, "BasisY", DataStorageManagement.XYZToString(t.BasisY));
+            DataStorageManagement.TrySet(entity, "BasisZ", DataStorageManagement.XYZToString(t.BasisZ));
 
             ViewOrientation3D o = view.GetOrientation();
-            entity.Set("EyePosition", DataStorageManagement.XYZToString(o.EyePosition));
-            entity.Set("ForwardDirection", DataStorageManagement.XYZToString(o.ForwardDirection));
-            entity.Set("UpDirection", DataStorageManagement.XYZToString(o.UpDirection));
+            DataStorageManagement.TrySet(entity, "EyePosition", DataStorageManagement.XYZToString(o.EyePosition));
+            DataStorageManagement.TrySet(entity, "ForwardDirection", DataStorageManagement.XYZToString(o.ForwardDirection));
+            DataStorageManagement.TrySet(entity, "UpDirection", DataStorageManagement.XYZToString(o.UpDirection));
 
             DataStorage existing = new FilteredElementCollector(doc)
                 .OfClass(typeof(DataStorage))
@@ -92,9 +100,11 @@ namespace BIMassist.Commands
                 {
                     try
                     {
-                        Entity e = ds.GetEntity(schema);
-                        return e.IsValid() &&
-                               string.Equals(e.Get<string>("Name"), name, StringComparison.OrdinalIgnoreCase);
+                        var e = ds.GetEntity(schema);
+                        if (e.IsValid())
+                            return string.Equals(DataStorageManagement.TryGetString(e, "Name"), name, StringComparison.OrdinalIgnoreCase);
+
+                        return false;
                     }
                     catch
                     {

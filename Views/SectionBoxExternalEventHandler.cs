@@ -140,7 +140,7 @@ namespace BIMassist.Views
                 if (!e.IsValid())
                     throw new InvalidOperationException("Ungültige Entity im DataStorage.");
 
-                e.Set("Name", Pending.NewName);
+                BIMassist.Core.DataStorageManagement.TrySet(e, "Name", Pending.NewName);
                 ds.SetEntity(e);
 
                 tx.Commit();
