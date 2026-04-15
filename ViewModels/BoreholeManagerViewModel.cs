@@ -404,8 +404,11 @@ namespace BIMassist.ViewModels
             _extrHandler.Layers = Layers.ToList();
             _extrHandler.BoreholeDiameterMeters = BoreholeDiameterCm / 100.0;
             _extrHandler.MaterialNameColumn = SelectedMaterialNameColumn;
-            _extrHandler.UseCodeAsLayerKey = string.Equals(SelectedMaterialNameColumn, "GeologyCode", StringComparison.OrdinalIgnoreCase)
-                                            || string.Equals(SelectedMaterialNameColumn, "Code", StringComparison.OrdinalIgnoreCase);
+            // Schichtbildung im Modell immer nach Code (GeologyCode),
+            // unabhängig davon, aus welcher Spalte der Materialname kommt.
+            // Fallback auf Beschreibung nur, wenn keine Codes vorhanden sind.
+            bool hasAnyCode = Layers.Any(l => !string.IsNullOrWhiteSpace(l.GeologyCode));
+            _extrHandler.UseCodeAsLayerKey = hasAnyCode;
             _evExtr.Raise();
         }
 
@@ -419,8 +422,9 @@ namespace BIMassist.ViewModels
             _groundHandler.MaxInterpDistanceMeters = MaxInterpDistanceMeters;
             _groundHandler.MinThicknessMeters = MinThicknessMeters;
             _groundHandler.MaterialNameColumn = SelectedMaterialNameColumn;
-            _groundHandler.UseCodeAsLayerKey = string.Equals(SelectedMaterialNameColumn, "GeologyCode", StringComparison.OrdinalIgnoreCase)
-                                              || string.Equals(SelectedMaterialNameColumn, "Code", StringComparison.OrdinalIgnoreCase);
+            // 3D-Bodenmodell ebenfalls nach Code gruppieren; bei fehlenden Codes bleibt das alte Verhalten.
+            bool hasAnyCode = Layers.Any(l => !string.IsNullOrWhiteSpace(l.GeologyCode));
+            _groundHandler.UseCodeAsLayerKey = hasAnyCode;
             _groundHandler.BoundaryTopMode = UseFlatBoundaryTop ? CreateGroundModelHandler.EdgeTopMode.FlatAtMean : CreateGroundModelHandler.EdgeTopMode.NearestBorehole;
             _evGround.Raise();
         }

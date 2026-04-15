@@ -37,7 +37,7 @@
             // 0a) Gleichnamige Schichten je Bohrung zusammenlegen (analog Extrusionen)
             allLayers = MergeLayersPerBorehole(allLayers, useCodeAsLayerKey);
 
-            if (boreholes == null || boreholes.Count < 3) throw new InvalidOperationException("Zu wenige Bohrungen.");
+            if (boreholes == null || boreholes.Count < 1) throw new InvalidOperationException("Keine Bohrungen.");
             if (allLayers == null || allLayers.Count == 0) throw new InvalidOperationException("Keine Schichten.");
             if (userBoundary == null) throw new ArgumentNullException(nameof(userBoundary));
 
@@ -169,6 +169,135 @@
             return result;
         }
 
+        public ElementId BuildTopSurface_AlongAxis_FromLayerData(
+            Document doc,
+            IList<Borehole> boreholes,
+            IList<GeologyLayer> allLayers,
+            Level levelBottom,
+            ToposolidType baseType,
+            CurveLoop userBoundary,
+            XYZ axisP0Int, XYZ axisP1Int,
+            bool useCodeAsLayerKey)
+        {
+            if (boreholes == null || boreholes.Count < 1) throw new InvalidOperationException("Keine Bohrungen.");
+            if (allLayers == null || allLayers.Count == 0) throw new InvalidOperationException("Keine Schichten.");
+            if (userBoundary == null) throw new ArgumentNullException(nameof(userBoundary));
+
+            EnsureVariableSingleLayerType(doc, baseType);
+
+            var (E0, N0) = GetAnchor(doc, boreholes);
+            var boundaryCorners_m = BoundaryVerticesMeters(userBoundary);
+            if (boundaryCorners_m == null || boundaryCorners_m.Count < 3) throw new InvalidOperationException("Ungültige Boundary.");
+
+            double zLevel_m = UnitUtils.ConvertFromInternalUnits(levelBottom.Elevation, UnitTypeId.Meters);
+
+            // Axis in local meters
+            XYZ axisP0_m = new XYZ(
+                UnitUtils.ConvertFromInternalUnits(axisP0Int.X, UnitTypeId.Meters) - E0,
+                UnitUtils.ConvertFromInternalUnits(axisP0Int.Y, UnitTypeId.Meters) - N0, 0);
+            XYZ axisP1_m = new XYZ(
+                UnitUtils.ConvertFromInternalUnits(axisP1Int.X, UnitTypeId.Meters) - E0,
+                UnitUtils.ConvertFromInternalUnits(axisP1Int.Y, UnitTypeId.Meters) - N0, 0);
+
+            XYZ dir = axisP1_m - axisP0_m;
+            double len = Math.Max(1e-9, Math.Sqrt(dir.X * dir.X + dir.Y * dir.Y));
+            dir = new XYZ(dir.X / len, dir.Y / len, 0);
+            XYZ perp = new XYZ(-dir.Y, dir.X, 0);
+
+            // Boreholes per ID
+            var bhById = new Dictionary<string, Borehole>(StringComparer.OrdinalIgnoreCase);
+            foreach (var bh in boreholes)
+            {
+                if (bh == null) continue;
+                var id = (bh.LocationID ?? "").Trim();
+                if (id.Length > 0 && !bhById.ContainsKey(id)) bhById[id] = bh;
+            }
+
+            Func<GeologyLayer, string> keyFor = gl =>
+            {
+                var raw = useCodeAsLayerKey ? (gl.GeologyCode ?? "") : (gl.Description ?? "");
+                raw = (raw ?? "").Trim(); if (raw.Length == 0) raw = "SCHICHT";
+                return Regex.Replace(raw.ToUpperInvariant(), @"\s+", " ");
+            };
+
+            // For each borehole: determine the topmost layer (min DepthTop) and compute its Z(top).
+            var topZByBhId = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            foreach (var grp in allLayers.GroupBy(gl => (gl.LocationID ?? "").Trim(), StringComparer.OrdinalIgnoreCase))
+            {
+                if (!bhById.TryGetValue(grp.Key, out var bh)) continue;
+                var topLayer = grp.Where(gl => gl != null).OrderBy(gl => gl.DepthTop).FirstOrDefault();
+                if (topLayer == null) continue;
+                double zGL = bh.GroundLevel;
+                double zTop = _depthIsBelowGround ? zGL - topLayer.DepthTop : zGL + topLayer.DepthTop;
+                topZByBhId[grp.Key] = zTop;
+            }
+
+            // Stations along axis (boreholes inside boundary)
+            var stations = new List<Tuple<double, string, double, double>>();
+            foreach (var kv in bhById)
+            {
+                var bh = kv.Value;
+                double x = bh.Easting - E0, y = bh.Northing - N0;
+                var pInt = ToInt(new XYZ(x, y, levelBottom.Elevation));
+                if (!PointInCurveLoop2D(userBoundary, pInt)) continue;
+                double s = (x - axisP0_m.X) * dir.X + (y - axisP0_m.Y) * dir.Y;
+                stations.Add(Tuple.Create(s, kv.Key, x, y));
+            }
+            stations.Sort((a, b) => a.Item1.CompareTo(b.Item1));
+            if (stations.Count == 0) throw new InvalidOperationException("Keine Bohrungen entlang der Achse innerhalb der Boundary.");
+
+            // Build 3 points per station + boundary points with interpolated Z
+            var heightPts_m = new List<XYZ>();
+            var stationZ = new List<Tuple<double, double>>();
+            for (int i = 0; i < stations.Count; i++)
+            {
+                var st = stations[i];
+                if (!topZByBhId.TryGetValue(st.Item2, out var zStation))
+                    continue;
+
+                const double T = 1e6;
+                XYZ s0 = new XYZ(st.Item3 - perp.X * T, st.Item4 - perp.Y * T, 0);
+                XYZ s1 = new XYZ(st.Item3 + perp.X * T, st.Item4 + perp.Y * T, 0);
+                var sec = IntersectInfiniteLineWithPolygon(s0, s1, boundaryCorners_m);
+                if (sec.Count < 2) continue;
+
+                stationZ.Add(Tuple.Create(st.Item1, zStation));
+
+                AddHeightUniqueXY(heightPts_m, new XYZ(sec[0].X, sec[0].Y, zStation));
+                AddHeightUniqueXY(heightPts_m, new XYZ(st.Item3, st.Item4, zStation));
+                AddHeightUniqueXY(heightPts_m, new XYZ(sec[1].X, sec[1].Y, zStation));
+            }
+
+            if (heightPts_m.Count == 0) throw new InvalidOperationException("Keine gültigen Höhenpunkte für Top-Surface.");
+
+            stationZ.Sort((a, b) => a.Item1.CompareTo(b.Item1));
+            for (int i = 0; i < boundaryCorners_m.Count; i++)
+            {
+                var vtx = boundaryCorners_m[i];
+                double sv = (vtx.X - axisP0_m.X) * dir.X + (vtx.Y - axisP0_m.Y) * dir.Y;
+                double zv = InterpZ_NoEarlyRunout(sv, stationZ, zLevel_m);
+                AddHeightUniqueXY(heightPts_m, new XYZ(vtx.X, vtx.Y, zv));
+            }
+
+            // Ensure above bottom level by minimum thickness
+            for (int i = 0; i < heightPts_m.Count; i++)
+            {
+                var p = heightPts_m[i];
+                if (p.Z < zLevel_m + _minThicknessM)
+                    heightPts_m[i] = new XYZ(p.X, p.Y, zLevel_m + _minThicknessM);
+            }
+
+            var heightPts_int = heightPts_m.Select(p => ToInt(p)).ToList();
+            Toposolid topo;
+            using (var tx = new Transaction(doc, "AWESBox – Top-Surface (Achse)"))
+            {
+                tx.Start();
+                topo = CreateToposolidFlexible(doc, new List<CurveLoop> { userBoundary }, heightPts_int, levelBottom.Id, baseType.Id);
+                tx.Commit();
+            }
+            return topo?.Id ?? ElementId.InvalidElementId;
+        }
+
         public Dictionary<string, ElementId> BuildToposolidPerLayer_AlongAxis(
             Document doc,
             IList<Borehole> boreholes,
@@ -180,7 +309,7 @@
             bool useCodeAsLayerKey,
             bool allowZeroThickness)
         {
-            if (boreholes == null || boreholes.Count < 3) throw new InvalidOperationException("Zu wenige Bohrungen.");
+            if (boreholes == null || boreholes.Count < 1) throw new InvalidOperationException("Keine Bohrungen.");
             if (allLayers == null || allLayers.Count == 0) throw new InvalidOperationException("Keine Schichten.");
             if (userBoundary == null) throw new ArgumentNullException(nameof(userBoundary));
 
@@ -387,9 +516,13 @@
     XYZ axisP0Int, XYZ axisP1Int,
     bool useCodeAsLayerKey)
         {
-            if (boreholes == null || boreholes.Count < 3) throw new InvalidOperationException("Zu wenige Bohrungen.");
+            if (boreholes == null || boreholes.Count < 1) throw new InvalidOperationException("Keine Bohrungen.");
             if (allLayers == null || allLayers.Count == 0) throw new InvalidOperationException("Keine Schichten.");
             if (userBoundary == null) throw new ArgumentNullException(nameof(userBoundary));
+
+            // KRITISCH: Zuerst Layer pro Bohrung nach GeologyCode zusammenführen (identisch zur Extrusionslogik).
+            // Dies stellt sicher, dass pro Code genau EINE Schicht entsteht, nicht mehrere Subgruppen.
+            allLayers = MergeLayersPerBorehole(allLayers, useCodeAsLayerKey);
 
             EnsureVariableSingleLayerType(doc, baseType);
 
@@ -420,14 +553,16 @@
                 if (id.Length > 0 && !bhById.ContainsKey(id)) bhById[id] = bh;
             }
 
-            // PATCH: Key-Funktion exakt wie in AlongAxis (deine aktuelle Version verwenden!)
-            Func<GeologyLayer, string> keyFor = gl =>
+            // Einfache Gruppierung nach Code/Beschreibung – KEINE Subgruppen mehr!
+            // Die Daten wurden bereits per MergeLayersPerBorehole zusammengeführt.
+            Func<GeologyLayer, string> rawKey = gl =>
             {
                 var raw = useCodeAsLayerKey ? (gl.GeologyCode ?? "") : (gl.Description ?? "");
                 raw = (raw ?? "").Trim(); if (raw.Length == 0) raw = "SCHICHT";
                 return System.Text.RegularExpressions.Regex.Replace(raw.ToUpperInvariant(), @"\s+", " ");
             };
-            var groups = allLayers.GroupBy(keyFor)
+
+            var groups = allLayers.GroupBy(rawKey)
                                   .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
             // zBase je Bohrung/Schichtschlüssel (an DepthBase)
@@ -440,8 +575,9 @@
                     Borehole bh;
                     if (!bhById.TryGetValue(lid, out bh)) continue;
 
-                    // DepthBase => absolute Z der Basissurface
-                    double baseD = gl.DepthBase;
+                    // DepthBase can be either absolute base depth OR a thickness value depending on source.
+                    // If it is not greater than DepthTop, treat it as thickness (DepthTop + DepthBase).
+                    double baseD = gl.DepthBase > gl.DepthTop ? gl.DepthBase : (gl.DepthTop + gl.DepthBase);
                     double zGL = bh.GroundLevel;
                     double zBase = _depthIsBelowGround ? zGL - baseD : zGL + baseD;
 
