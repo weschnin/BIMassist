@@ -364,6 +364,162 @@ namespace BIMassist.Core
                 }
             }
         }
+
+        /// <summary>
+        /// Erstellt eine neue Familie mit dem Volumenkörper als ABZUGSKÖRPER.
+        /// Die Option "Abzugskörper beim Laden in Projekt schneiden" wird aktiviert.
+        /// </summary>
+        /// <param name="uiapp">UIApplication</param>
+        /// <param name="doc">Das aktuelle Projekt-Dokument</param>
+        /// <param name="solid">Das Solid das als Abzugskörper verwendet werden soll</param>
+        /// <param name="famName">Name der neuen Familie</param>
+        /// <param name="position">Position für die Platzierung (optional) - wenn null, wird das Solid an seiner Original-Position belassen</param>
+        /// <returns>Die erstellte FamilyInstance oder null bei Fehler</returns>
+        internal static FamilyInstance CreateVoidFamily(UIApplication uiapp, Document doc, Solid solid, string famName, XYZ position = null)
+        {
+            // Standard-Vorlagendatei für Familien bestimmen
+            string templatePath = Properties.Settings.Default.PfadVorlageAllgemeineFamilie;
+            if (string.IsNullOrEmpty(templatePath))
+                templatePath = uiapp.Application.FamilyTemplatePath + "\\Allgemeine Familie.rft";
+
+            Document familyDoc = null;
+            Family family = null;
+
+            // Vorlagen-Datei laden/auswählen falls nicht vorhanden
+            while (familyDoc == null)
+            {
+                try
+                {
+                    familyDoc = uiapp.Application.NewFamilyDocument(templatePath);
+                }
+                catch
+                {
+                    TaskDialog.Show("Fehler", "Vorlagendatei 'Allgemeine Familie.rft' konnte nicht gefunden werden. Bitte wählen Sie die Datei aus.");
+
+                    Microsoft.Win32.OpenFileDialog openFileDialog = new Microsoft.Win32.OpenFileDialog()
+                    {
+                        Filter = "rft files (*.rft)|*.rft",
+                        InitialDirectory = uiapp.Application.FamilyTemplatePath
+                    };
+                    if (openFileDialog.ShowDialog() == true)
+                    {
+                        templatePath = openFileDialog.FileName;
+                        Properties.Settings.Default.PfadVorlageAllgemeineFamilie = templatePath;
+                        Properties.Settings.Default.Save();
+                    }
+                    else
+                        return null; // Abbruch durch Nutzer
+                }
+            }
+
+            FreeFormElement voidElement = null;
+
+            // Geometrie als Abzugskörper einfügen
+            // WICHTIG: Das Solid wird NICHT verschoben - es behält seine Original-Koordinaten
+            // Die Familie wird dann bei (0,0,0) platziert, sodass das Solid an seiner Original-Position erscheint
+            using (Transaction t = new Transaction(familyDoc, "Abzugskörper erstellen"))
+            {
+                t.Start();
+
+                FamilyManager famManager = familyDoc.FamilyManager;
+
+                // Familientyp erstellen/verwenden
+                FamilyType famType = famManager.Types.Size > 0
+                    ? famManager.Types.Cast<FamilyType>().First()
+                    : famManager.NewType("Bodenverdrängung");
+
+                famManager.CurrentType = famType;
+
+                // FreeFormElement erstellen - Solid behält seine Original-Koordinaten
+                voidElement = FreeFormElement.Create(familyDoc, solid);
+
+                if (voidElement != null)
+                {
+                    // Als Abzugskörper (Void) setzen
+                    Parameter isSolidParam = voidElement.get_Parameter(BuiltInParameter.ELEMENT_IS_CUTTING);
+                    if (isSolidParam != null && !isSolidParam.IsReadOnly)
+                    {
+                        isSolidParam.Set(1); // 1 = Abzugskörper (Void), 0 = Volumenkörper (Solid)
+                    }
+                }
+
+                t.Commit();
+            }
+
+            // "Abzugskörper beim Laden schneiden" aktivieren
+            using (Transaction t = new Transaction(familyDoc, "Abzugskörper-Option aktivieren"))
+            {
+                t.Start();
+
+                // Familienparameter für "Beim Laden in Projekt schneiden" setzen
+                FamilyManager famManager = familyDoc.FamilyManager;
+
+                // Diese Option wird über den FamilyManager gesetzt
+                // Parameter: "Schneidet mit Abzugskörper beim Laden"
+                try
+                {
+                    Parameter cutWithVoidsParam = familyDoc.OwnerFamily?.get_Parameter(BuiltInParameter.FAMILY_ALLOW_CUT_WITH_VOIDS);
+                    if (cutWithVoidsParam != null && !cutWithVoidsParam.IsReadOnly)
+                    {
+                        cutWithVoidsParam.Set(1);
+                    }
+                }
+                catch { }
+
+                t.Commit();
+            }
+
+            // Familie ins Projekt laden
+            family = familyDoc.LoadFamily(doc, new JtFamilyLoadOptions());
+            familyDoc.Close(false);
+
+            if (family == null)
+            {
+                TaskDialog.Show("Fehler", "Familie konnte nicht in das Projekt geladen werden.");
+                return null;
+            }
+
+            // Familie umbenennen
+            FamilyInstance placedInstance = null;
+
+            using (Transaction t = new Transaction(doc, "Abzugskörper-Familie benennen und platzieren"))
+            {
+                t.Start();
+
+                // Name setzen
+                family.Name = famName;
+
+                // FamilySymbol finden und aktivieren
+                var collector = new FilteredElementCollector(doc)
+                    .OfClass(typeof(FamilySymbol))
+                    .Cast<FamilySymbol>()
+                    .Where(fs => fs.Family.Id == family.Id)
+                    .ToList();
+
+                if (collector.Count > 0)
+                {
+                    FamilySymbol symbol = collector.First();
+                    if (!symbol.IsActive)
+                        symbol.Activate();
+
+                    // WICHTIG: Familie bei (0,0,0) platzieren!
+                    // Das Solid in der Familie hat bereits seine Original-Welt-Koordinaten,
+                    // daher muss die Familie bei (0,0,0) platziert werden, damit das Solid
+                    // an seiner ursprünglichen Position erscheint.
+                    XYZ placementPos = XYZ.Zero;
+
+                    // Instanz platzieren
+                    placedInstance = doc.Create.NewFamilyInstance(
+                        placementPos, 
+                        symbol, 
+                        Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+                }
+
+                t.Commit();
+            }
+
+            return placedInstance;
+        }
     }
 
 }

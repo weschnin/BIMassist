@@ -121,6 +121,13 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                btnData = new PushButtonData("Bodenverdrängung", "Bodenverdrängung", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.BodenverdrängungCommand")
+                {
+                    ToolTip = "Außenhülle durch Raycasting erstellen",
+                    LongDescription = "Erstellt eine approximierte Außenhülle eines 3D-Elements durch Abtastung von außen. Das Ergebnis wird als DirectShape im Modell gespeichert.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 // Materialien-Funktionen
 
                 PanelgroupData = new PulldownButtonData("Materialien", "Materialien")
