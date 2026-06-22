@@ -30,27 +30,36 @@ namespace BIMassist.Helpers
                 if (fam == null)
                 {
                     Autodesk.Revit.UI.TaskDialog.Show("Fehler", "Family im Family-Editor nicht gefunden.");
-                    famDoc.Close(false);
                     return false;
                 }
 
                 using (Transaction t = new Transaction(famDoc, "Metadaten speichern"))
                 {
-                    t.Start();
-                    MetadataStorage.SaveMetadata(famDoc, fam, values); // Ohne SubTransaction reicht völlig!
-                    t.Commit();
+                    try
+                    {
+                        t.Start();
+                        MetadataStorage.SaveMetadata(famDoc, fam, values);
+                        t.Commit();
+                    }
+                    catch
+                    {
+                        if (t.GetStatus() == TransactionStatus.Started)
+                            t.RollBack();
+                        throw;
+                    }
                 }
 
                 famDoc.LoadFamily(projectDoc, new JtFamilyLoadOptions());
-                famDoc.Close(false);
                 return true;
             }
             catch (Exception ex)
             {
                 Autodesk.Revit.UI.TaskDialog.Show("Fehler beim Speichern", ex.ToString());
-                if (famDoc != null && famDoc.IsModifiable)
-                    famDoc.Close(false);
                 return false;
+            }
+            finally
+            {
+                TryCloseFamilyDocument(famDoc);
             }
         }
 
@@ -85,8 +94,23 @@ namespace BIMassist.Helpers
             }
             finally
             {
-                if (famDoc != null && famDoc.IsModifiable)
+                TryCloseFamilyDocument(famDoc);
+            }
+        }
+
+        private static void TryCloseFamilyDocument(Document famDoc)
+        {
+            if (famDoc == null)
+                return;
+
+            try
+            {
+                if (famDoc.IsValidObject)
                     famDoc.Close(false);
+            }
+            catch
+            {
+                // Best effort cleanup; shutdown/transaction state can already be in teardown.
             }
         }
     }

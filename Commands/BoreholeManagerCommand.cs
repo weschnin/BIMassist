@@ -77,6 +77,29 @@ namespace BIMassist.Commands
                 SetForegroundWindow(hwnd);
         }
 
+        public static void CloseWindow()
+        {
+            lock (_lock)
+            {
+                if (_window == null)
+                    return;
+
+                try
+                {
+                    if (_window.IsVisible)
+                        _window.Close();
+                }
+                catch
+                {
+                }
+                finally
+                {
+                    _window = null;
+                    _vm = null;
+                }
+            }
+        }
+
         private static void BringToFront(Window win)
         {
             if (win == null) return;

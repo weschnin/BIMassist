@@ -22,8 +22,10 @@ namespace BIMassist.ViewModels
         public UIDocument UIDocument => UIApp?.ActiveUIDocument;
         public Document Document => UIDocument?.Document;
 
+        private readonly EventHandler _selectionTimerTickHandler;
         private DispatcherTimer _selectionTimer;
         private ElementId _lastSelectionId;
+        private bool _disposed;
 
         public string DeveloperFirstName { get; set; }
         public string FamilyPath { get; set; }
@@ -101,21 +103,34 @@ namespace BIMassist.ViewModels
             UnlockCommand = new RelayCommand(() => UnlockEvent.Raise());
 
             // Timer für Family-Auswahl
+            _selectionTimerTickHandler = SelectionTimer_Tick;
             _selectionTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromSeconds(1)
             };
-            _selectionTimer.Tick += (s, e) => RefreshSelectedFamily();
+            _selectionTimer.Tick += _selectionTimerTickHandler;
             _selectionTimer.Start();
+        }
+
+        private void SelectionTimer_Tick(object sender, EventArgs e)
+        {
+            RefreshSelectedFamily();
         }
 
         public void ExecuteSave(UIApplication uiapp)
         {
+            if (!TryGetActiveDocument(out var doc))
+            {
+                StatusMessage = "Kein aktives Revit-Dokument!";
+                OnPropertyChanged(nameof(StatusMessage));
+                return;
+            }
+
             var family = GetSelectedFamily();
             if (family == null) return;
 
             // Prüfe Passwortschutz wie bisher
-            var entity = MetadataStorage.LoadMetadata(Document, family);
+            var entity = MetadataStorage.LoadMetadata(doc, family);
             var hasPw = false;
             string oldHash = "";
             if (entity != null)
@@ -136,7 +151,7 @@ namespace BIMassist.ViewModels
             };
 
             // Verwende die neue Speicherfunktion
-            bool ok = FamilyFileHelper.SaveMetadataToLoadedFamily(Document, family, values);
+            bool ok = FamilyFileHelper.SaveMetadataToLoadedFamily(doc, family, values);
 
             if (ok)
             {
@@ -157,6 +172,13 @@ namespace BIMassist.ViewModels
 
         public void ExecuteCopy(UIApplication uiapp)
         {
+            if (!TryGetActiveDocument(out var doc) || UIDocument?.Selection == null)
+            {
+                StatusMessage = "Kein aktives Revit-Dokument!";
+                OnPropertyChanged(nameof(StatusMessage));
+                return;
+            }
+
             if (!IsMetadataLoaded)
             {
                 StatusMessage = "Bitte zuerst eine Quellfamilie auswählen und Metadaten laden!";
@@ -175,7 +197,7 @@ namespace BIMassist.ViewModels
                     OnPropertyChanged(nameof(StatusMessage));
                     return;
                 }
-                var firstInst = Document.GetElement(selectedIds[0]) as FamilyInstance;
+                var firstInst = doc.GetElement(selectedIds[0]) as FamilyInstance;
                 var sourceFamily = firstInst?.Symbol?.Family;
                 if (sourceFamily == null || !sourceFamily.IsEditable)
                 {
@@ -184,7 +206,7 @@ namespace BIMassist.ViewModels
                     return;
                 }
                 // Metadaten holen und merken
-                Dictionary<string, string> sourceValues = FamilyFileHelper.LoadMetadataFromLoadedFamily(Document, sourceFamily);
+                Dictionary<string, string> sourceValues = FamilyFileHelper.LoadMetadataFromLoadedFamily(doc, sourceFamily);
                 if (sourceValues == null)
                 {
                     StatusMessage = "In der Quellfamilie wurden keine Metadaten gefunden.";
@@ -214,11 +236,11 @@ namespace BIMassist.ViewModels
                 // Die Quellfamilie selbst überspringen
                 if (id == _copySourceFamilyId)
                     continue;
-                var inst = Document.GetElement(id) as FamilyInstance;
+                var inst = doc.GetElement(id) as FamilyInstance;
                 var targetFamily = inst?.Symbol?.Family;
                 if (targetFamily != null && targetFamily.IsEditable)
                 {
-                    bool ok = FamilyFileHelper.SaveMetadataToLoadedFamily(Document, targetFamily, _copySourceValues);
+                    bool ok = FamilyFileHelper.SaveMetadataToLoadedFamily(doc, targetFamily, _copySourceValues);
                     if (ok) copied++;
                 }
             }
@@ -240,8 +262,18 @@ namespace BIMassist.ViewModels
 
         public void Unlock()
         {
+            if (!TryGetActiveDocument(out var doc))
+            {
+                StatusMessage = "Kein aktives Revit-Dokument!";
+                OnPropertyChanged(nameof(StatusMessage));
+                return;
+            }
+
             var family = GetSelectedFamily();
-            var entity = MetadataStorage.LoadMetadata(Document, family);
+            if (family == null)
+                return;
+
+            var entity = MetadataStorage.LoadMetadata(doc, family);
             if (entity != null)
             {
                 string storedHash = entity.Get<string>("PasswordHash");
@@ -270,18 +302,34 @@ namespace BIMassist.ViewModels
 
         private void RefreshSelectedFamily()
         {
-            var uiapp = UIDocument.Application;
-            var paneId = new DockablePaneId(GuidCollection.GetMetadataDockablePaneID());
-            var pane = uiapp.GetDockablePane(paneId);
+            if (_disposed)
+                return;
 
             if (_isCopyTargetPhase)
                 return; // Während Kopiermodus keine Felder leeren
 
+            var uiapp = UIApp;
+            var uiDoc = uiapp?.ActiveUIDocument;
+            var doc = uiDoc?.Document;
+            if (uiapp == null)
+                return;
+
+            DockablePane pane;
+            try
+            {
+                pane = uiapp.GetDockablePane(new DockablePaneId(GuidCollection.GetMetadataDockablePaneID()));
+            }
+            catch
+            {
+                return;
+            }
+
             if (pane == null || !pane.IsShown())
                 return;
 
-            if (UIDocument == null || UIDocument.Selection == null)
+            if (uiDoc == null || doc == null || uiDoc.Selection == null)
             {
+                _lastSelectionId = null;
                 StatusMessage = "Kein aktives Revit-Dokument!";
                 IsMetadataLoaded = false;
                 ClearAllFields();
@@ -289,13 +337,13 @@ namespace BIMassist.ViewModels
                 return;
             }
 
-            var selIds = UIDocument.Selection.GetElementIds();
-
+            var selIds = uiDoc.Selection.GetElementIds();
 
             if (!IsInCopyMode)
             {
                 if (selIds == null || selIds.Count == 0)
                 {
+                    _lastSelectionId = null;
                     StatusMessage = "Bitte wählen Sie eine ladbare Familie!";
                     ClearAllFields();
                     IsMetadataLoaded = false;
@@ -304,6 +352,7 @@ namespace BIMassist.ViewModels
                 }
                 if (selIds.Count > 1)
                 {
+                    _lastSelectionId = null;
                     StatusMessage = "Mehrere Elemente ausgewählt – bitte nur eine ladbare Familie auswählen!";
                     ClearAllFields();
                     IsMetadataLoaded = false;
@@ -318,13 +367,14 @@ namespace BIMassist.ViewModels
 
             _lastSelectionId = selId;
 
-            var famInst = Document.GetElement(selId) as FamilyInstance;
+            var famInst = doc.GetElement(selId) as FamilyInstance;
             var family = famInst?.Symbol?.Family;
 
             if (family == null || !family.IsEditable)
             {
                 StatusMessage = "Bitte wählen Sie eine ladbare Familie (keine Systemfamilie).";
                 IsMetadataLoaded = false;
+                ClearAllFields();
                 OnPropertyChanged(nameof(StatusMessage));
                 return;
             }
@@ -338,7 +388,7 @@ namespace BIMassist.ViewModels
             OnPropertyChanged(nameof(FamilyPath));
 
             // Metadaten aus der rfa holen:
-            Dictionary<string, string> meta = FamilyFileHelper.LoadMetadataFromLoadedFamily(Document, family);
+            Dictionary<string, string> meta = FamilyFileHelper.LoadMetadataFromLoadedFamily(doc, family);
             if (meta == null)
             {
                 // Wenn keine Metadaten in rfa gefunden
@@ -414,6 +464,13 @@ namespace BIMassist.ViewModels
 
         public Family GetSelectedFamily()
         {
+            if (!TryGetActiveDocument(out var doc) || UIDocument?.Selection == null)
+            {
+                StatusMessage = "Bitte wählen Sie eine ladbare Familie!";
+                OnPropertyChanged(nameof(StatusMessage));
+                return null;
+            }
+
             var selIds = UIDocument.Selection.GetElementIds();
             if (selIds == null || selIds.Count == 0)
             {
@@ -430,7 +487,7 @@ namespace BIMassist.ViewModels
                 return null;
             }
 
-            var famInst = Document.GetElement(selId) as FamilyInstance;
+            var famInst = doc.GetElement(selId) as FamilyInstance;
             var family = famInst?.Symbol?.Family;
 
             if (family != null && family.IsEditable)
@@ -441,17 +498,36 @@ namespace BIMassist.ViewModels
             return null;
         }
 
+        private bool TryGetActiveDocument(out Document doc)
+        {
+            doc = Document;
+            return !_disposed && doc != null;
+        }
+
         public event PropertyChangedEventHandler PropertyChanged;
         protected void OnPropertyChanged(string name) =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
         public void Dispose()
         {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+
             if (_selectionTimer != null)
             {
-                _selectionTimer?.Stop();
-                _selectionTimer.Tick -= (s, e) => RefreshSelectedFamily();
+                _selectionTimer.Stop();
+                _selectionTimer.Tick -= _selectionTimerTickHandler;
+                _selectionTimer = null;
             }
+
+            if (_saveHandler != null)
+                _saveHandler.ViewModel = null;
+            if (_copyHandler != null)
+                _copyHandler.ViewModel = null;
+            if (_unlockHandler != null)
+                _unlockHandler.ViewModel = null;
         }
 
         // Metadaten-Vorlage
@@ -518,8 +594,8 @@ namespace BIMassist.ViewModels
             catch (Exception ex)
             {
                 StatusMessage = "Fehler beim Laden der Vorlage: " + ex.Message;
-                OnPropertyChanged(nameof(StatusMessage));
             }
+            OnPropertyChanged(nameof(StatusMessage));
         }
     }
 }

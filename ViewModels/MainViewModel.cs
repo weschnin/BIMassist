@@ -15,6 +15,7 @@ using System.Xml.Serialization;
 using System.Collections.Specialized;
 using System.Windows.Input;
 using BIMassist.Helpers;
+using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -183,7 +184,7 @@ namespace BIMassist
             {
                 if (_parameterNameBGK != value)
                 {
-                    SharedParameterElement param = SharedParameterElements?.OfType<SharedParameterElement>().Where(s => s.Name == value).First();
+                    SharedParameterElement param = SharedParameterElements?.OfType<SharedParameterElement>().FirstOrDefault(s => s.Name == value);
                     Definition def = param?.GetDefinition();
                     ParameterGroupBGK = GetParameterGroupString(def);
 
@@ -207,7 +208,7 @@ namespace BIMassist
             {
                 if (_parameterNameTymarkierung != value)
                 {
-                    SharedParameterElement param = SharedParameterElements?.OfType<SharedParameterElement>().Where(s => s.Name == value).First();
+                    SharedParameterElement param = SharedParameterElements?.OfType<SharedParameterElement>().FirstOrDefault(s => s.Name == value);
                     Definition def = param?.GetDefinition();
                     ParameterGroupTypmarkierung = GetParameterGroupString(def);
                     Set(ref _parameterNameTymarkierung, value);
@@ -230,7 +231,7 @@ namespace BIMassist
             {
                 if (_parameterNameTypbeschreibung != value)
                 {
-                    SharedParameterElement param = SharedParameterElements?.OfType<SharedParameterElement>().Where(s => s.Name == value).First();
+                    SharedParameterElement param = SharedParameterElements?.OfType<SharedParameterElement>().FirstOrDefault(s => s.Name == value);
                     Definition def = param?.GetDefinition();
                     ParameterGroupTypbeschreibung = GetParameterGroupString(def);
                     Set(ref _parameterNameTypbeschreibung, value);
@@ -279,6 +280,11 @@ namespace BIMassist
         UIApplication uiapp;
 
         private List<SharedParameterElement> SharedParameterElements;
+        private readonly Dictionary<Baugruppe, PropertyChangedEventHandler> _nodeChangeHandlers = new();
+        private readonly Dictionary<Baugruppe, PropertyChangedEventHandler> _nodeSelectionHandlers = new();
+        private readonly Dictionary<Baugruppe, NotifyCollectionChangedEventHandler> _nodeTypCollectionHandlers = new();
+        private readonly Dictionary<Baugruppe, NotifyCollectionChangedEventHandler> _nodeChildCollectionHandlers = new();
+        private readonly Dictionary<Typmarkierung, PropertyChangedEventHandler> _typChangeHandlers = new();
 
         private Baugruppe _selectedNode;
         public Baugruppe SelectedNode
@@ -290,9 +296,10 @@ namespace BIMassist
         {
             get
             {
-                return new ObservableCollection<string>(SharedParameterElements.OrderBy(u => u.Name).Select(user => user.Name)); 
+                return new ObservableCollection<string>((SharedParameterElements ?? new List<SharedParameterElement>())
+                    .OrderBy(u => u.Name)
+                    .Select(user => user.Name));
             }
-            
         }
 
         public ObservableCollection<string> ParameterGruppen
@@ -336,9 +343,10 @@ namespace BIMassist
 
         public MainViewModel(UIApplication ap)
         {
-            doc = ap.ActiveUIDocument.Document;
-            uidoc = ap.ActiveUIDocument;
-            uiapp = ap;
+            uiapp = ap ?? throw new ArgumentNullException(nameof(ap));
+            uidoc = uiapp.ActiveUIDocument;
+            doc = uidoc?.Document;
+            SharedParameterElements = new List<SharedParameterElement>();
 
             LoadSettings();
             ParameterListeFüllen();
@@ -410,6 +418,17 @@ namespace BIMassist
             AllSubNudesProtectionCmd = new RelayCommands<Baugruppe>(AllSubNodesProtectionExecute);
 
             SendValues = new RelayCommands<Typmarkierung>(SendValuesExecute);
+        }
+
+        public void RefreshDocumentContext(UIApplication currentApp)
+        {
+            if (currentApp == null)
+                return;
+
+            uiapp = currentApp;
+            uidoc = uiapp.ActiveUIDocument;
+            doc = uidoc?.Document;
+            ParameterListeFüllen();
         }
 
         private void SendValuesExecute(Typmarkierung selectedTyp)
@@ -741,18 +760,18 @@ namespace BIMassist
 
             if (e.OldItems != null)
             {
-                // no unsubscribe for simplicity
+                foreach (Baugruppe item in e.OldItems)
+                    UnregisterNodeHandlers(item);
             }
         }
 
         private void RegisterNodeHandlers(Baugruppe node)
         {
-            if (node == null) return;
+            if (node == null || _nodeChangeHandlers.ContainsKey(node)) return;
 
-            node.PropertyChanged += (s, e) =>
+            PropertyChangedEventHandler nodeChangeHandler = (s, e) =>
             {
                 if (_suspendChangeTracking) return;
-                // Ignore pure UI/state properties to avoid false "unsaved changes" prompts
                 if (e?.PropertyName == nameof(Baugruppe.IsSelectedNode)
                     || e.PropertyName == nameof(Baugruppe.ExpandNode)
                     || e.PropertyName == nameof(Baugruppe.RootNode)
@@ -763,31 +782,42 @@ namespace BIMassist
 
                 changed = true;
             };
-            node.PropertyChanged += (s, e) =>
+
+            PropertyChangedEventHandler nodeSelectionHandler = (s, e) =>
             {
                 if (e?.PropertyName == nameof(Baugruppe.IsSelectedNode) && node.IsSelectedNode)
                     SelectedNode = node;
             };
 
-            // Typmarkierungen collection
+            _nodeChangeHandlers[node] = nodeChangeHandler;
+            _nodeSelectionHandlers[node] = nodeSelectionHandler;
+            node.PropertyChanged += nodeChangeHandler;
+            node.PropertyChanged += nodeSelectionHandler;
+
             if (node.Typmarkierungen == null) node.Typmarkierungen = new ObservableCollection<Typmarkierung>();
-            node.Typmarkierungen.CollectionChanged += (s, e) =>
+            NotifyCollectionChangedEventHandler typCollectionHandler = (s, e) =>
             {
                 if (!_suspendChangeTracking) changed = true;
                 if (e.NewItems != null)
                 {
                     foreach (Typmarkierung t in e.NewItems)
-                        t.PropertyChanged += (ss, ee) => { if (!_suspendChangeTracking) changed = true; };
+                        AttachTypHandler(t);
+                }
+
+                if (e.OldItems != null)
+                {
+                    foreach (Typmarkierung t in e.OldItems)
+                        DetachTypHandler(t);
                 }
             };
 
-            // attach existing typ handlers
+            _nodeTypCollectionHandlers[node] = typCollectionHandler;
+            node.Typmarkierungen.CollectionChanged += typCollectionHandler;
             foreach (var t in node.Typmarkierungen)
-                t.PropertyChanged += (ss, ee) => { if (!_suspendChangeTracking) changed = true; };
+                AttachTypHandler(t);
 
-            // child nodes
             if (node.Baugruppen == null) node.Baugruppen = new ObservableCollection<Baugruppe>();
-            node.Baugruppen.CollectionChanged += (s, e) =>
+            NotifyCollectionChangedEventHandler childCollectionHandler = (s, e) =>
             {
                 if (!_suspendChangeTracking) changed = true;
                 if (e.NewItems != null)
@@ -795,10 +825,84 @@ namespace BIMassist
                     foreach (Baugruppe n in e.NewItems)
                         RegisterNodeHandlers(n);
                 }
+
+                if (e.OldItems != null)
+                {
+                    foreach (Baugruppe n in e.OldItems)
+                        UnregisterNodeHandlers(n);
+                }
             };
+
+            _nodeChildCollectionHandlers[node] = childCollectionHandler;
+            node.Baugruppen.CollectionChanged += childCollectionHandler;
 
             foreach (var child in node.Baugruppen)
                 RegisterNodeHandlers(child);
+        }
+
+        private void UnregisterNodeHandlers(Baugruppe node)
+        {
+            if (node == null) return;
+
+            if (node.Baugruppen != null)
+            {
+                foreach (var child in node.Baugruppen.ToList())
+                    UnregisterNodeHandlers(child);
+            }
+
+            if (node.Typmarkierungen != null)
+            {
+                foreach (var typ in node.Typmarkierungen.ToList())
+                    DetachTypHandler(typ);
+            }
+
+            if (_nodeTypCollectionHandlers.TryGetValue(node, out var typCollectionHandler))
+            {
+                node.Typmarkierungen.CollectionChanged -= typCollectionHandler;
+                _nodeTypCollectionHandlers.Remove(node);
+            }
+
+            if (_nodeChildCollectionHandlers.TryGetValue(node, out var childCollectionHandler))
+            {
+                node.Baugruppen.CollectionChanged -= childCollectionHandler;
+                _nodeChildCollectionHandlers.Remove(node);
+            }
+
+            if (_nodeChangeHandlers.TryGetValue(node, out var nodeChangeHandler))
+            {
+                node.PropertyChanged -= nodeChangeHandler;
+                _nodeChangeHandlers.Remove(node);
+            }
+
+            if (_nodeSelectionHandlers.TryGetValue(node, out var nodeSelectionHandler))
+            {
+                node.PropertyChanged -= nodeSelectionHandler;
+                _nodeSelectionHandlers.Remove(node);
+            }
+        }
+
+        private void AttachTypHandler(Typmarkierung typ)
+        {
+            if (typ == null || _typChangeHandlers.ContainsKey(typ)) return;
+
+            PropertyChangedEventHandler handler = (ss, ee) =>
+            {
+                if (!_suspendChangeTracking) changed = true;
+            };
+
+            _typChangeHandlers[typ] = handler;
+            typ.PropertyChanged += handler;
+        }
+
+        private void DetachTypHandler(Typmarkierung typ)
+        {
+            if (typ == null) return;
+
+            if (_typChangeHandlers.TryGetValue(typ, out var handler))
+            {
+                typ.PropertyChanged -= handler;
+                _typChangeHandlers.Remove(typ);
+            }
         }
 
         public void LoadSettings()
@@ -882,27 +986,75 @@ namespace BIMassist
                         RestoreDirectory = true
                     };
 
-                    if (saveFileDialog.ShowDialog() == DialogResult.OK)
-                        if (!string.IsNullOrWhiteSpace(saveFileDialog.FileName))
-                            EigeneDaten = saveFileDialog.FileName;
+                    if (saveFileDialog.ShowDialog() == DialogResult.OK && !string.IsNullOrWhiteSpace(saveFileDialog.FileName))
+                        EigeneDaten = saveFileDialog.FileName;
                 }
 
-                if (!string.IsNullOrWhiteSpace(EigeneDaten))
-                {
-                    var xmlserializer = new XmlSerializer(typeof(Baugruppe));
-                    using (FileStream fs = new FileStream(EigeneDaten, FileMode.Create))
-                    {
-                        xmlserializer.Serialize(fs, Baugruppen[0]);
-                        changed = false;
-                    }
+                if (string.IsNullOrWhiteSpace(EigeneDaten))
+                    return;
 
-                    ShowStatus("Daten gespeichert.");
-                }
+                if (!TrySaveDataSilently(EigeneDaten, out var errorMessage))
+                    throw new InvalidOperationException(errorMessage);
+
+                ShowStatus("Daten gespeichert.");
             }
             catch (Exception ex)
             {
                 TaskDialog.Show("Fehler", "Daten konnten nicht gespeichert werden: " + ex.Message);
             }
+        }
+
+        public bool TrySaveDataSilently(string path)
+        {
+            return TrySaveDataSilently(path, out _);
+        }
+
+        public bool TrySaveDataSilently(string path, out string errorMessage)
+        {
+            errorMessage = string.Empty;
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    errorMessage = "Kein Speicherpfad konfiguriert.";
+                    return false;
+                }
+
+                var rootNode = GetRootNodeForSerialization();
+                if (rootNode == null)
+                {
+                    errorMessage = "Es sind keine BGK-Daten zum Speichern vorhanden.";
+                    return false;
+                }
+
+                var dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(dir) && !Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+
+                var xmlserializer = new XmlSerializer(typeof(Baugruppe));
+                using (FileStream fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    xmlserializer.Serialize(fs, rootNode);
+                }
+
+                EigeneDaten = path;
+                changed = false;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                errorMessage = ex.Message;
+                return false;
+            }
+        }
+
+        private Baugruppe GetRootNodeForSerialization()
+        {
+            if (Baugruppen == null || Baugruppen.Count == 0)
+                return null;
+
+            return Baugruppen.FirstOrDefault() ?? Baugruppen[0];
         }
 
         public void LoadDataFromPath(string path)
@@ -1000,7 +1152,27 @@ namespace BIMassist
 
         private void ParameterListeFüllen()
         {
-            // Dummy implementation for now
+            try
+            {
+                if (doc == null)
+                {
+                    SharedParameterElements = new List<SharedParameterElement>();
+                    OnPropertyChanged(nameof(ParamListe));
+                    return;
+                }
+
+                SharedParameterElements = new FilteredElementCollector(doc)
+                    .OfClass(typeof(SharedParameterElement))
+                    .Cast<SharedParameterElement>()
+                    .OrderBy(p => p.Name)
+                    .ToList();
+            }
+            catch
+            {
+                SharedParameterElements = new List<SharedParameterElement>();
+            }
+
+            OnPropertyChanged(nameof(ParamListe));
         }
 
         public void NewData()
@@ -1068,6 +1240,9 @@ namespace BIMassist
         private Baugruppe FillParent(Baugruppe node)
         {
             if (node == null) return null;
+
+            node.Baugruppen ??= new ObservableCollection<Baugruppe>();
+            node.Typmarkierungen ??= new ObservableCollection<Typmarkierung>();
 
             foreach (var child in node.Baugruppen)
             {

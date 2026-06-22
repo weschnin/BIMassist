@@ -39,12 +39,18 @@ namespace BIMassist
             }
             else
             {
-                // If DataContext already exists (pane reused), ensure it's populated when the active document changed
                 try
                 {
-                    var mv = DataContext as MainViewModel;
+                    if (DataContext is MainViewModel mv)
+                    {
+                        mv.RefreshDocumentContext(uiapp);
+                    }
+
                     var settingsPath = Properties.Settings.Default.PfadBGKDatei;
-                    if (mv != null && (mv.Baugruppen == null || mv.Baugruppen.Count == 0) && !string.IsNullOrWhiteSpace(settingsPath) && File.Exists(settingsPath))
+                    if (DataContext is MainViewModel existingVm
+                        && (existingVm.Baugruppen == null || existingVm.Baugruppen.Count == 0)
+                        && !string.IsNullOrWhiteSpace(settingsPath)
+                        && File.Exists(settingsPath))
                     {
                         TryAutoLoadSavedPath();
                     }

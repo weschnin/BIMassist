@@ -4,9 +4,12 @@ using BIMassist.Commands;
 using BIMassist.Core;
 using BIMassist.Helpers;
 using BIMassist.ViewModels;
+using System;
 using BIMassist.Views;
 using System.IO;
 using System.Reflection;
+using System.Linq;
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
@@ -19,6 +22,7 @@ namespace BIMassist
         public static Hauptfenster BGKManagerCtrl;
         bool MetadataCtrlPane = false;
         bool BGKManagerCtrlPane = false;
+        private bool _isShuttingDown;
 
         internal static App _app = null;
         public static App Instance
@@ -27,9 +31,11 @@ namespace BIMassist
         }
         // keep track of last active document path to detect project/document switches
         private string _lastActiveDocumentPath = null;
+        private string _lastMetadataDocumentKey = null;
         public Result OnStartup(UIControlledApplication a)
         {
             _app = this;
+            _isShuttingDown = false;
 
             string tabName = "BIMassist";
             PushButtonData btnData;
@@ -186,55 +192,43 @@ namespace BIMassist
 
         public Result OnShutdown(UIControlledApplication a)
         {
+            _isShuttingDown = true;
+
             try
             {
-                // When Revit is shutting down, there may be no active document/UI anymore.
-                // Avoid prompting in that case.
-                // We don't have a valid UIApplication here (only ControlledApplication).
-                // Be conservative: if there is no known data file or no data loaded, don't prompt.
-                // This avoids prompts after all documents are already closed.
-                if (BGKManagerPaneProvider.BGKManagerCtrlInstance?.DataContext is MainViewModel mv2)
-                {
-                    if (mv2.Baugruppen == null || mv2.Baugruppen.Count == 0)
-                        return Result.Succeeded;
-                }
+                a.ViewActivated -= new EventHandler<ViewActivatedEventArgs>(viewActivated);
+            }
 
-                // If BGK manager has unsaved changes, ask to save on shutdown
-                if (BGKManagerPaneProvider.BGKManagerCtrlInstance != null && BGKManagerPaneProvider.BGKManagerCtrlInstance.DataContext is MainViewModel mv)
+            catch { }
+
+            try
+            {
+                if (BGKManagerPaneProvider.BGKManagerCtrlInstance?.DataContext is MainViewModel mv
+                    && mv.changed)
                 {
-                    if (mv.changed)
+                    var settingsPath = Properties.Settings.Default.PfadBGKDatei;
+                    if (!string.IsNullOrWhiteSpace(settingsPath))
                     {
-                        var td = new Autodesk.Revit.UI.TaskDialog("Änderungen speichern") { MainInstruction = "Die BGK-Daten wurden verändert. Sollen diese vor dem Schließen gespeichert werden?" };
-                        td.CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No;
-                        var tdRes = td.Show();
-                        if (tdRes == TaskDialogResult.Yes)
-                        {
-                            var settingsPath = Properties.Settings.Default.PfadBGKDatei;
-                            if (!string.IsNullOrWhiteSpace(settingsPath))
-                            {
-                                try
-                                {
-                                    mv.EigeneDaten = settingsPath;
-                                    // create file if not exists so SaveData Truncate works
-                                    var dir = Path.GetDirectoryName(settingsPath);
-                                    if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                                    if (!File.Exists(settingsPath)) File.WriteAllText(settingsPath, string.Empty);
-                                    mv.SaveData();
-                                }
-                                catch { }
-                            }
-                            else
-                            {
-                                // fallback: show save dialog
-                                mv.SaveData("true");
-                            }
-                        }
-                        // Prevent repeated prompts during shutdown
-                        mv.changed = false;
+                        mv.TrySaveDataSilently(settingsPath);
                     }
+
+                    mv.changed = false;
                 }
             }
             catch { }
+
+            try
+            {
+                DisposeMetadataViewModel();
+            }
+            catch { }
+
+            try
+            {
+                CloseModelessWindows();
+            }
+            catch { }
+
             return Result.Succeeded;
         }
 
@@ -254,6 +248,9 @@ namespace BIMassist
 
         private void viewActivated(object sender, ViewActivatedEventArgs e)
         {
+            if (_isShuttingDown)
+                return;
+
             try
             {
                 UIApplication uiapp = sender as UIApplication;
@@ -262,10 +259,18 @@ namespace BIMassist
                 // and don't trigger save prompts.
                 if (uiapp?.ActiveUIDocument?.Document == null)
                     return;
+
+                var activeDocumentKey = GetDocumentKey(uiapp.ActiveUIDocument.Document);
                 
                 if (MetadataPaneProvider.MetadataCtrlInstance != null && uiapp?.ActiveUIDocument != null)
                 {
-                    MetadataPaneProvider.MetadataCtrlInstance.DataContext = new MetadataViewModel(uiapp);
+                    if (!string.Equals(_lastMetadataDocumentKey, activeDocumentKey, StringComparison.OrdinalIgnoreCase)
+                        || MetadataPaneProvider.MetadataCtrlInstance.DataContext is not MetadataViewModel)
+                    {
+                        DisposeMetadataViewModel();
+                        MetadataPaneProvider.MetadataCtrlInstance.DataContext = new MetadataViewModel(uiapp);
+                        _lastMetadataDocumentKey = activeDocumentKey;
+                    }
                 }
 
                  if (BGKManagerPaneProvider.BGKManagerCtrlInstance != null)
@@ -372,14 +377,14 @@ namespace BIMassist
                     }
                 }
 
-                DockablePane dp = uiapp.ActiveUIDocument.Application.GetDockablePane(new DockablePaneId(GuidCollection.GetBGKManagerDockablePaneID()));
+                DockablePane dp = uiapp.GetDockablePane(new DockablePaneId(GuidCollection.GetBGKManagerDockablePaneID()));
                 if (!BGKManagerCtrlPane && dp.IsShown())
                 {
                     dp.Hide();
                     BGKManagerCtrlPane = true;
                 }
 
-                dp = uiapp.ActiveUIDocument.Application.GetDockablePane(new DockablePaneId(GuidCollection.GetMetadataDockablePaneID()));
+                dp = uiapp.GetDockablePane(new DockablePaneId(GuidCollection.GetMetadataDockablePaneID()));
                 if (!MetadataCtrlPane && dp.IsShown())
                 {
                     dp.Hide();
@@ -389,6 +394,48 @@ namespace BIMassist
             catch (Exception ex)
             {
                 Autodesk.Revit.UI.TaskDialog.Show("Error", ex.Message);
+            }
+        }
+
+        private static string GetDocumentKey(Autodesk.Revit.DB.Document doc)
+        {
+            if (doc == null)
+                return string.Empty;
+
+            return !string.IsNullOrWhiteSpace(doc.PathName) ? doc.PathName : doc.Title ?? string.Empty;
+        }
+
+        private static void DisposeMetadataViewModel()
+        {
+            if (MetadataPaneProvider.MetadataCtrlInstance?.DataContext is MetadataViewModel metadataVm)
+            {
+                metadataVm.Dispose();
+                MetadataPaneProvider.MetadataCtrlInstance.DataContext = null;
+            }
+        }
+
+        private static void CloseModelessWindows()
+        {
+            BoreholeManagerCommand.CloseWindow();
+
+            var windows = System.Windows.Application.Current?.Windows;
+            if (windows != null)
+            {
+                foreach (Window window in windows.OfType<Window>().ToList())
+                {
+                    if (window is SnapshotManagerWindow || window is Einstellungen)
+                    {
+                        try { window.Close(); } catch { }
+                    }
+                }
+            }
+
+            foreach (System.Windows.Forms.Form form in System.Windows.Forms.Application.OpenForms.Cast<System.Windows.Forms.Form>().ToList())
+            {
+                if (form is Info)
+                {
+                    try { form.Close(); } catch { }
+                }
             }
         }
 

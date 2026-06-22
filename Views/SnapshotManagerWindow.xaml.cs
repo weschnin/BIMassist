@@ -15,6 +15,7 @@ namespace BIMassist.Views
         private readonly UIApplication _uiApp;
         private readonly Document _doc;
         private readonly Schema _schema;
+        private readonly string _documentKey;
 
         private readonly ExternalEvent _exEvent;
         private readonly SectionBoxExternalEventHandler _handler;
@@ -27,6 +28,7 @@ namespace BIMassist.Views
             _uiApp = uiApp;
             _doc = doc;
             _schema = schema;
+            _documentKey = GetDocumentKey(doc);
 
             _handler = new SectionBoxExternalEventHandler
             {
@@ -61,6 +63,9 @@ namespace BIMassist.Views
 
         private void LoadItems()
         {
+            if (!TryValidateDocumentContext(showStatus: true))
+                return;
+
             Items.Clear();
 
             var storages = new FilteredElementCollector(_doc)
@@ -104,6 +109,9 @@ namespace BIMassist.Views
 
         private void OnShowClick(object sender, RoutedEventArgs e)
         {
+            if (!TryValidateDocumentContext(showStatus: true))
+                return;
+
             var selected = List.SelectedItem as SectionBoxSnapshot;
             if (selected == null)
             {
@@ -111,7 +119,8 @@ namespace BIMassist.Views
                 return;
             }
 
-            var view3D = _doc.ActiveView as View3D;
+            var activeDoc = _uiApp?.ActiveUIDocument?.Document;
+            var view3D = activeDoc?.ActiveView as View3D;
             if (view3D == null || view3D.IsTemplate)
             {
                 SetStatus("Bitte zuerst eine passende 3D-Ansicht aktivieren.");
@@ -160,6 +169,9 @@ namespace BIMassist.Views
 
         private void OnRenameClick(object sender, RoutedEventArgs e)
         {
+            if (!TryValidateDocumentContext(showStatus: true))
+                return;
+
             var selected = List.SelectedItem as SectionBoxSnapshot;
             if (selected == null)
             {
@@ -210,6 +222,9 @@ namespace BIMassist.Views
 
         private void OnDeleteClick(object sender, RoutedEventArgs e)
         {
+            if (!TryValidateDocumentContext(showStatus: true))
+                return;
+
             var selected = List.SelectedItem as SectionBoxSnapshot;
             if (selected == null)
             {
@@ -288,6 +303,30 @@ namespace BIMassist.Views
                 Min = localMin,
                 Max = localMax
             };
+        }
+
+        private bool TryValidateDocumentContext(bool showStatus)
+        {
+            var activeDoc = _uiApp?.ActiveUIDocument?.Document;
+            bool valid = activeDoc != null
+                && _doc != null
+                && string.Equals(GetDocumentKey(activeDoc), _documentKey, StringComparison.OrdinalIgnoreCase);
+
+            if (valid)
+                return true;
+
+            if (showStatus)
+                SetStatus("Das Snapshot-Fenster gehört zu einem anderen oder bereits geschlossenen Dokument. Bitte Fenster schließen und neu öffnen.");
+
+            return false;
+        }
+
+        private static string GetDocumentKey(Document doc)
+        {
+            if (doc == null)
+                return string.Empty;
+
+            return !string.IsNullOrWhiteSpace(doc.PathName) ? doc.PathName : doc.Title ?? string.Empty;
         }
     }
 }

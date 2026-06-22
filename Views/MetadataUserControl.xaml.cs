@@ -13,7 +13,18 @@ namespace BIMassist.Views
         public MetadataUserControl()
         {
             InitializeComponent();
-            this.Unloaded += MetadataUserControl_Unloaded;
+            Unloaded += MetadataUserControl_Unloaded;
+            DataContextChanged += MetadataUserControl_DataContextChanged;
+        }
+
+        private void MetadataUserControl_DataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            if (e.OldValue is MetadataViewModel oldVm && !ReferenceEquals(oldVm, e.NewValue))
+            {
+                oldVm.Dispose();
+            }
+
+            PasswordBox.Password = string.Empty;
         }
 
         private void MetadataUserControl_Unloaded(object sender, RoutedEventArgs e)
