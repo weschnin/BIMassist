@@ -338,6 +338,7 @@ namespace BIMassist
         public ICommand SendValues { get; }
 
         public ICommand LoadOwnDataFromConfiguredPathCommand { get; }
+        public ICommand CloseSettingsWindow { get; }
 
         #endregion
 
@@ -352,21 +353,11 @@ namespace BIMassist
             ParameterListeFüllen();
             changed = false;
 
-            // Mark ViewModel property changes as edits.
-            // Important: ignore status/UI-only properties, otherwise actions like "Übertragen" or status updates
-            // can incorrectly trigger the "BGK-Daten wurden verändert" prompt.
-            this.PropertyChanged += (s, e) =>
-            {
-                try
-                {
-                    if (_suspendChangeTracking) return;
-                    if (e?.PropertyName == null) return;
-                    if (e.PropertyName == nameof(changed)) return;
-                    if (e.PropertyName == nameof(StatusMessage)) return;
-                    changed = true;
-                }
-                catch { }
-            };
+            // Wichtig: "changed" soll nur echte BGK-Datenänderungen abbilden.
+            // Top-Level-ViewModel-Properties wie Status, aktives Revit-Dokument,
+            // Parameterlisten oder Einstellungswerte dürfen keinen Speicherdialog
+            // für BGK-Daten auslösen. Das Dirty-Tracking passiert daher ausschließlich
+            // über die Node-/Typ-Handler weiter unten.
 
             // ExternalEvent + Handler initialisieren
             _assignHandler = new BgkAssignExternalEventHandler();
@@ -399,6 +390,7 @@ namespace BIMassist
                 LoadDataFromPath(path);
                 ShowStatus("Daten geladen.");
             });
+            CloseSettingsWindow = new RelayCommand(() => ApplySettingsAndCloseWindows());
 
             AddLabel = new RelayCommands<Baugruppe>(AddLabelExecute);
             ItemUp = new RelayCommands<Baugruppe>(ItemUpExecute);
@@ -428,7 +420,65 @@ namespace BIMassist
             uiapp = currentApp;
             uidoc = uiapp.ActiveUIDocument;
             doc = uidoc?.Document;
-            ParameterListeFüllen();
+            _suspendChangeTracking = true;
+            try
+            {
+                ParameterListeFüllen();
+            }
+            finally
+            {
+                _suspendChangeTracking = false;
+            }
+        }
+
+        private void ApplySettingsAndCloseWindows()
+        {
+            try
+            {
+                var configuredPath = string.IsNullOrWhiteSpace(EigeneDaten)
+                    ? string.Empty
+                    : EigeneDaten.Trim();
+
+                EigeneDaten = configuredPath;
+
+                var settings = Properties.Settings.Default;
+                settings.PfadBGKDatei = configuredPath;
+                settings.EigeneDaten = configuredPath;
+                SaveSettings();
+
+                if (!string.IsNullOrWhiteSpace(configuredPath) && File.Exists(configuredPath))
+                {
+                    LoadDataFromPath(configuredPath);
+                    ShowStatus("Daten automatisch geladen.");
+                }
+                else if (!string.IsNullOrWhiteSpace(configuredPath))
+                {
+                    ShowStatus("Pfad gespeichert. Datei wurde nicht gefunden.");
+                }
+                else
+                {
+                    ShowStatus("Einstellungen gespeichert.");
+                }
+            }
+            catch (Exception ex)
+            {
+                TaskDialog.Show("Fehler", "Einstellungen konnten nicht übernommen werden: " + ex.Message);
+            }
+            finally
+            {
+                try
+                {
+                    var app = System.Windows.Application.Current;
+                    if (app != null)
+                    {
+                        foreach (var wnd in app.Windows.OfType<Window>().Where(w => w is Einstellungen).ToList())
+                            wnd.Close();
+                    }
+                }
+                catch
+                {
+                }
+            }
         }
 
         private void SendValuesExecute(Typmarkierung selectedTyp)
@@ -909,7 +959,9 @@ namespace BIMassist
         {
             var settings = Properties.Settings.Default;
             Dateiname = GetSetting<string>(settings, "Dateiname", string.Empty);
-            EigeneDaten = GetSetting<string>(settings, "EigeneDaten", string.Empty);
+            var configuredBgkPath = GetSetting<string>(settings, "PfadBGKDatei", string.Empty);
+            var legacyBgkPath = GetSetting<string>(settings, "EigeneDaten", string.Empty);
+            EigeneDaten = !string.IsNullOrWhiteSpace(configuredBgkPath) ? configuredBgkPath : legacyBgkPath;
             WindowWidth = GetSetting<int>(settings, "WindowWidth", 0);
             WindowHeight = GetSetting<int>(settings, "WindowHeight", 0);
             WindowTop = GetSetting<double>(settings, "WindowTop", 0);
@@ -958,6 +1010,7 @@ namespace BIMassist
             SetSetting(settings, "SharedParamFileName", SharedParamFileName);
             SetSetting(settings, "BGKZuweisungenBestätigung", BestaetigungBGKZUweisung);
             SetSetting(settings, "FamilyAutoSave", FamilyAutoSave);
+            SetSetting(settings, "PfadBGKDatei", EigeneDaten);
 
             try { settings.Save(); } catch { }
         }
@@ -1066,6 +1119,10 @@ namespace BIMassist
             {
                 _suspendChangeTracking = true;
                 EigeneDaten = path;
+                var settings = Properties.Settings.Default;
+                settings.PfadBGKDatei = path;
+                settings.EigeneDaten = path;
+                try { settings.Save(); } catch { }
                 OpenData("false");
             }
             catch (Exception ex)
@@ -1102,7 +1159,13 @@ namespace BIMassist
                     };
 
                     if (openFileDialog.ShowDialog() == DialogResult.OK)
+                    {
                         EigeneDaten = openFileDialog.FileName;
+                        var settings = Properties.Settings.Default;
+                        settings.PfadBGKDatei = EigeneDaten;
+                        settings.EigeneDaten = EigeneDaten;
+                        try { settings.Save(); } catch { }
+                    }
                 }
 
                 if (!string.IsNullOrWhiteSpace(EigeneDaten))
