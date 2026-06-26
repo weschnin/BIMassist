@@ -127,6 +127,15 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                btnData = new PushButtonData("Volumenkörper konstruieren", "Volumenkörper\nkonstruieren", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.ConstructVolumeFromFacesCommand")
+                {
+                    ToolTip = "Aus selektierten Flächen einen Volumenkörper konstruieren",
+                    LongDescription = "Konstruiert aus mehreren selektierten Begrenzungsflächen einen Volumenkörper. Unterstützt derzeit konvexe Körper aus planaren Flächen sowie zylindrische Körper aus einer Zylinderfläche und planaren Begrenzungsflächen.",
+                    Image = GetImageSource("solid_16px.png"),
+                    LargeImage = GetImageSource("solid_24px.png")
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 btnData = new PushButtonData("Bodenverdrängung", "Bodenverdrängung", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.BodenverdrängungCommand")
                 {
                     ToolTip = "Außenhülle durch Raycasting erstellen",
@@ -159,12 +168,19 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                btnData = new PushButtonData("Material zuweisen", "Material zuweisen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AssignMaterialCommand")
+                {
+                    ToolTip = "Favorisierte Materialien speichern und ausgewählten Elementen zuweisen",
+                    LongDescription = "Öffnet eine dauerhaft geöffnete Favoritenliste für Materialien. Nach Auswahl eines Favoriten können Elemente markiert und das Material zugewiesen werden.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 // Schnittboxfunktionen
 
-                PanelgroupData = new PulldownButtonData("3D Schnittbereich", "3D Schnittbereich")
+                PanelgroupData = new PulldownButtonData("Ansichten", "Ansichten")
                 {
-                    ToolTip = "3D Schnittberecih funktionen",
-                    LongDescription = "3D Schnittberecih funktionen",
+                    ToolTip = "Ansichts-Funktionen",
+                    LongDescription = "Werkzeuge für Ansichten und Referenzen",
                     Image = GetImageSource("3D Box.png"), //GetImageSource(_3D_Box),
                     LargeImage = GetImageSource("3D Box.png"),  //GetImageSource(_3D_Box),
                 };
@@ -177,6 +193,13 @@ namespace BIMassist
                 pulldownGroup.AddPushButton(btnData);
 
                 btnData = new PushButtonData("Schnittbereich verwalten/auswählen", "Schnittbereich verwalten/auswählen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.RestoreSectionBoxCommand");
+                pulldownGroup.AddPushButton(btnData);
+
+                btnData = new PushButtonData("Reference abhängige Elemente auswählen", "Reference abhängige\nElemente auswählen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.SelectReferenceDependentElementsCommand")
+                {
+                    ToolTip = "Wählt in der aktuellen Ansicht alle Elemente aus, die von einer Ebene, Referenzebene oder Referenzlinie abhängen.",
+                    LongDescription = "Nach Auswahl einer Ebene, Referenzebene oder Referenzlinie werden alle in der aktiven Ansicht dargestellten abhängigen Elemente selektiert."
+                };
                 pulldownGroup.AddPushButton(btnData);
 
                 panel.AddSeparator();

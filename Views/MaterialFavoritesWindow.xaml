@@ -1,0 +1,61 @@
+<Window x:Class="BIMassist.Views.MaterialFavoritesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Material zuweisen"
+        Height="460"
+        Width="460"
+        MinHeight="420"
+        MinWidth="400"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="Favorisierte Materialien"
+                   FontWeight="Bold"
+                   FontSize="15" />
+
+        <TextBlock Grid.Row="1"
+                   Margin="0,8,0,10"
+                   Text="Material auswählen, danach per Button die gewünschten Flächen im Modell oder in der Familiengeometrie anklicken und zuweisen. Entfernen eines Favoriten: Taste Entf."
+                   TextWrapping="Wrap" />
+
+        <ListBox x:Name="FavoritesListBox"
+                 Grid.Row="2"
+                 KeyDown="FavoritesListBox_KeyDown"
+                 MouseDoubleClick="FavoritesListBox_MouseDoubleClick"
+                 SelectionMode="Single" />
+
+        <TextBlock x:Name="StatusTextBlock"
+                   Grid.Row="3"
+                   Margin="0,10,0,0"
+                   Foreground="DimGray"
+                   TextWrapping="Wrap" />
+
+        <StackPanel Grid.Row="4"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,12,0,0">
+            <Button Content="Favorit hinzufügen"
+                    Width="130"
+                    Margin="0,0,8,0"
+                    Click="AddFavoriteButton_Click" />
+            <Button Content="Material zuweisen"
+                    Width="130"
+                    Margin="0,0,8,0"
+                    Click="AssignMaterialButton_Click" />
+            <Button Content="Schließen"
+                    Width="100"
+                    Click="CloseButton_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

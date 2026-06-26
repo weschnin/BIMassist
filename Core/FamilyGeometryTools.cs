@@ -240,6 +240,86 @@ namespace BIMassist.Core
             return true;
         }
 
+
+        internal static bool TryConvertMeshesToSolid(IEnumerable<Mesh> meshes, double shortCurveTolerance, out Solid solid, out string failureReason)
+        {
+            solid = null;
+            failureReason = string.Empty;
+
+            List<Mesh> meshList = meshes?
+                .Where(m => m != null && m.NumTriangles > 0)
+                .ToList() ?? new List<Mesh>();
+
+            if (meshList.Count == 0)
+            {
+                failureReason = "Es wurden keine triangulierten Flächen mit Dreiecken gefunden.";
+                return false;
+            }
+
+            if (TryBuildSolidDirect(meshList, out solid))
+                return true;
+
+            double weldTolerance = GetEffectiveMeshWeldTolerance(shortCurveTolerance);
+            List<MeshTriangleInfo> triangles = ExtractMeshTriangles(meshList, weldTolerance);
+            if (triangles.Count == 0)
+            {
+                failureReason = "Keine gültigen Dreiecke nach der Triangulation/Verschweißung gefunden.";
+                return false;
+            }
+
+            Dictionary<MeshEdgeKey, List<int>> edgeToTriangles = BuildEdgeTriangleMap(triangles);
+            var components = FindConnectedTriangleComponents(triangles.Count, edgeToTriangles);
+            if (components.Count == 0)
+            {
+                failureReason = "Keine zusammenhängenden Dreiecks-Komponenten erkannt.";
+                return false;
+            }
+
+            List<Solid> componentSolids = new List<Solid>();
+            List<string> componentErrors = new List<string>();
+
+            foreach (var component in components)
+            {
+                if (!TryBuildSolidFromComponent(triangles, component, edgeToTriangles, shortCurveTolerance, out Solid componentSolid, out string componentReason))
+                {
+                    componentErrors.Add(componentReason);
+                    continue;
+                }
+
+                componentSolids.Add(componentSolid);
+            }
+
+            if (componentSolids.Count == 0)
+            {
+                failureReason = componentErrors.Count > 0
+                    ? string.Join(" | ", componentErrors)
+                    : "Unbekannter Fehler beim Erzeugen eines Solids aus den triangulierten Flächen.";
+                return false;
+            }
+
+            solid = componentSolids[0];
+            for (int i = 1; i < componentSolids.Count; i++)
+            {
+                try
+                {
+                    solid = BooleanOperationsUtils.ExecuteBooleanOperation(solid, componentSolids[i], BooleanOperationsType.Union);
+                }
+                catch (Exception ex)
+                {
+                    failureReason = $"Teil-Solids konnten nicht vereinigt werden: {ex.Message}";
+                    return false;
+                }
+            }
+
+            if (solid == null || solid.Volume <= 0)
+            {
+                failureReason = "Solid-Erzeugung aus triangulierten Flächen lieferte kein Volumen.";
+                return false;
+            }
+
+            return true;
+        }
+
         private static double GetEffectiveMeshWeldTolerance(double shortCurveTolerance)
         {
             if (shortCurveTolerance > 0)
@@ -377,6 +457,50 @@ namespace BIMassist.Core
             }
         }
 
+        private static bool TryBuildSolidDirect(IList<Mesh> meshes, out Solid solid)
+        {
+            solid = null;
+            try
+            {
+                var builder = new TessellatedShapeBuilder
+                {
+                    Target = TessellatedShapeBuilderTarget.Solid,
+                    Fallback = TessellatedShapeBuilderFallback.Abort,
+                    GraphicsStyleId = ElementId.InvalidElementId
+                };
+                builder.OpenConnectedFaceSet(true);
+
+                foreach (Mesh mesh in meshes)
+                {
+                    for (int i = 0; i < mesh.NumTriangles; i++)
+                    {
+                        MeshTriangle triangle = mesh.get_Triangle(i);
+                        var tessFace = new TessellatedFace(
+                            new List<XYZ>
+                            {
+                                triangle.get_Vertex(0),
+                                triangle.get_Vertex(1),
+                                triangle.get_Vertex(2)
+                            },
+                            ElementId.InvalidElementId);
+
+                        if (builder.DoesFaceHaveEnoughLoopsAndVertices(tessFace))
+                            builder.AddFace(tessFace);
+                    }
+                }
+
+                builder.CloseConnectedFaceSet();
+                builder.Build();
+
+                solid = builder.GetBuildResult().GetGeometricalObjects().OfType<Solid>().FirstOrDefault(s => s.Volume > 0);
+                return solid != null;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static List<MeshTriangleInfo> ExtractMeshTriangles(Mesh mesh, double weldTolerance)
         {
             Dictionary<MeshVertexKey, XYZ> canonicalVertices = new Dictionary<MeshVertexKey, XYZ>();
@@ -413,6 +537,50 @@ namespace BIMassist.Core
                     continue;
 
                 triangles.Add(new MeshTriangleInfo(aKey, bKey, cKey, a, b, c));
+            }
+
+            return triangles;
+        }
+
+        private static List<MeshTriangleInfo> ExtractMeshTriangles(IEnumerable<Mesh> meshes, double weldTolerance)
+        {
+            Dictionary<MeshVertexKey, XYZ> canonicalVertices = new Dictionary<MeshVertexKey, XYZ>();
+            HashSet<MeshTriangleSetKey> uniqueTriangles = new HashSet<MeshTriangleSetKey>();
+            List<MeshTriangleInfo> triangles = new List<MeshTriangleInfo>();
+
+            XYZ Canonicalize(XYZ point)
+            {
+                var key = MeshVertexKey.FromXyz(point, weldTolerance);
+                if (!canonicalVertices.TryGetValue(key, out XYZ canonical))
+                {
+                    canonical = point;
+                    canonicalVertices[key] = canonical;
+                }
+                return canonical;
+            }
+
+            foreach (Mesh mesh in meshes)
+            {
+                for (int i = 0; i < mesh.NumTriangles; i++)
+                {
+                    MeshTriangle triangle = mesh.get_Triangle(i);
+                    XYZ a = Canonicalize(triangle.get_Vertex(0));
+                    XYZ b = Canonicalize(triangle.get_Vertex(1));
+                    XYZ c = Canonicalize(triangle.get_Vertex(2));
+
+                    var aKey = MeshVertexKey.FromXyz(a, weldTolerance);
+                    var bKey = MeshVertexKey.FromXyz(b, weldTolerance);
+                    var cKey = MeshVertexKey.FromXyz(c, weldTolerance);
+
+                    if (aKey.Equals(bKey) || bKey.Equals(cKey) || cKey.Equals(aKey))
+                        continue;
+
+                    var triangleKey = MeshTriangleSetKey.Create(aKey, bKey, cKey);
+                    if (!uniqueTriangles.Add(triangleKey))
+                        continue;
+
+                    triangles.Add(new MeshTriangleInfo(aKey, bKey, cKey, a, b, c));
+                }
             }
 
             return triangles;
