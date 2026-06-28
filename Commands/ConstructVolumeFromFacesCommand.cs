@@ -129,8 +129,20 @@ namespace BIMassist.Commands
             solid = null;
             diagnostic = string.Empty;
 
+            if (selectedFaces.Count >= 4 &&
+                TryBuildStrictBoundarySolid(selectedFaces, shortCurveTolerance, out solid, out diagnostic))
+            {
+                return true;
+            }
+
             List<SelectedFaceInfo> planarFaces = selectedFaces.Where(x => x.Face is PlanarFace).ToList();
             List<SelectedFaceInfo> cylindricalFaces = selectedFaces.Where(x => x.Face is CylindricalFace).ToList();
+
+            if (cylindricalFaces.Count >= 2 && planarFaces.Count >= 1 &&
+                TryBuildSingleRadiusCoaxialCylindricalSolid(cylindricalFaces, planarFaces, out solid, out diagnostic))
+            {
+                return true;
+            }
 
             if (cylindricalFaces.Count >= 2 && planarFaces.Count >= 1 &&
                 TryBuildCoaxialHollowCylindricalSolid(cylindricalFaces, planarFaces, out solid, out diagnostic))
@@ -191,6 +203,105 @@ namespace BIMassist.Commands
             catch (Exception ex)
             {
                 diagnostic = "Fehler beim triangulierten Volumenkörper-Fallback: " + ex.Message;
+                return false;
+            }
+        }
+
+        private static bool TryBuildStrictBoundarySolid(List<SelectedFaceInfo> selectedFaces, double shortCurveTolerance, out Solid? solid, out string diagnostic)
+        {
+            solid = null;
+            diagnostic = string.Empty;
+
+            try
+            {
+                _ = shortCurveTolerance;
+
+                List<XYZ> shellVertices = CollectStrictBoundaryVertices(selectedFaces);
+                if (shellVertices.Count < 4)
+                {
+                    diagnostic = "Es konnten nicht genügend Randpunkte aus den selektierten Flächen abgeleitet werden.";
+                    return false;
+                }
+
+                XYZ shellCenter = shellVertices.Aggregate(XYZ.Zero, (sum, point) => sum + point) / shellVertices.Count;
+                TessellatedShapeBuilder builder = new TessellatedShapeBuilder
+                {
+                    Target = TessellatedShapeBuilderTarget.Solid,
+                    Fallback = TessellatedShapeBuilderFallback.Abort,
+                    GraphicsStyleId = ElementId.InvalidElementId
+                };
+
+                builder.OpenConnectedFaceSet(true);
+
+                int planarOuterFaces = 0;
+                int nonPlanarFaces = 0;
+                int trianglesAdded = 0;
+
+                foreach (SelectedFaceInfo faceInfo in selectedFaces)
+                {
+                    if (faceInfo.Face is PlanarFace planarFace)
+                    {
+                        List<CurveLoop> orderedLoops = OrderPlanarLoopsByArea(planarFace);
+                        if (orderedLoops.Count == 0)
+                            continue;
+
+                        List<XYZ> outerPoints = SampleCurveLoop(orderedLoops[0]);
+                        XYZ preferredNormal = OrientNormalAwayFromCenter(faceInfo.RepresentativeNormal, faceInfo.RepresentativePoint, shellCenter);
+                        foreach (XYZ[] triangle in TriangulatePlanarPolygon(outerPoints, preferredNormal))
+                        {
+                            if (AddTriangle(builder, triangle[0], triangle[1], triangle[2], ElementId.InvalidElementId, shellCenter, preferredNormal))
+                                trianglesAdded++;
+                        }
+
+                        planarOuterFaces++;
+                        continue;
+                    }
+
+                    Mesh mesh = faceInfo.Face.Triangulate();
+                    if (mesh == null || mesh.NumTriangles == 0)
+                        continue;
+
+                    for (int i = 0; i < mesh.NumTriangles; i++)
+                    {
+                        MeshTriangle triangle = mesh.get_Triangle(i);
+                        if (AddTriangle(builder,
+                            triangle.get_Vertex(0),
+                            triangle.get_Vertex(1),
+                            triangle.get_Vertex(2),
+                            ElementId.InvalidElementId,
+                            shellCenter,
+                            null))
+                        {
+                            trianglesAdded++;
+                        }
+                    }
+
+                    nonPlanarFaces++;
+                }
+
+                builder.CloseConnectedFaceSet();
+                builder.Build();
+
+                solid = builder.GetBuildResult().GetGeometricalObjects().OfType<Solid>().FirstOrDefault(x => x.Volume > VolumeTolerance);
+                if (solid == null)
+                {
+                    diagnostic =
+                        "Die selektierten Flächen konnten über ihre tatsächlichen Randgeometrien nicht zu einem geschlossenen Volumenkörper aufgebaut werden.\n\n" +
+                        "Hinweis: Für planare Flächen wurde bewusst nur der jeweils äußere Umriss verwendet; innere Loops wurden ignoriert.";
+                    return false;
+                }
+
+                diagnostic =
+                    "Volumenkörper exakt aus den selektierten Flächen aufgebaut.\n" +
+                    $"Planare Flächen mit äußerem Umriss: {planarOuterFaces}\n" +
+                    $"Nicht-planare Flächen: {nonPlanarFaces}\n" +
+                    $"Tessellierte Dreiecke: {trianglesAdded}\n" +
+                    "Innere Rand-Loops planarer Flächen wurden dabei nicht berücksichtigt.";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                diagnostic = "Fehler beim exakten Aufbau des Volumenkörpers aus den selektierten Flächen: " + ex.Message;
                 return false;
             }
         }
@@ -290,6 +401,168 @@ namespace BIMassist.Commands
                 diagnostic = "Fehler beim Konstruieren des zylindrischen Volumenkörpers: " + ex.Message;
                 return false;
             }
+        }
+
+        private static bool TryBuildSingleRadiusCoaxialCylindricalSolid(List<SelectedFaceInfo> cylindricalFaces, List<SelectedFaceInfo> planarFaces, out Solid? solid, out string diagnostic)
+        {
+            solid = null;
+            diagnostic = string.Empty;
+
+            try
+            {
+                if (cylindricalFaces.Count < 2)
+                {
+                    diagnostic = "Für den Ein-Radius-Zylinderpfad wurden mindestens zwei Zylinderflächen benötigt.";
+                    return false;
+                }
+
+                List<CylindricalFace> cylinders = cylindricalFaces
+                    .Select(x => x.Face)
+                    .OfType<CylindricalFace>()
+                    .ToList();
+
+                if (cylinders.Count < 2)
+                {
+                    diagnostic = "Die ausgewählten Mantelflächen konnten nicht als Zylinderflächen interpretiert werden.";
+                    return false;
+                }
+
+                if (!TryGetSharedCylinderAxis(cylinders[0], cylinders[1], out XYZ axisOrigin, out XYZ axisDirection, out diagnostic))
+                    return false;
+
+                List<double> radii = new List<double>();
+                foreach (CylindricalFace cylinder in cylinders)
+                {
+                    XYZ direction = cylinder.Axis.Normalize();
+                    if (Math.Abs(Math.Abs(axisDirection.DotProduct(direction)) - 1.0) > 1e-4)
+                    {
+                        diagnostic = "Nicht alle ausgewählten Zylinderflächen sind parallel zur gemeinsamen Achse.";
+                        return false;
+                    }
+
+                    XYZ delta = cylinder.Origin - axisOrigin;
+                    XYZ perpendicular = delta - axisDirection.Multiply(delta.DotProduct(axisDirection));
+                    if (perpendicular.GetLength() > 1e-4)
+                    {
+                        diagnostic = "Nicht alle ausgewählten Zylinderflächen liegen auf derselben Zylinderachse.";
+                        return false;
+                    }
+
+                    double radius = TryGetCylinderRadius(cylinder);
+                    if (radius <= DistanceTolerance)
+                    {
+                        diagnostic = "Mindestens einer der ausgewählten Zylinderradien konnte nicht bestimmt werden.";
+                        return false;
+                    }
+
+                    radii.Add(radius);
+                }
+
+                double minRadius = radii.Min();
+                double maxRadius = radii.Max();
+                if (maxRadius - minRadius > 1e-4)
+                {
+                    diagnostic = "Die ausgewählten Zylinderflächen liegen nicht alle auf demselben Radius; der Ein-Radius-Zylinderpfad ist dafür nicht geeignet.";
+                    return false;
+                }
+
+                double radiusAverage = radii.Average();
+                List<double> axisPositions = new List<double>();
+                foreach (CylindricalFace cylinder in cylinders)
+                    axisPositions.AddRange(GetAxisPositionsFromFaceLoops(cylinder, axisOrigin, axisDirection));
+
+                axisPositions.AddRange(planarFaces.Select(x => (x.RepresentativePoint - axisOrigin).DotProduct(axisDirection)));
+                if (axisPositions.Count < 2)
+                {
+                    diagnostic = "Es konnten nicht genügend Begrenzungen entlang der gemeinsamen Zylinderachse bestimmt werden.";
+                    return false;
+                }
+
+                double min = axisPositions.Min();
+                double max = axisPositions.Max();
+                bool usedDirectCapRange = TryGetCapAxisRangeFromPlanarFaces(planarFaces, axisOrigin, axisDirection, out double capMin, out double capMax, out int capCount);
+
+                if (usedDirectCapRange)
+                {
+                    min = capMin;
+                    max = capMax;
+                }
+
+                double height = max - min;
+                if (height <= DistanceTolerance)
+                {
+                    diagnostic = "Die axialen Begrenzungsflächen des Ein-Radius-Zylinders liegen zu nah beieinander oder konnten nicht sauber bestimmt werden.";
+                    return false;
+                }
+
+                CurveLoop circleLoop = CreateCircleLoop(axisOrigin + axisDirection * min, axisDirection, radiusAverage);
+                solid = GeometryCreationUtilities.CreateExtrusionGeometry(new List<CurveLoop> { circleLoop }, axisDirection, height);
+
+                if (!usedDirectCapRange)
+                {
+                    double margin = Math.Max(radiusAverage * 2.0, 1.0);
+                    double start = min - margin;
+                    double extendedHeight = Math.Max((max - min) + (2.0 * margin), margin * 2.0);
+                    circleLoop = CreateCircleLoop(axisOrigin + axisDirection * start, axisDirection, radiusAverage);
+                    solid = GeometryCreationUtilities.CreateExtrusionGeometry(new List<CurveLoop> { circleLoop }, axisDirection, extendedHeight);
+
+                    List<XYZ> orientationPoints = planarFaces.Select(x => x.RepresentativePoint)
+                        .Concat(cylindricalFaces.Select(x => x.RepresentativePoint))
+                        .ToList();
+
+                    foreach (SelectedFaceInfo faceInfo in planarFaces)
+                    {
+                        Plane cutPlane = CreateInteriorHalfSpacePlane(faceInfo, orientationPoints);
+                        solid = BooleanOperationsUtils.CutWithHalfSpace(solid, cutPlane);
+                        if (solid == null || solid.Volume <= VolumeTolerance)
+                        {
+                            diagnostic = "Die planaren Begrenzungsflächen schneiden den Ein-Radius-Zylinder nicht zu einem gültigen Volumenkörper.";
+                            return false;
+                        }
+                    }
+                }
+
+                diagnostic =
+                    $"Vollzylinder aus {cylindricalFaces.Count} koaxialen Zylinderflächen mit identischem Radius und {planarFaces.Count} planaren Begrenzungen erzeugt.\n" +
+                    $"Verwendeter Radius: {radiusAverage:F4}\n" +
+                    (usedDirectCapRange
+                        ? $"Axialbereich direkt aus {capCount} stirnseitigen Planflächen bestimmt: {min:F4} bis {max:F4}.\n"
+                        : "Axialbereich aus Mantel- und Planflächendaten bestimmt; Planflächen wurden anschließend als Half-Spaces angeschnitten.\n") +
+                    "Innere Loops der planaren Stirnflächen wurden bewusst ignoriert.";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                diagnostic = "Fehler beim Konstruieren des Ein-Radius-Zylinders: " + ex.Message;
+                return false;
+            }
+        }
+
+        private static bool TryGetCapAxisRangeFromPlanarFaces(List<SelectedFaceInfo> planarFaces, XYZ axisOrigin, XYZ axisDirection, out double min, out double max, out int capCount)
+        {
+            min = 0;
+            max = 0;
+            capCount = 0;
+
+            List<double> capPositions = new List<double>();
+            foreach (SelectedFaceInfo faceInfo in planarFaces)
+            {
+                XYZ normal = faceInfo.RepresentativeNormal.Normalize();
+                double dot = Math.Abs(normal.DotProduct(axisDirection));
+                if (dot < 0.999)
+                    continue;
+
+                capPositions.Add((faceInfo.RepresentativePoint - axisOrigin).DotProduct(axisDirection));
+            }
+
+            List<double> distinct = CollapseDistinctValues(capPositions);
+            capCount = distinct.Count;
+            if (distinct.Count < 2)
+                return false;
+
+            min = distinct.Min();
+            max = distinct.Max();
+            return max - min > DistanceTolerance;
         }
 
         private static bool TryBuildCoaxialHollowCylindricalSolid(List<SelectedFaceInfo> cylindricalFaces, List<SelectedFaceInfo> planarFaces, out Solid? solid, out string diagnostic)
@@ -618,6 +891,46 @@ namespace BIMassist.Commands
             return collapsed;
         }
 
+        private static List<XYZ> CollectStrictBoundaryVertices(List<SelectedFaceInfo> selectedFaces)
+        {
+            List<XYZ> vertices = new List<XYZ>();
+            foreach (SelectedFaceInfo faceInfo in selectedFaces)
+            {
+                if (faceInfo.Face is PlanarFace planarFace)
+                {
+                    List<CurveLoop> orderedLoops = OrderPlanarLoopsByArea(planarFace);
+                    if (orderedLoops.Count > 0)
+                        vertices.AddRange(SampleCurveLoop(orderedLoops[0]));
+
+                    continue;
+                }
+
+                Mesh mesh = faceInfo.Face.Triangulate();
+                if (mesh == null)
+                    continue;
+
+                for (int i = 0; i < mesh.NumTriangles; i++)
+                {
+                    MeshTriangle triangle = mesh.get_Triangle(i);
+                    vertices.Add(triangle.get_Vertex(0));
+                    vertices.Add(triangle.get_Vertex(1));
+                    vertices.Add(triangle.get_Vertex(2));
+                }
+            }
+
+            return vertices;
+        }
+
+        private static XYZ OrientNormalAwayFromCenter(XYZ normal, XYZ pointOnFace, XYZ shellCenter)
+        {
+            XYZ normalized = normal.Normalize();
+            XYZ outward = pointOnFace - shellCenter;
+            if (outward.GetLength() > DistanceTolerance && normalized.DotProduct(outward.Normalize()) < 0)
+                return normalized.Negate();
+
+            return normalized;
+        }
+
         private static double ComputePlanarLoopArea(CurveLoop loop, XYZ planeOrigin, XYZ xAxis, XYZ yAxis)
         {
             List<XYZ> points = SampleCurveLoop(loop);
@@ -774,6 +1087,188 @@ namespace BIMassist.Commands
                 points.RemoveAt(points.Count - 1);
 
             return points;
+        }
+
+        private static List<XYZ[]> TriangulatePlanarPolygon(List<XYZ> points3D, XYZ normal)
+        {
+            List<XYZ[]> triangles = new List<XYZ[]>();
+            if (points3D.Count < 3)
+                return triangles;
+
+            XYZ origin = points3D[0];
+            XYZ xAxis = GetPerpendicularAxis(normal);
+            XYZ yAxis = normal.CrossProduct(xAxis).Normalize();
+
+            List<(double X, double Y)> points2D = points3D
+                .Select(point =>
+                {
+                    XYZ relative = point - origin;
+                    return (relative.DotProduct(xAxis), relative.DotProduct(yAxis));
+                })
+                .ToList();
+
+            SimplifyPlanarPolygon(points3D, points2D);
+            if (points3D.Count < 3)
+                return triangles;
+
+            List<int> indices = Enumerable.Range(0, points3D.Count).ToList();
+            double polygonArea = SignedArea2D(points2D, indices);
+            if (Math.Abs(polygonArea) < 1e-9)
+                return triangles;
+
+            if (polygonArea < 0)
+                indices.Reverse();
+
+            int guard = 0;
+            while (indices.Count > 2 && guard < 10000)
+            {
+                guard++;
+                bool earFound = false;
+
+                for (int i = 0; i < indices.Count; i++)
+                {
+                    int prev = indices[(i - 1 + indices.Count) % indices.Count];
+                    int curr = indices[i];
+                    int next = indices[(i + 1) % indices.Count];
+
+                    if (!IsEar(prev, curr, next, indices, points2D))
+                        continue;
+
+                    triangles.Add(new[] { points3D[prev], points3D[curr], points3D[next] });
+                    indices.RemoveAt(i);
+                    earFound = true;
+                    break;
+                }
+
+                if (!earFound)
+                    break;
+            }
+
+            return triangles;
+        }
+
+        private static void SimplifyPlanarPolygon(List<XYZ> points3D, List<(double X, double Y)> points2D)
+        {
+            const double duplicateTolerance = 1e-6;
+            const double collinearTolerance = 1e-9;
+
+            for (int i = points3D.Count - 1; i > 0; i--)
+            {
+                if (points3D[i].DistanceTo(points3D[i - 1]) < duplicateTolerance)
+                {
+                    points3D.RemoveAt(i);
+                    points2D.RemoveAt(i);
+                }
+            }
+
+            if (points3D.Count > 1 && points3D[0].DistanceTo(points3D[^1]) < duplicateTolerance)
+            {
+                points3D.RemoveAt(points3D.Count - 1);
+                points2D.RemoveAt(points2D.Count - 1);
+            }
+
+            bool changed;
+            do
+            {
+                changed = false;
+                if (points3D.Count < 3)
+                    break;
+
+                for (int i = 0; i < points3D.Count; i++)
+                {
+                    int prev = (i - 1 + points3D.Count) % points3D.Count;
+                    int next = (i + 1) % points3D.Count;
+                    double cross = Cross(points2D[prev], points2D[i], points2D[next]);
+
+                    if (Math.Abs(cross) <= collinearTolerance)
+                    {
+                        points3D.RemoveAt(i);
+                        points2D.RemoveAt(i);
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            while (changed);
+        }
+
+        private static double SignedArea2D(List<(double X, double Y)> points, List<int> indices)
+        {
+            double area = 0;
+            for (int i = 0; i < indices.Count; i++)
+            {
+                (double X, double Y) a = points[indices[i]];
+                (double X, double Y) b = points[indices[(i + 1) % indices.Count]];
+                area += (a.X * b.Y) - (b.X * a.Y);
+            }
+
+            return area * 0.5;
+        }
+
+        private static bool IsEar(int prev, int curr, int next, List<int> polygon, List<(double X, double Y)> points)
+        {
+            if (Cross(points[prev], points[curr], points[next]) <= 1e-9)
+                return false;
+
+            for (int i = 0; i < polygon.Count; i++)
+            {
+                int index = polygon[i];
+                if (index == prev || index == curr || index == next)
+                    continue;
+
+                if (PointInTriangle(points[index], points[prev], points[curr], points[next]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static double Cross((double X, double Y) a, (double X, double Y) b, (double X, double Y) c)
+        {
+            return (b.X - a.X) * (c.Y - a.Y) - (b.Y - a.Y) * (c.X - a.X);
+        }
+
+        private static bool PointInTriangle((double X, double Y) point, (double X, double Y) a, (double X, double Y) b, (double X, double Y) c)
+        {
+            double c1 = Cross(a, b, point);
+            double c2 = Cross(b, c, point);
+            double c3 = Cross(c, a, point);
+
+            bool hasNegative = c1 < -1e-9 || c2 < -1e-9 || c3 < -1e-9;
+            bool hasPositive = c1 > 1e-9 || c2 > 1e-9 || c3 > 1e-9;
+            return !(hasNegative && hasPositive);
+        }
+
+        private static bool AddTriangle(TessellatedShapeBuilder builder, XYZ a, XYZ b, XYZ c, ElementId materialId, XYZ shellCenter, XYZ? preferredNormal)
+        {
+            if (a.IsAlmostEqualTo(b) || b.IsAlmostEqualTo(c) || c.IsAlmostEqualTo(a))
+                return false;
+
+            List<XYZ> vertices = new List<XYZ> { a, b, c };
+
+            XYZ triangleNormal = (b - a).CrossProduct(c - a);
+            if (triangleNormal.GetLength() <= 1e-9)
+                return false;
+
+            XYZ normalizedTriangleNormal = triangleNormal.Normalize();
+            XYZ triangleCenter = (a + b + c) / 3.0;
+            XYZ outward = triangleCenter - shellCenter;
+
+            if (outward.GetLength() > DistanceTolerance && normalizedTriangleNormal.DotProduct(outward.Normalize()) < 0)
+            {
+                vertices = new List<XYZ> { a, c, b };
+                normalizedTriangleNormal = normalizedTriangleNormal.Negate();
+            }
+
+            if (preferredNormal != null && normalizedTriangleNormal.DotProduct(preferredNormal.Normalize()) < 0)
+                vertices = new List<XYZ> { vertices[0], vertices[2], vertices[1] };
+
+            TessellatedFace face = new TessellatedFace(vertices, materialId);
+            if (!builder.DoesFaceHaveEnoughLoopsAndVertices(face))
+                return false;
+
+            builder.AddFace(face);
+            return true;
         }
 
         private sealed class FaceSelectionFilter : ISelectionFilter

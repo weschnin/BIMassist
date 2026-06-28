@@ -130,9 +130,7 @@ namespace BIMassist
                 btnData = new PushButtonData("Volumenkörper konstruieren", "Volumenkörper\nkonstruieren", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.ConstructVolumeFromFacesCommand")
                 {
                     ToolTip = "Aus selektierten Flächen einen Volumenkörper konstruieren",
-                    LongDescription = "Konstruiert aus mehreren selektierten Begrenzungsflächen einen Volumenkörper. Unterstützt derzeit konvexe Körper aus planaren Flächen sowie zylindrische Körper aus einer Zylinderfläche und planaren Begrenzungsflächen.",
-                    Image = GetImageSource("solid_16px.png"),
-                    LargeImage = GetImageSource("solid_24px.png")
+                    LongDescription = "Konstruiert aus mehreren selektierten Begrenzungsflächen einen Volumenkörper. Unterstützt derzeit konvexe Körper aus planaren Flächen sowie zylindrische Körper aus einer Zylinderfläche und planaren Begrenzungsflächen."
                 };
                 pulldownGroup.AddPushButton(btnData);
 
@@ -144,6 +142,7 @@ namespace BIMassist
                 pulldownGroup.AddPushButton(btnData);
 
                 // Materialien-Funktionen
+
 
                 PanelgroupData = new PulldownButtonData("Materialien", "Materialien")
                 {

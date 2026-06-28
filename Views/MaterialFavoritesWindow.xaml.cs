@@ -308,7 +308,7 @@ namespace BIMassist.Views
                             : new ProjectMaterialSelectionFilter(),
                         isFamilyDocument
                             ? $"Familiengeometrie auswählen, die das Material \"{material.Name}\" erhalten soll"
-                            : $"Elemente auswählen, die das Material \"{material.Name}\" erhalten sollen");
+                            : $"Elemente auswählen, die das Material \"{material.Name}\" erhalten sollen. Für Projektfamilien zuerst 'In-Place bearbeiten' starten und dann die Geometrie in diesem Modus anklicken.");
 
                     if (pickedReferences == null || pickedReferences.Count == 0)
                     {
@@ -391,24 +391,55 @@ namespace BIMassist.Views
                                 continue;
                             }
 
-                            if (TryAssignInProjectDocument(doc, element, material.Id, out string successDetail, out string failureReason))
+                            if (element is FamilyInstance familyInstance)
+                            {
+                                bool isInPlaceFamily = familyInstance.Symbol?.Family != null && familyInstance.Symbol.Family.IsInPlace;
+
+                                if (isInPlaceFamily)
+                                {
+                                    failures.Add($"{DescribeElement(element)} – Dies ist die Projektfamilien-Instanz selbst. Bitte zuerst in Revit 'In-Place bearbeiten' starten, dann BIMassist erneut ausführen und die Geometrieelemente innerhalb der Projektfamilie auswählen; danach den Bearbeitungsmodus in Revit manuell beenden.");
+                                    continue;
+                                }
+
+                                if (TryAssignViaEditableFamily(doc, familyInstance, material.Name, out string successDetail, out string failureReason))
+                                {
+                                    successCount++;
+                                }
+                                else
+                                {
+                                    failures.Add($"{DescribeElement(element)} – {failureReason}");
+                                }
+
+                                continue;
+                            }
+
+                            if (IsHostObjectBasedElement(doc, element))
+                            {
+                                if (TryAssignInHostObjectType(doc, element, material.Id, out string hostSuccessDetail, out string hostFailureReason))
+                                {
+                                    successCount++;
+                                }
+                                else
+                                {
+                                    failures.Add($"{DescribeElement(element)} – {hostFailureReason}");
+                                }
+
+                                continue;
+                            }
+
+                            if (TryAssignProjectParameterOnly(doc, element, material.Id, out string nonFamilySuccessDetail, out string nonFamilyFailureReason))
                             {
                                 successCount++;
                             }
-                            else if (element is FamilyInstance inPlaceInstance
-                                && inPlaceInstance.Symbol?.Family != null
-                                && inPlaceInstance.Symbol.Family.IsInPlace
-                                && TryAssignInInPlaceFamily(doc, inPlaceInstance, material.Id, out successDetail, out failureReason))
-                            {
-                                successCount++;
-                            }
-                            else if (element is FamilyInstance familyInstance && TryAssignViaEditableFamily(doc, familyInstance, material.Name, out successDetail, out failureReason))
+                            else if (TryPaintInProjectDocument(doc, element, material.Id, out nonFamilySuccessDetail, out string paintFailureReason))
                             {
                                 successCount++;
                             }
                             else
                             {
-                                failures.Add($"{DescribeElement(element)} – {failureReason}");
+                                string combinedFailure = string.Join(" | ", new[] { nonFamilyFailureReason, paintFailureReason }
+                                    .Where(message => !string.IsNullOrWhiteSpace(message)));
+                                failures.Add($"{DescribeElement(element)} – {combinedFailure}");
                             }
                         }
                     }
@@ -459,6 +490,21 @@ namespace BIMassist.Views
                 successDetail = string.Empty;
                 failureReason = string.Empty;
 
+                if (TryAssignProjectParameterOnly(doc, element, materialId, out successDetail, out failureReason))
+                    return true;
+
+                if (TryPaintInProjectDocument(doc, element, materialId, out successDetail, out failureReason))
+                    return true;
+
+                failureReason = "Kein schreibbarer Materialparameter und keine bemalbaren Flächen gefunden";
+                return false;
+            }
+
+            private static bool TryAssignProjectParameterOnly(Document doc, Element element, ElementId materialId, out string successDetail, out string failureReason)
+            {
+                successDetail = string.Empty;
+                failureReason = string.Empty;
+
                 using (Transaction tx = new Transaction(doc, "Material zuweisen"))
                 {
                     tx.Start();
@@ -470,6 +516,22 @@ namespace BIMassist.Views
                         return true;
                     }
 
+                    tx.RollBack();
+                }
+
+                failureReason = "Kein schreibbarer Materialparameter gefunden";
+                return false;
+            }
+
+            private static bool TryPaintInProjectDocument(Document doc, Element element, ElementId materialId, out string successDetail, out string failureReason)
+            {
+                successDetail = string.Empty;
+                failureReason = string.Empty;
+
+                using (Transaction tx = new Transaction(doc, "Material durch Bemalung zuweisen"))
+                {
+                    tx.Start();
+
                     if (TryPaintElement(doc, element, materialId, out int paintedFaces))
                     {
                         tx.Commit();
@@ -480,7 +542,7 @@ namespace BIMassist.Views
                     tx.RollBack();
                 }
 
-                failureReason = "Kein schreibbarer Materialparameter und keine bemalbaren Flächen gefunden";
+                failureReason = "Keine bemalbaren Flächen gefunden";
                 return false;
             }
 
@@ -535,30 +597,31 @@ namespace BIMassist.Views
                         return false;
                     }
 
-                    Material familyMaterial = GetOrCreateMaterialByName(familyDoc, materialName);
-                    if (familyMaterial == null)
-                    {
-                        failureReason = $"Das Material \"{materialName}\" konnte in der Familie nicht bereitgestellt werden";
-                        return false;
-                    }
-
-                    FamilyManager familyManager = familyDoc.FamilyManager;
-                    if (familyManager != null)
-                    {
-                        FamilyType matchingType = familyManager.Types
-                            .Cast<FamilyType>()
-                            .FirstOrDefault(type => string.Equals(type.Name, familyInstance.Symbol.Name, StringComparison.OrdinalIgnoreCase));
-
-                        if (matchingType != null)
-                            familyManager.CurrentType = matchingType;
-                        else if (familyManager.CurrentType == null)
-                            familyManager.CurrentType = familyManager.Types.Cast<FamilyType>().FirstOrDefault();
-                    }
-
                     int assignedCount = 0;
                     using (Transaction tx = new Transaction(familyDoc, "Material in ladbarer Familie zuweisen"))
                     {
                         tx.Start();
+
+                        Material familyMaterial = GetOrCreateMaterialByName(familyDoc, materialName);
+                        if (familyMaterial == null)
+                        {
+                            tx.RollBack();
+                            failureReason = $"Das Material \"{materialName}\" konnte in der Familie nicht bereitgestellt werden";
+                            return false;
+                        }
+
+                        FamilyManager familyManager = familyDoc.FamilyManager;
+                        if (familyManager != null)
+                        {
+                            FamilyType matchingType = familyManager.Types
+                                .Cast<FamilyType>()
+                                .FirstOrDefault(type => string.Equals(type.Name, familyInstance.Symbol.Name, StringComparison.OrdinalIgnoreCase));
+
+                            if (matchingType != null)
+                                familyManager.CurrentType = matchingType;
+                            else if (familyManager.CurrentType == null)
+                                familyManager.CurrentType = familyManager.Types.Cast<FamilyType>().FirstOrDefault();
+                        }
 
                         foreach (Element familyElement in new FilteredElementCollector(familyDoc).WhereElementIsNotElementType())
                         {
@@ -683,6 +746,67 @@ namespace BIMassist.Views
                 return true;
             }
 
+            private static bool IsHostObjectBasedElement(Document doc, Element element)
+            {
+                ElementId typeId = element?.GetTypeId();
+                if (typeId == null || typeId == ElementId.InvalidElementId)
+                    return false;
+
+                return doc.GetElement(typeId) is HostObjAttributes;
+            }
+
+            private static bool TryAssignInHostObjectType(Document doc, Element element, ElementId materialId, out string successDetail, out string failureReason)
+            {
+                successDetail = string.Empty;
+                failureReason = string.Empty;
+
+                ElementId typeId = element?.GetTypeId();
+                if (typeId == null || typeId == ElementId.InvalidElementId)
+                {
+                    failureReason = "Element besitzt keinen bearbeitbaren Typ für eine Materialzuweisung";
+                    return false;
+                }
+
+                Element typeElement = doc.GetElement(typeId);
+                if (typeElement is not HostObjAttributes hostType)
+                {
+                    failureReason = "Elementtyp ist kein Host-Typ mit Compound Structure";
+                    return false;
+                }
+
+                using (Transaction tx = new Transaction(doc, "Material in Systemfamilientyp zuweisen"))
+                {
+                    tx.Start();
+
+                    CompoundStructure compoundStructure = hostType.GetCompoundStructure();
+                    if (compoundStructure == null || compoundStructure.LayerCount == 0)
+                    {
+                        tx.RollBack();
+                        failureReason = "Host-Typ besitzt keine bearbeitbare Compound Structure";
+                        return false;
+                    }
+
+                    int changedLayers = 0;
+                    for (int layerIndex = 0; layerIndex < compoundStructure.LayerCount; layerIndex++)
+                    {
+                        compoundStructure.SetMaterialId(layerIndex, materialId);
+                        changedLayers++;
+                    }
+
+                    if (changedLayers == 0)
+                    {
+                        tx.RollBack();
+                        failureReason = "In der Compound Structure konnten keine Materiallagen aktualisiert werden";
+                        return false;
+                    }
+
+                    hostType.SetCompoundStructure(compoundStructure);
+                    tx.Commit();
+                    successDetail = $"Alle {changedLayers} Schicht(en) des Typs \"{typeElement.Name}\" wurden auf das Favoritenmaterial gesetzt.";
+                    return true;
+                }
+            }
+
             private static List<Element> CollectInPlaceFamilyTargets(FamilyInstance familyInstance)
             {
                 List<Element> targets = new List<Element>();
@@ -775,6 +899,24 @@ namespace BIMassist.Views
             {
                 parameterName = string.Empty;
 
+                Parameter builtInMaterial = element?.get_Parameter(BuiltInParameter.MATERIAL_ID_PARAM);
+                if (builtInMaterial != null && !builtInMaterial.IsReadOnly)
+                {
+                    try
+                    {
+                        builtInMaterial.Set(materialId);
+                        if (ParameterHasMaterialValue(builtInMaterial, materialId))
+                        {
+                            parameterName = builtInMaterial.Definition?.Name ?? "MATERIAL_ID_PARAM";
+                            return true;
+                        }
+                    }
+                    catch
+                    {
+                        // Weiter mit anderen Materialparametern.
+                    }
+                }
+
                 foreach (Parameter parameter in element.Parameters)
                 {
                     if (parameter == null || parameter.IsReadOnly || parameter.StorageType != StorageType.ElementId)
@@ -786,8 +928,11 @@ namespace BIMassist.Views
                     try
                     {
                         parameter.Set(materialId);
-                        parameterName = parameter.Definition?.Name ?? "Material";
-                        return true;
+                        if (ParameterHasMaterialValue(parameter, materialId))
+                        {
+                            parameterName = parameter.Definition?.Name ?? "Material";
+                            return true;
+                        }
                     }
                     catch
                     {
@@ -798,24 +943,48 @@ namespace BIMassist.Views
                 return false;
             }
 
-            private static bool LooksLikeMaterialParameter(Document doc, Parameter parameter)
+            private static bool ParameterHasMaterialValue(Parameter parameter, ElementId expectedMaterialId)
             {
-                string definitionName = parameter.Definition?.Name ?? string.Empty;
-                if (definitionName.IndexOf("material", StringComparison.OrdinalIgnoreCase) >= 0)
-                    return true;
-
                 try
                 {
-                    ElementId currentId = parameter.AsElementId();
-                    if (currentId != null && currentId != ElementId.InvalidElementId)
-                        return doc.GetElement(currentId) is Material;
+                    ElementId assignedId = parameter.AsElementId();
+                    return assignedId != null && assignedId == expectedMaterialId;
                 }
                 catch
                 {
                     return false;
                 }
+            }
 
-                return false;
+            private static bool LooksLikeMaterialParameter(Document doc, Parameter parameter)
+            {
+                try
+                {
+                    ForgeTypeId dataType = parameter.Definition?.GetDataType();
+                    if (dataType != null && dataType == SpecTypeId.Reference.Material)
+                        return true;
+                }
+                catch
+                {
+                    // Fallback auf ältere/unsichere Heuristik weiter unten.
+                }
+
+                string definitionName = parameter.Definition?.Name ?? string.Empty;
+                if (definitionName.IndexOf("material", StringComparison.OrdinalIgnoreCase) < 0)
+                    return false;
+
+                try
+                {
+                    ElementId currentId = parameter.AsElementId();
+                    if (currentId == null || currentId == ElementId.InvalidElementId)
+                        return true;
+
+                    return doc.GetElement(currentId) is Material;
+                }
+                catch
+                {
+                    return false;
+                }
             }
 
             private static bool TryPaintElement(Document doc, Element element, ElementId materialId, out int paintedFaces)
