@@ -141,6 +141,20 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                btnData = new PushButtonData("Elementkoordinaten", "Elementkoordinaten", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.ElementCoordinatesCommand")
+                {
+                    ToolTip = "Familie oder Projektfamilie nach Rechts-/Hochwert setzen",
+                    LongDescription = "Zeigt die aktuellen Rechts-/Hochwerte einer ausgewählten ladbaren Familie oder Projektfamilie an und verschiebt das Element auf neu eingegebene Koordinaten. Systemfamilien sind ausgeschlossen.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
+                btnData = new PushButtonData("Basisebene wechseln", "Basisebene\nwechseln", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.ChangeFloorBaseLevelCommand")
+                {
+                    ToolTip = "Basisebene einer Geschossdecke wechseln",
+                    LongDescription = "Wählt zuerst eine Geschossdecke und danach die neue Basisebene. Der Versatz vom Host wird so neu berechnet, dass die Geschossdecke an ihrer bisherigen Höhenposition bleibt.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 // Materialien-Funktionen
 
 
@@ -445,7 +459,7 @@ namespace BIMassist
             {
                 foreach (Window window in windows.OfType<Window>().ToList())
                 {
-                    if (window is SnapshotManagerWindow || window is Einstellungen)
+                    if (window is SnapshotManagerWindow || window is Einstellungen || window is ElementCoordinatesWindow)
                     {
                         try { window.Close(); } catch { }
                     }

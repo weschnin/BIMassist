@@ -1,4 +1,5 @@
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Selection;
 using BIMassist.Core;
@@ -268,6 +269,7 @@ namespace BIMassist.Views
             public void Execute(UIApplication app)
             {
                 bool wasVisible = _window.IsVisible;
+                bool suppressRestoreAndActivate = false;
 
                 try
                 {
@@ -300,19 +302,22 @@ namespace BIMassist.Views
                         _window.Hide();
 
                     bool isFamilyDocument = doc.IsFamilyDocument;
+                    bool isInPlaceFamilyEditMode = IsInPlaceFamilyEditMode(doc);
 
                     IList<Reference> pickedReferences = uidoc.Selection.PickObjects(
                         ObjectType.Element,
-                        isFamilyDocument
+                        isFamilyDocument || isInPlaceFamilyEditMode
                             ? new FamilyMaterialSelectionFilter()
                             : new ProjectMaterialSelectionFilter(),
                         isFamilyDocument
-                            ? $"Familiengeometrie auswählen, die das Material \"{material.Name}\" erhalten soll"
-                            : $"Elemente auswählen, die das Material \"{material.Name}\" erhalten sollen. Für Projektfamilien zuerst 'In-Place bearbeiten' starten und dann die Geometrie in diesem Modus anklicken.");
+                            ? $"Familienelemente auswählen, die das Material \"{material.Name}\" erhalten sollen"
+                            : isInPlaceFamilyEditMode
+                                ? $"Formkörper/Extrusionen der geöffneten Projektfamilie auswählen, die das Material \"{material.Name}\" erhalten sollen"
+                            : $"Ganze Elemente auswählen, die das Material \"{material.Name}\" erhalten sollen. Wände/Decken werden über den Typ geändert; Projektfamilien werden als ganze Elemente verarbeitet.");
 
                     if (pickedReferences == null || pickedReferences.Count == 0)
                     {
-                        _window.SetStatus(isFamilyDocument
+                        _window.SetStatus(isFamilyDocument || isInPlaceFamilyEditMode
                             ? "Es wurde keine Familiengeometrie ausgewählt."
                             : "Es wurden keine Elemente ausgewählt.");
                         return;
@@ -333,9 +338,9 @@ namespace BIMassist.Views
                     TaskDialog confirmation = new TaskDialog("Material zuweisen")
                     {
                         MainInstruction = $"Material \"{material.Name}\" zuweisen?",
-                        MainContent = isFamilyDocument
+                        MainContent = isFamilyDocument || isInPlaceFamilyEditMode
                             ? $"Ausgewählte Familienelemente: {uniqueReferences.Count}\nDie Zuweisung erfolgt direkt im geöffneten Familiendokument."
-                            : $"Ausgewählte Elemente: {uniqueReferences.Count}\nBei ladbaren Familien wird bei Bedarf die Familiengeometrie aktualisiert.",
+                            : $"Ausgewählte Elemente: {uniqueReferences.Count}\nWände und Geschossdecken werden über die Typ-Schichten aktualisiert. Projektfamilien werden als ganze Elemente verarbeitet.",
                         CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No,
                         DefaultButton = TaskDialogResult.Yes
                     };
@@ -397,7 +402,12 @@ namespace BIMassist.Views
 
                                 if (isInPlaceFamily)
                                 {
-                                    failures.Add($"{DescribeElement(element)} – Dies ist die Projektfamilien-Instanz selbst. Bitte zuerst in Revit 'In-Place bearbeiten' starten, dann BIMassist erneut ausführen und die Geometrieelemente innerhalb der Projektfamilie auswählen; danach den Bearbeitungsmodus in Revit manuell beenden.");
+                                    // Revit lässt In-Place-/Projektfamilien nicht wie ladbare Familien per EditFamily bearbeiten.
+                                    // Zusätzlich deaktiviert Revit BIMassist-Befehle im In-Place-Familienbearbeitungsmodus, sodass der
+                                    // Formkörper dort nicht zuverlässig über dieses Add-in ausgewählt/materialisiert werden kann.
+                                    // Kategorie- oder Paint-Fallbacks werden bewusst nicht als Erfolg gewertet, weil sie im Eigenschaftenfenster
+                                    // weiterhin <Nach Kategorie> zeigen und nicht den echten Form-Materialparameter ändern.
+                                    failures.Add($"{DescribeElement(element)} – Projektfamilien/In-Place-Familien werden von BIMassist nicht unterstützt. Revit blockiert die direkte API-Bearbeitung dieser Familien und deaktiviert BIMassist im Projektfamilien-Bearbeitungsmodus. Bitte das Material manuell im Revit-Bearbeitungsmodus der Projektfamilie setzen.");
                                     continue;
                                 }
 
@@ -408,6 +418,20 @@ namespace BIMassist.Views
                                 else
                                 {
                                     failures.Add($"{DescribeElement(element)} – {failureReason}");
+                                }
+
+                                continue;
+                            }
+
+                            if (IsPipeElement(element))
+                            {
+                                if (TryAssignPipeSegmentMaterial(doc, element, material.Id, out string pipeSuccessDetail, out string pipeFailureReason))
+                                {
+                                    successCount++;
+                                }
+                                else
+                                {
+                                    failures.Add($"{DescribeElement(element)} – {pipeFailureReason}");
                                 }
 
                                 continue;
@@ -430,6 +454,10 @@ namespace BIMassist.Views
                             if (TryAssignProjectParameterOnly(doc, element, material.Id, out string nonFamilySuccessDetail, out string nonFamilyFailureReason))
                             {
                                 successCount++;
+                            }
+                            else if (element is GenericForm || element is CombinableElement)
+                            {
+                                failures.Add($"{DescribeElement(element)} – Der echte Materialparameter konnte nicht gesetzt werden ({nonFamilyFailureReason}). Bemalen/Kategorie-Material wird bei Projektfamilien-Formen nicht mehr als Erfolg gewertet, weil dann im Eigenschaftenfenster weiterhin <Nach Kategorie> steht.");
                             }
                             else if (TryPaintInProjectDocument(doc, element, material.Id, out nonFamilySuccessDetail, out string paintFailureReason))
                             {
@@ -478,12 +506,83 @@ namespace BIMassist.Views
                 }
                 finally
                 {
-                    if (wasVisible)
+                    if (wasVisible && !suppressRestoreAndActivate)
                         _window.RestoreAndActivate();
                 }
             }
 
             public string GetName() => nameof(AssignFavoriteMaterialHandler);
+
+            private static bool IsInPlaceFamilyEditMode(Document doc)
+            {
+                if (doc == null)
+                    return false;
+
+                try
+                {
+                    return doc.IsInEditMode() && doc.GetActiveEditMode() == EditModeType.InPlaceFamily;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            private static bool TryPostEditInPlaceFamily(UIApplication app, UIDocument uidoc, FamilyInstance familyInstance, out string failureReason)
+            {
+                failureReason = string.Empty;
+
+                try
+                {
+                    if (app == null || uidoc == null || familyInstance == null)
+                    {
+                        failureReason = "Ungültiger Revit-Kontext";
+                        return false;
+                    }
+
+                    uidoc.Selection.SetElementIds(new List<ElementId> { familyInstance.Id });
+
+                    RevitCommandId editInPlaceFamilyCommand = RevitCommandId.LookupCommandId("ID_EDIT_INPLACE_FAMILY");
+                    if (editInPlaceFamilyCommand == null)
+                    {
+                        failureReason = "Revit-Befehl ID_EDIT_INPLACE_FAMILY wurde nicht gefunden";
+                        return false;
+                    }
+
+                    if (!app.CanPostCommand(editInPlaceFamilyCommand))
+                    {
+                        failureReason = "Revit erlaubt den Befehl momentan nicht";
+                        return false;
+                    }
+
+                    app.PostCommand(editInPlaceFamilyCommand);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    failureReason = ex.Message;
+                    return false;
+                }
+            }
+
+            private static string GetReferenceKey(Document doc, Reference reference)
+            {
+                if (reference == null)
+                    return string.Empty;
+
+                try
+                {
+                    string stableRepresentation = reference.ConvertToStableRepresentation(doc);
+                    if (!string.IsNullOrWhiteSpace(stableRepresentation))
+                        return stableRepresentation;
+                }
+                catch
+                {
+                    // Some references cannot be converted in all edit contexts; fall back to ids.
+                }
+
+                return $"{reference.ElementId?.Value ?? -1}:{reference.LinkedElementId?.Value ?? -1}:{reference.ElementReferenceType}";
+            }
 
             private static bool TryAssignInProjectDocument(Document doc, Element element, ElementId materialId, out string successDetail, out string failureReason)
             {
@@ -544,6 +643,69 @@ namespace BIMassist.Views
 
                 failureReason = "Keine bemalbaren Flächen gefunden";
                 return false;
+            }
+
+            private static bool TryPaintPickedFaceInProjectDocument(Document doc, Reference reference, ElementId materialId, out string successDetail, out string failureReason)
+            {
+                successDetail = string.Empty;
+                failureReason = string.Empty;
+
+                if (doc == null || reference == null || reference.ElementId == null || reference.ElementId == ElementId.InvalidElementId)
+                {
+                    failureReason = "Ungültige Flächenreferenz";
+                    return false;
+                }
+
+                Element element = doc.GetElement(reference.ElementId);
+                if (element == null)
+                {
+                    failureReason = "Zur ausgewählten Fläche wurde kein Element gefunden";
+                    return false;
+                }
+
+                Face face = null;
+                try
+                {
+                    face = element.GetGeometryObjectFromReference(reference) as Face;
+                }
+                catch (Exception ex)
+                {
+                    failureReason = "Fläche konnte aus der Auswahl nicht gelesen werden: " + ex.Message;
+                    return false;
+                }
+
+                if (face == null)
+                {
+                    failureReason = "Die Auswahl enthält keine echte Fläche";
+                    return false;
+                }
+
+                using (Transaction tx = new Transaction(doc, "Projektfamilienfläche bemalen"))
+                {
+                    tx.Start();
+
+                    try
+                    {
+                        doc.Paint(element.Id, face, materialId);
+                        ElementId paintedMaterialId = doc.GetPaintedMaterial(element.Id, face);
+                        if (paintedMaterialId == materialId)
+                        {
+                            tx.Commit();
+                            successDetail = "Ausgewählte Projektfamilienfläche wurde bemalt.";
+                            return true;
+                        }
+
+                        tx.RollBack();
+                        failureReason = "Revit hat Paint akzeptiert, aber das Material danach nicht auf der Fläche zurückgemeldet";
+                        return false;
+                    }
+                    catch (Exception ex)
+                    {
+                        tx.RollBack();
+                        failureReason = ex.Message;
+                        return false;
+                    }
+                }
             }
 
             private static bool TryAssignInFamilyDocument(Document familyDoc, Element element, ElementId materialId, out string successDetail, out string failureReason)
@@ -708,9 +870,23 @@ namespace BIMassist.Views
                 {
                     tx.Start();
 
+                    if (TrySetMaterialParameter(projectDoc, familyInstance, materialId, out _))
+                        assignedCount++;
+
+                    ElementId typeId = familyInstance.GetTypeId();
+                    Element typeElement = typeId != null && typeId != ElementId.InvalidElementId
+                        ? projectDoc.GetElement(typeId)
+                        : null;
+
+                    if (typeElement != null && TrySetMaterialParameter(projectDoc, typeElement, materialId, out _))
+                        assignedCount++;
+
                     foreach (Element target in targets)
                     {
-                        if (target == null || target.Id == familyInstance.Id)
+                        if (target == null)
+                            continue;
+
+                        if (target.Id == familyInstance.Id || (typeElement != null && target.Id == typeElement.Id))
                             continue;
 
                         if (TrySetMaterialParameter(projectDoc, target, materialId, out _))
@@ -719,8 +895,8 @@ namespace BIMassist.Views
                             continue;
                         }
 
-                        if (TryPaintElement(projectDoc, target, materialId, out int paintedFaces) && paintedFaces > 0)
-                            assignedCount++;
+                        // Bei Projektfamilien zählt nur ein echter Materialparameter.
+                        // Kategorie-Material oder Paint können sichtbar wirken, lassen im Eigenschaftenfenster aber weiterhin <Nach Kategorie> stehen.
                     }
 
                     if (assignedCount > 0)
@@ -737,8 +913,8 @@ namespace BIMassist.Views
                         .Select(DescribeElement));
 
                     failureReason = string.IsNullOrWhiteSpace(sampleTargets)
-                        ? "In der In-Place-Familie wurde kein beschreibbarer Materialparameter und keine bemalbare Untergeometrie gefunden"
-                        : "In der In-Place-Familie wurde kein beschreibbarer Materialparameter und keine bemalbare Untergeometrie gefunden. Kandidaten: " + sampleTargets;
+                        ? "In der In-Place-Familie wurde kein beschreibbarer echter Materialparameter gefunden"
+                        : "In der In-Place-Familie wurde kein beschreibbarer echter Materialparameter gefunden. Kandidaten: " + sampleTargets;
                     return false;
                 }
 
@@ -753,6 +929,142 @@ namespace BIMassist.Views
                     return false;
 
                 return doc.GetElement(typeId) is HostObjAttributes;
+            }
+
+            private static bool IsPipeElement(Element element)
+            {
+                if (element == null)
+                    return false;
+
+                if (element is Pipe)
+                    return true;
+
+                BuiltInCategory? category = TryGetBuiltInCategory(element.Category?.Id);
+                return category == BuiltInCategory.OST_PipeCurves
+                    || category == BuiltInCategory.OST_FlexPipeCurves
+                    || category == BuiltInCategory.OST_PlaceHolderPipes;
+            }
+
+            private static bool TryAssignPipeSegmentMaterial(Document doc, Element pipeElement, ElementId materialId, out string successDetail, out string failureReason)
+            {
+                successDetail = string.Empty;
+                failureReason = string.Empty;
+
+                if (doc == null || pipeElement == null)
+                {
+                    failureReason = "Ungültiger Rohr-Kontext";
+                    return false;
+                }
+
+                Parameter segmentParameter = pipeElement.get_Parameter(BuiltInParameter.RBS_PIPE_SEGMENT_PARAM);
+                ElementId segmentId = segmentParameter?.AsElementId();
+                if (segmentId == null || segmentId == ElementId.InvalidElementId)
+                {
+                    failureReason = "Rohr besitzt keinen auslesbaren Rohrsegment-Parameter";
+                    return false;
+                }
+
+                if (doc.GetElement(segmentId) is not Segment segment)
+                {
+                    failureReason = "Das Rohrsegment konnte nicht als bearbeitbares MEP-Segment geladen werden";
+                    return false;
+                }
+
+                using (Transaction tx = new Transaction(doc, "Material in Rohrsegment zuweisen"))
+                {
+                    tx.Start();
+
+                    Parameter pipeMaterialParameter = segment.get_Parameter(BuiltInParameter.RBS_PIPE_MATERIAL_PARAM);
+                    if (pipeMaterialParameter == null || pipeMaterialParameter.IsReadOnly || pipeMaterialParameter.StorageType != StorageType.ElementId)
+                    {
+                        tx.RollBack();
+                        failureReason = "Rohrsegment besitzt keinen beschreibbaren Material-Parameter";
+                        return false;
+                    }
+
+                    try
+                    {
+                        pipeMaterialParameter.Set(materialId);
+                    }
+                    catch (Exception ex)
+                    {
+                        tx.RollBack();
+                        failureReason = $"Rohrsegment-Material konnte nicht gesetzt werden: {ex.Message}";
+                        return false;
+                    }
+
+                    if (!ParameterHasMaterialValue(pipeMaterialParameter, materialId))
+                    {
+                        tx.RollBack();
+                        failureReason = "Rohrsegment hat das Material nach dem Setzen nicht übernommen";
+                        return false;
+                    }
+
+                    tx.Commit();
+                }
+
+                try
+                {
+                    doc.Regenerate();
+                }
+                catch
+                {
+                    // Regenerate kann in manchen Revit-Kontexten unnötig/gesperrt sein; die Parameterprüfung unten bleibt maßgeblich.
+                }
+
+                Element reloadedSegment = doc.GetElement(segmentId);
+                Parameter verifiedMaterialParameter = reloadedSegment?.get_Parameter(BuiltInParameter.RBS_PIPE_MATERIAL_PARAM);
+                bool verifiedByParameter = verifiedMaterialParameter != null && ParameterHasMaterialValue(verifiedMaterialParameter, materialId);
+                bool verifiedBySegmentProperty = reloadedSegment is Segment verifiedSegment && verifiedSegment.MaterialId == materialId;
+
+                if (!verifiedByParameter && !verifiedBySegmentProperty)
+                {
+                    ElementId currentParameterValue = null;
+                    try
+                    {
+                        currentParameterValue = verifiedMaterialParameter?.AsElementId();
+                    }
+                    catch
+                    {
+                        // Nur für Diagnosemeldung.
+                    }
+
+                    failureReason = $"Rohrsegment-Material konnte nach der Transaktion nicht verifiziert werden (Parameterwert: {FormatElementId(currentParameterValue)}, erwartetes Material: {FormatElementId(materialId)})";
+                    return false;
+                }
+
+                successDetail = $"Rohrsegment \"{reloadedSegment?.Name ?? segment.Name}\" wurde auf das Favoritenmaterial gesetzt. Hinweis: Das betrifft alle Rohre, die dieses Rohrsegment verwenden.";
+                return true;
+            }
+
+            private static BuiltInCategory? TryGetBuiltInCategory(ElementId categoryId)
+            {
+                if (categoryId == null || categoryId == ElementId.InvalidElementId)
+                    return null;
+
+                try
+                {
+                    return (BuiltInCategory)categoryId.Value;
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            private static string FormatElementId(ElementId id)
+            {
+                if (id == null)
+                    return "<null>";
+
+                try
+                {
+                    return id.Value.ToString();
+                }
+                catch
+                {
+                    return id.ToString();
+                }
             }
 
             private static bool TryAssignInHostObjectType(Document doc, Element element, ElementId materialId, out string successDetail, out string failureReason)

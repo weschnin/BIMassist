@@ -1,0 +1,80 @@
+<Window x:Class="BIMassist.Views.ElementCoordinatesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Elementkoordinaten" Width="680" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="12"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="12"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="12"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" BorderBrush="#FFD0D0D0" BorderThickness="1" CornerRadius="4" Padding="10" Background="#FFF8F8F8">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="8"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="6"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="150"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Element:" FontWeight="SemiBold"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" x:Name="ElementText" TextWrapping="Wrap"/>
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Aktueller Rechtswert:"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" x:Name="CurrentEastingText" FontWeight="SemiBold"/>
+
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="Aktueller Hochwert:"/>
+                <TextBlock Grid.Row="4" Grid.Column="1" x:Name="CurrentNorthingText" FontWeight="SemiBold"/>
+            </Grid>
+        </Border>
+
+        <GroupBox Grid.Row="2" Header="Neue Koordinaten" Padding="10">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="8"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="125"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Rechtswert:"/>
+                <TextBox Grid.Row="0" Grid.Column="1" x:Name="EastingBox" MinWidth="180"/>
+
+                <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Hochwert:"/>
+                <TextBox Grid.Row="2" Grid.Column="1" x:Name="NorthingBox" MinWidth="180"/>
+            </Grid>
+        </GroupBox>
+
+        <TextBlock Grid.Row="4" x:Name="StatusText" Foreground="Gray" TextWrapping="Wrap"
+                   Text="Einheit: Meter. Z-Höhe bleibt unverändert."/>
+
+        <Grid Grid.Row="6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <Button Grid.Column="0" Content="Anderes Element auswählen" MinWidth="170" Padding="10,4" Click="OnSelectElementClick"/>
+
+            <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Neue Koordinaten setzen" Width="170" Padding="10,4" Margin="0,0,8,0" Click="OnApplyClick"/>
+                <Button Content="Setzen und schließen" Width="150" Padding="10,4" Click="OnApplyAndCloseClick"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

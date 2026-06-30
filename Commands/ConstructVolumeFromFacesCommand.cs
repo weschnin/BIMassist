@@ -138,6 +138,29 @@ namespace BIMassist.Commands
             List<SelectedFaceInfo> planarFaces = selectedFaces.Where(x => x.Face is PlanarFace).ToList();
             List<SelectedFaceInfo> cylindricalFaces = selectedFaces.Where(x => x.Face is CylindricalFace).ToList();
 
+            if (cylindricalFaces.Count >= 2 && planarFaces.Count == 0)
+            {
+                if (TryBuildCylindricalBoundaryIntersection(cylindricalFaces, out solid, out diagnostic))
+                    return true;
+
+                string intersectionDiagnostic = diagnostic;
+                if (TryBuildPrimaryCylinderCutBySelectedCylinders(cylindricalFaces, out solid, out diagnostic))
+                {
+                    diagnostic =
+                        "Hinweis: Die Schnittmenge aller ausgewählten Zylinder-Innenräume war leer; " +
+                        "BIMassist hat deshalb den wahrscheinlich primären Zylinder aus der Auswahl mit den übrigen ausgewählten Zylinderflächen getrimmt.\n\n" +
+                        "Vorheriger Schnittmengen-Befund:\n" + intersectionDiagnostic + "\n\n" + diagnostic;
+                    return true;
+                }
+
+                diagnostic =
+                    "Die rein zylindrische Auswahl konnte nicht eindeutig als ausschließlich von den selektierten Flächen umschlossener Volumenkörper aufgebaut werden.\n\n" +
+                    "Schnittmengen-Befund:\n" + intersectionDiagnostic + "\n\n" +
+                    "Trimmen-Befund:\n" + diagnostic + "\n\n" +
+                    "BIMassist erzeugt bewusst keine Union kompletter Zylinder mehr, weil diese außerhalb der selektierten Umgrenzung liegen würde.";
+                return false;
+            }
+
             if (cylindricalFaces.Count >= 2 && planarFaces.Count >= 1 &&
                 TryBuildSingleRadiusCoaxialCylindricalSolid(cylindricalFaces, planarFaces, out solid, out diagnostic))
             {
@@ -162,6 +185,467 @@ namespace BIMassist.Commands
             }
 
             return TryBuildTriangulatedSolid(selectedFaces, shortCurveTolerance, out solid, out diagnostic);
+        }
+
+        private static bool TryBuildCylindricalBoundaryIntersection(List<SelectedFaceInfo> cylindricalFaces, out Solid? solid, out string diagnostic)
+        {
+            solid = null;
+            diagnostic = string.Empty;
+
+            try
+            {
+                List<CylinderReconstructionSpec> cylinderSpecs = BuildCylinderSpecs(cylindricalFaces, out diagnostic);
+                if (cylinderSpecs.Count < 2)
+                    return false;
+
+                List<XYZ> boundaryPoints = CollectStrictBoundaryVertices(cylindricalFaces);
+                double extension = ComputeBoundaryExtension(boundaryPoints);
+
+                List<Solid> boundarySolids = new List<Solid>();
+                foreach (CylinderReconstructionSpec spec in cylinderSpecs)
+                {
+                    double min = spec.Min - extension;
+                    double max = spec.Max + extension;
+                    double height = max - min;
+                    if (height <= DistanceTolerance)
+                    {
+                        diagnostic = "Mindestens eine Zylinderfläche hat keine gültige axiale Länge.";
+                        return false;
+                    }
+
+                    CurveLoop circleLoop = CreateCircleLoop(spec.AxisOrigin + spec.AxisDirection * min, spec.AxisDirection, spec.Radius);
+                    Solid cylinderSolid = GeometryCreationUtilities.CreateExtrusionGeometry(new List<CurveLoop> { circleLoop }, spec.AxisDirection, height);
+                    if (cylinderSolid == null || cylinderSolid.Volume <= VolumeTolerance)
+                    {
+                        diagnostic = "Mindestens eine Zylinder-Begrenzungsfläche konnte nicht als analytischer Hilfskörper extrudiert werden.";
+                        return false;
+                    }
+
+                    boundarySolids.Add(cylinderSolid);
+                }
+
+                solid = boundarySolids[0];
+                int intersectionCount = 0;
+                for (int i = 1; i < boundarySolids.Count; i++)
+                {
+                    try
+                    {
+                        Solid intersected = BooleanOperationsUtils.ExecuteBooleanOperation(solid, boundarySolids[i], BooleanOperationsType.Intersect);
+                        if (intersected == null || intersected.Volume <= VolumeTolerance)
+                        {
+                            diagnostic =
+                                $"Die ausgewählten Zylinderflächen schließen keinen gemeinsamen Volumenkörper ein.\n\n" +
+                                $"Beim Schneiden mit Zylinderfläche {i + 1} wurde der Körper leer.\n" +
+                                "Hinweis: BIMassist erstellt hier bewusst keine Union der ganzen Ausgangszylinder mehr. " +
+                                "Die gewählten Mantelflächen müssen sich so schneiden, dass ihre Innenräume einen gemeinsamen, geschlossenen Bereich bilden.";
+                            solid = null;
+                            return false;
+                        }
+
+                        solid = intersected;
+                        intersectionCount++;
+                    }
+                    catch (Exception ex)
+                    {
+                        diagnostic = $"Boolean-Schnitt mit Zylinderfläche {i + 1} ist fehlgeschlagen: {ex.Message}";
+                        solid = null;
+                        return false;
+                    }
+                }
+
+                diagnostic =
+                    $"Volumenkörper aus {cylinderSpecs.Count} zylindrischen Begrenzungsflächen erzeugt.\n" +
+                    "Berechnungsart: Schnittmenge der analytisch verlängerten Zylinder-Innenräume; " +
+                    "dadurch werden die Mantelflächen an ihren gemeinsamen Schnittkurven gekürzt/verlängert.\n" +
+                    $"Ausgewählte Zylinderflächen: {cylindricalFaces.Count}\n" +
+                    $"Boolean-Schnitt-Schritte: {intersectionCount}\n" +
+                    $"Axiale Hilfsverlängerung je Seite: {extension:F6}";
+                return solid != null && solid.Volume > VolumeTolerance;
+            }
+            catch (Exception ex)
+            {
+                diagnostic = "Fehler beim Aufbau des Volumenkörpers aus zylindrischen Begrenzungsflächen: " + ex.Message;
+                solid = null;
+                return false;
+            }
+        }
+
+        private static bool TryBuildPrimaryCylinderCutBySelectedCylinders(List<SelectedFaceInfo> cylindricalFaces, out Solid? solid, out string diagnostic)
+        {
+            solid = null;
+            diagnostic = string.Empty;
+
+            try
+            {
+                List<CylinderReconstructionSpec> cylinderSpecs = BuildCylinderSpecs(cylindricalFaces, out diagnostic);
+                if (cylinderSpecs.Count < 2)
+                    return false;
+
+                CylinderReconstructionSpec? primary = cylinderSpecs
+                    .OrderByDescending(spec => spec.SourceFaceCount)
+                    .ThenByDescending(spec => spec.Radius * Math.Max(spec.Max - spec.Min, DistanceTolerance))
+                    .FirstOrDefault();
+
+                if (primary == null)
+                {
+                    diagnostic = "Es konnte kein primärer Zylinder für das Trimmen bestimmt werden.";
+                    return false;
+                }
+
+                if (!TryCreateCylinderSolid(primary, out Solid? result, out diagnostic))
+                    return false;
+
+                int cutCount = 0;
+                int skippedCoaxial = 0;
+                int failedCuts = 0;
+                foreach (CylinderReconstructionSpec cutter in cylinderSpecs)
+                {
+                    if (ReferenceEquals(cutter, primary))
+                        continue;
+
+                    if (AreCoaxial(primary, cutter))
+                    {
+                        skippedCoaxial++;
+                        continue;
+                    }
+
+                    CylinderReconstructionSpec extendedCutter = cutter.Clone();
+                    if (TryGetAxisContactInterval(cutter, primary, out double contactMin, out double contactMax))
+                    {
+                        double margin = Math.Max(primary.Radius, cutter.Radius) * 2.0;
+                        extendedCutter.Min = Math.Min(extendedCutter.Min, contactMin - margin);
+                        extendedCutter.Max = Math.Max(extendedCutter.Max, contactMax + margin);
+                    }
+                    else
+                    {
+                        double extension = Math.Max(primary.Max - primary.Min, cutter.Max - cutter.Min) + primary.Radius + cutter.Radius;
+                        extendedCutter.Min -= extension;
+                        extendedCutter.Max += extension;
+                    }
+
+                    if (!TryCreateCylinderSolid(extendedCutter, out Solid? cutterSolid, out string cutterDiagnostic))
+                    {
+                        diagnostic = "Ein ausgewählter Zylinder konnte nicht als Trimmkörper erzeugt werden: " + cutterDiagnostic;
+                        return false;
+                    }
+
+                    try
+                    {
+                        Solid cut = BooleanOperationsUtils.ExecuteBooleanOperation(result, cutterSolid, BooleanOperationsType.Difference);
+                        if (cut == null || cut.Volume <= VolumeTolerance)
+                        {
+                            failedCuts++;
+                            continue;
+                        }
+
+                        result = cut;
+                        cutCount++;
+                    }
+                    catch
+                    {
+                        failedCuts++;
+                    }
+                }
+
+                if (cutCount == 0)
+                {
+                    diagnostic =
+                        "Der primäre Zylinder konnte mit keiner der übrigen ausgewählten Zylinderflächen getrimmt werden. " +
+                        "BIMassist erzeugt deshalb keinen vollständigen Ursprungskörper außerhalb der Umgrenzung.";
+                    solid = null;
+                    return false;
+                }
+
+                solid = result;
+                diagnostic =
+                    "Volumenkörper durch Trimmen des primären ausgewählten Zylinders erzeugt.\n" +
+                    "Berechnungsart: primärer Zylinder = meist mehrfach/gegenüberliegend ausgewählte Mantelfläche; übrige ausgewählte Zylinderflächen werden als gekrümmte Schnitt-/Begrenzungsflächen abgezogen.\n" +
+                    $"Rekonstruierte zylindrische Begrenzungen: {cylinderSpecs.Count}\n" +
+                    $"Primärer Zylinder: Radius {primary.Radius:F6}, Achslänge {(primary.Max - primary.Min):F6}, selektierte Mantelteile {primary.SourceFaceCount}\n" +
+                    $"Erfolgreiche gekrümmte Trimm-Schnitte: {cutCount}\n" +
+                    $"Übersprungene koaxiale Flächen: {skippedCoaxial}\n" +
+                    $"Fehlgeschlagene/volumenlose Trimm-Versuche: {failedCuts}";
+                return solid != null && solid.Volume > VolumeTolerance;
+            }
+            catch (Exception ex)
+            {
+                diagnostic = "Fehler beim Trimmen des primären Zylinders mit den ausgewählten Begrenzungsflächen: " + ex.Message;
+                solid = null;
+                return false;
+            }
+        }
+
+        private static bool AreCoaxial(CylinderReconstructionSpec a, CylinderReconstructionSpec b)
+        {
+            double axisDot = Math.Abs(a.AxisDirection.Normalize().DotProduct(b.AxisDirection.Normalize()));
+            if (Math.Abs(axisDot - 1.0) > 1e-4)
+                return false;
+
+            XYZ delta = b.AxisOrigin - a.AxisOrigin;
+            XYZ perpendicular = delta - a.AxisDirection.Multiply(delta.DotProduct(a.AxisDirection));
+            return perpendicular.GetLength() <= 1e-4;
+        }
+
+        private static bool TryBuildConnectedCylindricalEnvelope(List<SelectedFaceInfo> cylindricalFaces, out Solid? solid, out string diagnostic)
+        {
+            solid = null;
+            diagnostic = string.Empty;
+
+            try
+            {
+                List<CylinderReconstructionSpec> cylinderSpecs = BuildCylinderSpecs(cylindricalFaces, out diagnostic);
+                if (cylinderSpecs.Count < 2)
+                    return false;
+
+                int adjustedRanges = ExtendCylinderRangesToPairwiseContacts(cylinderSpecs);
+                List<Solid> solids = new List<Solid>();
+                foreach (CylinderReconstructionSpec spec in cylinderSpecs)
+                {
+                    if (!TryCreateCylinderSolid(spec, out Solid? cylinderSolid, out diagnostic))
+                        return false;
+
+                    solids.Add(cylinderSolid!);
+                }
+
+                solid = solids[0];
+                int unionCount = 0;
+                int skippedDisjoint = 0;
+                List<Solid> pending = solids.Skip(1).ToList();
+                while (pending.Count > 0)
+                {
+                    bool progressed = false;
+                    for (int i = 0; i < pending.Count; i++)
+                    {
+                        try
+                        {
+                            Solid united = BooleanOperationsUtils.ExecuteBooleanOperation(solid, pending[i], BooleanOperationsType.Union);
+                            if (united == null || united.Volume <= VolumeTolerance)
+                            {
+                                skippedDisjoint++;
+                                continue;
+                            }
+
+                            solid = united;
+                            pending.RemoveAt(i);
+                            unionCount++;
+                            progressed = true;
+                            break;
+                        }
+                        catch
+                        {
+                            skippedDisjoint++;
+                        }
+                    }
+
+                    if (!progressed)
+                    {
+                        diagnostic =
+                            "Die ausgewählten Zylinderflächen konnten nicht zu einem zusammenhängenden Hüllkörper vereinigt werden. " +
+                            "Mindestens ein rekonstruierter Zylinder berührt/schneidet die bisherige Hülle nicht robust genug.";
+                        solid = null;
+                        return false;
+                    }
+                }
+
+                diagnostic =
+                    $"Zusammenhängender Hüllkörper aus {cylinderSpecs.Count} zylindrischen Begrenzungsflächen erzeugt.\n" +
+                    "Berechnungsart: analytische Rekonstruktion der gewählten Zylinderflächen, paarweise Achsverlängerung bis zu möglichen Schnittbereichen, danach Boolean-Union.\n" +
+                    $"Ausgewählte Zylinderflächen: {cylindricalFaces.Count}\n" +
+                    $"Paarweise verlängerte Achsbereiche: {adjustedRanges}\n" +
+                    $"Boolean-Union-Schritte: {unionCount}\n" +
+                    $"Nicht erfolgreiche Zwischenversuche: {skippedDisjoint}";
+                return solid != null && solid.Volume > VolumeTolerance;
+            }
+            catch (Exception ex)
+            {
+                diagnostic = "Fehler beim Aufbau der zusammenhängenden zylindrischen Hülle: " + ex.Message;
+                solid = null;
+                return false;
+            }
+        }
+
+        private static bool TryCreateCylinderSolid(CylinderReconstructionSpec spec, out Solid? solid, out string diagnostic)
+        {
+            solid = null;
+            diagnostic = string.Empty;
+
+            double height = spec.Max - spec.Min;
+            if (height <= DistanceTolerance)
+            {
+                diagnostic = "Mindestens eine Zylinderfläche hat keine gültige axiale Länge.";
+                return false;
+            }
+
+            CurveLoop circleLoop = CreateCircleLoop(spec.AxisOrigin + spec.AxisDirection * spec.Min, spec.AxisDirection, spec.Radius);
+            solid = GeometryCreationUtilities.CreateExtrusionGeometry(new List<CurveLoop> { circleLoop }, spec.AxisDirection, height);
+            if (solid == null || solid.Volume <= VolumeTolerance)
+            {
+                diagnostic = "Mindestens eine Zylinder-Begrenzungsfläche konnte nicht als analytischer Hilfskörper extrudiert werden.";
+                solid = null;
+                return false;
+            }
+
+            return true;
+        }
+
+        private static int ExtendCylinderRangesToPairwiseContacts(List<CylinderReconstructionSpec> specs)
+        {
+            int adjusted = 0;
+            for (int i = 0; i < specs.Count; i++)
+            {
+                for (int j = 0; j < specs.Count; j++)
+                {
+                    if (i == j)
+                        continue;
+
+                    if (!TryGetAxisContactInterval(specs[i], specs[j], out double contactMin, out double contactMax))
+                        continue;
+
+                    double oldMin = specs[i].Min;
+                    double oldMax = specs[i].Max;
+                    if (contactMax < specs[i].Min)
+                        specs[i].Min = contactMax;
+                    else if (contactMin > specs[i].Max)
+                        specs[i].Max = contactMin;
+                    else
+                    {
+                        specs[i].Min = Math.Min(specs[i].Min, contactMin);
+                        specs[i].Max = Math.Max(specs[i].Max, contactMax);
+                    }
+
+                    if (Math.Abs(oldMin - specs[i].Min) > DistanceTolerance || Math.Abs(oldMax - specs[i].Max) > DistanceTolerance)
+                        adjusted++;
+                }
+            }
+
+            return adjusted;
+        }
+
+        private static bool TryGetAxisContactInterval(CylinderReconstructionSpec axisSpec, CylinderReconstructionSpec boundarySpec, out double min, out double max)
+        {
+            min = 0;
+            max = 0;
+
+            XYZ dA = axisSpec.AxisDirection.Normalize();
+            XYZ dB = boundarySpec.AxisDirection.Normalize();
+            XYZ delta = axisSpec.AxisOrigin - boundarySpec.AxisOrigin;
+            XYZ q = dA - dB.Multiply(dA.DotProduct(dB));
+            XYZ m = delta - dB.Multiply(delta.DotProduct(dB));
+            double combinedRadius = axisSpec.Radius + boundarySpec.Radius;
+            double combinedRadiusSquared = combinedRadius * combinedRadius;
+
+            double a = q.DotProduct(q);
+            double b = 2.0 * m.DotProduct(q);
+            double c = m.DotProduct(m) - combinedRadiusSquared;
+
+            if (a <= 1e-12)
+            {
+                if (c > 0)
+                    return false;
+
+                double extension = Math.Max(axisSpec.Max - axisSpec.Min, boundarySpec.Max - boundarySpec.Min) + combinedRadius;
+                min = axisSpec.Min - extension;
+                max = axisSpec.Max + extension;
+                return true;
+            }
+
+            double discriminant = (b * b) - (4.0 * a * c);
+            if (discriminant < 0)
+                return false;
+
+            double sqrt = Math.Sqrt(discriminant);
+            min = (-b - sqrt) / (2.0 * a);
+            max = (-b + sqrt) / (2.0 * a);
+            return max >= min;
+        }
+
+        private static List<CylinderReconstructionSpec> BuildCylinderSpecs(List<SelectedFaceInfo> cylindricalFaces, out string diagnostic)
+        {
+            diagnostic = string.Empty;
+            List<CylinderReconstructionSpec> cylinderSpecs = new List<CylinderReconstructionSpec>();
+            foreach (SelectedFaceInfo faceInfo in cylindricalFaces)
+            {
+                if (faceInfo.Face is not CylindricalFace cylindricalFace)
+                    continue;
+
+                double radius = TryGetCylinderRadius(cylindricalFace);
+                if (radius <= DistanceTolerance)
+                {
+                    diagnostic = "Mindestens ein ausgewählter Zylinderradius konnte nicht bestimmt werden.";
+                    return new List<CylinderReconstructionSpec>();
+                }
+
+                XYZ axisDirection = cylindricalFace.Axis.Normalize();
+                List<double> axisPositions = GetAxisPositionsFromFaceLoops(cylindricalFace, cylindricalFace.Origin, axisDirection);
+                if (axisPositions.Count < 2)
+                {
+                    diagnostic = "Aus mindestens einer Zylinderfläche konnten keine zwei axialen Begrenzungen abgeleitet werden.";
+                    return new List<CylinderReconstructionSpec>();
+                }
+
+                CylinderReconstructionSpec candidate = new CylinderReconstructionSpec
+                {
+                    AxisOrigin = cylindricalFace.Origin,
+                    AxisDirection = axisDirection,
+                    Radius = radius,
+                    Min = axisPositions.Min(),
+                    Max = axisPositions.Max(),
+                    SourceFaceCount = 1
+                };
+
+                CylinderReconstructionSpec? existing = cylinderSpecs.FirstOrDefault(spec => IsSameCylinderSpec(spec, candidate));
+                if (existing != null)
+                {
+                    existing.Min = Math.Min(existing.Min, candidate.Min);
+                    existing.Max = Math.Max(existing.Max, candidate.Max);
+                    existing.SourceFaceCount += 1;
+                }
+                else
+                {
+                    cylinderSpecs.Add(candidate);
+                }
+            }
+
+            if (cylinderSpecs.Count == 0)
+                diagnostic = "Es wurden keine rekonstruierbaren Zylinderflächen gefunden.";
+            else if (cylinderSpecs.Count < 2)
+                diagnostic = "Für einen zylindrisch begrenzten Volumenkörper werden mindestens zwei unterschiedliche Zylinderflächen benötigt.";
+
+            return cylinderSpecs;
+        }
+
+        private static double ComputeBoundaryExtension(List<XYZ> points)
+        {
+            if (points.Count < 2)
+                return 10.0;
+
+            double minX = points.Min(p => p.X);
+            double minY = points.Min(p => p.Y);
+            double minZ = points.Min(p => p.Z);
+            double maxX = points.Max(p => p.X);
+            double maxY = points.Max(p => p.Y);
+            double maxZ = points.Max(p => p.Z);
+            double span = Math.Max(Math.Max(maxX - minX, maxY - minY), maxZ - minZ);
+            return Math.Max(span * 2.0, 10.0);
+        }
+
+        private static bool IsSameCylinderSpec(CylinderReconstructionSpec a, CylinderReconstructionSpec b)
+        {
+            double axisDot = Math.Abs(a.AxisDirection.DotProduct(b.AxisDirection));
+            if (Math.Abs(axisDot - 1.0) > 1e-4)
+                return false;
+
+            XYZ delta = b.AxisOrigin - a.AxisOrigin;
+            XYZ perpendicular = delta - a.AxisDirection.Multiply(delta.DotProduct(a.AxisDirection));
+            if (perpendicular.GetLength() > 1e-4)
+                return false;
+
+            if (Math.Abs(a.Radius - b.Radius) > Math.Max(1e-4, a.Radius * 1e-5))
+                return false;
+
+            bool sameRange = Math.Abs(a.Min - b.Min) <= 1e-4 && Math.Abs(a.Max - b.Max) <= 1e-4;
+            bool reversedRange = Math.Abs(a.Min + b.Max) <= 1e-4 && Math.Abs(a.Max + b.Min) <= 1e-4;
+            return sameRange || reversedRange;
         }
 
         private static bool TryBuildTriangulatedSolid(List<SelectedFaceInfo> selectedFaces, double shortCurveTolerance, out Solid? solid, out string diagnostic)
@@ -1275,6 +1759,29 @@ namespace BIMassist.Commands
         {
             public bool AllowElement(Element elem) => true;
             public bool AllowReference(Reference reference, XYZ position) => reference.ElementReferenceType == ElementReferenceType.REFERENCE_TYPE_SURFACE;
+        }
+
+        private sealed class CylinderReconstructionSpec
+        {
+            public required XYZ AxisOrigin { get; init; }
+            public required XYZ AxisDirection { get; init; }
+            public required double Radius { get; init; }
+            public required double Min { get; set; }
+            public required double Max { get; set; }
+            public int SourceFaceCount { get; set; }
+
+            public CylinderReconstructionSpec Clone()
+            {
+                return new CylinderReconstructionSpec
+                {
+                    AxisOrigin = AxisOrigin,
+                    AxisDirection = AxisDirection,
+                    Radius = Radius,
+                    Min = Min,
+                    Max = Max,
+                    SourceFaceCount = SourceFaceCount
+                };
+            }
         }
 
         private sealed class SelectedFaceInfo
