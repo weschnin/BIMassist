@@ -92,8 +92,8 @@ namespace BIMassist
                 {
                     ToolTip = "Borehole Manager öffnen",
                     LongDescription = "Öffnet den Borehole Manager (nicht-modales Fenster)",
-                    Image = GetImageSource("import_16px.png"),
-                    LargeImage = GetImageSource("import_24px.png")
+                    Image = GetImageSource("Borehole Manager_16px.png"),
+                    LargeImage = GetImageSource("Borehole Manager_32px.png")
                 };
                 panel.AddItem(btnData);
 
@@ -141,6 +141,17 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                // Positions-Funktionen
+
+                PanelgroupData = new PulldownButtonData("Position", "Position")
+                {
+                    Image = GetImageSource("Position_16px.png"),
+                    LargeImage = GetImageSource("Position_32px.png"),
+                    ToolTip = "Positionswerkzeuge",
+                    LongDescription = "Werkzeuge zum Anzeigen und Ändern von Elementpositionen.",
+                };
+                pulldownGroup = panel.AddItem(PanelgroupData) as PulldownButton;
+
                 btnData = new PushButtonData("Elementkoordinaten", "Elementkoordinaten", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.ElementCoordinatesCommand")
                 {
                     ToolTip = "Familie oder Projektfamilie nach Rechts-/Hochwert setzen",
@@ -150,8 +161,8 @@ namespace BIMassist
 
                 btnData = new PushButtonData("Basisebene wechseln", "Basisebene\nwechseln", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.ChangeFloorBaseLevelCommand")
                 {
-                    ToolTip = "Basisebene einer Geschossdecke wechseln",
-                    LongDescription = "Wählt zuerst eine Geschossdecke und danach die neue Basisebene. Der Versatz vom Host wird so neu berechnet, dass die Geschossdecke an ihrer bisherigen Höhenposition bleibt.",
+                    ToolTip = "Basisebene einer Geschossdecke, Wand oder eines Rohrs wechseln",
+                    LongDescription = "Wählt zuerst eine Geschossdecke, Wand oder ein Rohr. Die neue Ebene wird über eine Liste der vorhandenen Ebenen gewählt. Bei Wänden und Rohren mit unterschiedlichen Start-/End- bzw. oberer/unterer Ebene werden die Ebenen nacheinander abgefragt. Die Versätze werden so neu berechnet, dass die Höhenpositionen erhalten bleiben.",
                 };
                 pulldownGroup.AddPushButton(btnData);
 
