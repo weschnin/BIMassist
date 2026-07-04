@@ -14,13 +14,16 @@ namespace BIMassist.Services
     {
         public List<Borehole> Boreholes { get; set; }
         public List<GeologyLayer> Layers { get; set; }
+        public List<GroundModelBoundaryPoint> BoundaryPoints { get; set; }
+        public BoreholeManagerSettings Settings { get; set; }
+        public GroundModelAxis Axis { get; set; }
 
         public void Execute(UIApplication app)
         {
             var uiDoc = app.ActiveUIDocument;
             if (uiDoc == null) return;
             var storage = new BoreholeProjectStorage(uiDoc.Document);
-            storage.Save(Boreholes ?? new List<Borehole>(), Layers ?? new List<GeologyLayer>());
+            storage.Save(Boreholes ?? new List<Borehole>(), Layers ?? new List<GeologyLayer>(), BoundaryPoints ?? new List<GroundModelBoundaryPoint>(), Settings, Axis, true);
         }
 
         public string GetName() => "BIMassist.SaveBoreholeData";
@@ -133,6 +136,102 @@ namespace BIMassist.Services
         public string GetName() { return "BIMassist.CreateExtrusions"; }
     }
 
+    public class PickGroundModelBoundaryHandler : IExternalEventHandler
+    {
+        public List<Borehole> Boreholes { get; set; } = new List<Borehole>();
+        public List<GeologyLayer> Layers { get; set; } = new List<GeologyLayer>();
+        public Action<List<GroundModelBoundaryPoint>> BoundaryUpdated { get; set; }
+        public Action<GroundModelAxis> AxisUpdated { get; set; }
+
+        public void Execute(UIApplication app)
+        {
+            try
+            {
+                var uiDoc = app.ActiveUIDocument;
+                if (uiDoc == null) { TaskDialog.Show("BIMassist", "Kein aktives Dokument."); return; }
+                var doc = uiDoc.Document;
+
+                var points = PickBoundaryPoints(uiDoc);
+                if (points == null || points.Count < 3)
+                {
+                    TaskDialog.Show("BIMassist", "Kein gültiger Umriss definiert (mind. 3 Punkte).");
+                    return;
+                }
+
+                var axis = PickAxis(uiDoc);
+                if (axis == null || !axis.IsValid())
+                {
+                    TaskDialog.Show("BIMassist", "Keine gültige Achse definiert. Umriss und Achse wurden nicht gespeichert.");
+                    return;
+                }
+
+                new BoreholeProjectStorage(doc).Save(
+                    Boreholes ?? new List<Borehole>(),
+                    Layers ?? new List<GeologyLayer>(),
+                    points,
+                    null,
+                    axis,
+                    true);
+
+                BoundaryUpdated?.Invoke(points.Select(p => p.Clone()).ToList());
+                AxisUpdated?.Invoke(axis.Clone());
+                TaskDialog.Show("BIMassist", $"Umriss und Achse gespeichert.\n\nUmriss: {points.Count} Punkte");
+            }
+            catch (Autodesk.Revit.Exceptions.OperationCanceledException)
+            {
+                // Benutzer hat abgebrochen.
+            }
+            catch (Exception ex)
+            {
+                TaskDialog.Show("BIMassist", "Fehler beim Speichern des Umrisses:\n" + ex.Message);
+            }
+        }
+
+        private List<GroundModelBoundaryPoint> PickBoundaryPoints(UIDocument uidoc)
+        {
+            var points = new List<GroundModelBoundaryPoint>();
+            TaskDialog.Show("BIMassist", "Umrisspunkte anklicken (Esc beendet, mind. 3 Punkte).\nEin bereits gespeicherter Umriss wird durch diese Eingabe ersetzt.");
+
+            while (true)
+            {
+                try
+                {
+                    var p = uidoc.Selection.PickPoint("Umrisspunkt klicken (Esc beendet)");
+                    points.Add(new GroundModelBoundaryPoint
+                    {
+                        X = UnitUtils.ConvertFromInternalUnits(p.X, UnitTypeId.Meters),
+                        Y = UnitUtils.ConvertFromInternalUnits(p.Y, UnitTypeId.Meters)
+                    });
+                }
+                catch (Autodesk.Revit.Exceptions.OperationCanceledException)
+                {
+                    break;
+                }
+            }
+
+            return points;
+        }
+
+        private GroundModelAxis PickAxis(UIDocument uidoc)
+        {
+            TaskDialog.Show("BIMassist", "Achse definieren: zwei Punkte nacheinander anklicken.\nEine bereits gespeicherte Achse wird durch diese Eingabe ersetzt.");
+            var a = uidoc.Selection.PickPoint("Achsenanfang klicken");
+            var b = uidoc.Selection.PickPoint("Achsenende klicken");
+
+            var axis = new GroundModelAxis
+            {
+                X0 = UnitUtils.ConvertFromInternalUnits(a.X, UnitTypeId.Meters),
+                Y0 = UnitUtils.ConvertFromInternalUnits(a.Y, UnitTypeId.Meters),
+                X1 = UnitUtils.ConvertFromInternalUnits(b.X, UnitTypeId.Meters),
+                Y1 = UnitUtils.ConvertFromInternalUnits(b.Y, UnitTypeId.Meters)
+            };
+
+            return axis.IsValid() ? axis : null;
+        }
+
+        public string GetName() => "BIMassist.PickGroundModelBoundary";
+    }
+
     public class CreateGroundModelHandler : IExternalEventHandler
     {
         public List<Borehole> Boreholes { get; set; }
@@ -149,6 +248,10 @@ namespace BIMassist.Services
         public enum EdgeTopMode { NearestBorehole = 0, FlatAtMean = 1 }
         public EdgeTopMode BoundaryTopMode { get; set; } = EdgeTopMode.NearestBorehole;
         public string MaterialNameColumn { get; set; } = "Description"; // PATCH: selected column for naming
+        public List<GroundModelBoundaryPoint> BoundaryPoints { get; set; } = new List<GroundModelBoundaryPoint>();
+        public GroundModelAxis Axis { get; set; }
+        public Action<List<GroundModelBoundaryPoint>> BoundaryUpdated { get; set; }
+        public Action<GroundModelAxis> AxisUpdated { get; set; }
 
         public void Execute(UIApplication app)
         {
@@ -158,8 +261,46 @@ namespace BIMassist.Services
                 if (uiDoc == null) { TaskDialog.Show("BIMassist", "Kein aktives Dokument."); return; }
                 var doc = uiDoc.Document;
 
-                // Boundary zeichnen
-                var boundary = DrawBoundaryPolygon(uiDoc, null);
+                // Boundary verwenden oder neu zeichnen
+                var savedBoundary = BoundaryPoints?.Where(p => p != null).ToList() ?? new List<GroundModelBoundaryPoint>();
+                List<GroundModelBoundaryPoint> activeBoundaryPoints = null;
+                CurveLoop boundary = null;
+
+                if (savedBoundary.Count >= 3)
+                {
+                    var tdBoundary = new TaskDialog("BIMassist – Umriss")
+                    {
+                        MainInstruction = "Gespeicherten Umriss verwenden?",
+                        MainContent = "Im Projekt ist bereits ein Umriss für das 3D-Bodenmodell gespeichert.\n\nJa = gespeicherten Umriss verwenden\nNein = Umriss neu eingeben",
+                        CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No | TaskDialogCommonButtons.Cancel,
+                        DefaultButton = TaskDialogResult.Yes
+                    };
+
+                    var boundaryChoice = tdBoundary.Show();
+                    if (boundaryChoice == TaskDialogResult.Cancel)
+                        return;
+
+                    if (boundaryChoice == TaskDialogResult.Yes)
+                    {
+                        activeBoundaryPoints = savedBoundary.Select(p => p.Clone()).ToList();
+                        boundary = BoundaryPointsToCurveLoop(doc, activeBoundaryPoints, null);
+                    }
+                }
+
+                if (boundary == null)
+                {
+                    boundary = DrawBoundaryPolygon(uiDoc, null, out activeBoundaryPoints);
+                    if (boundary != null && activeBoundaryPoints != null && activeBoundaryPoints.Count >= 3)
+                    {
+                        BoundaryPoints = activeBoundaryPoints.Select(p => p.Clone()).ToList();
+                        BoundaryUpdated?.Invoke(BoundaryPoints.Select(p => p.Clone()).ToList());
+                        new BoreholeProjectStorage(doc).Save(
+                            Boreholes ?? new List<Borehole>(),
+                            Layers ?? new List<GeologyLayer>(),
+                            BoundaryPoints);
+                    }
+                }
+
                 if (boundary == null)
                 {
                     TaskDialog.Show("BIMassist", "Keine Boundary definiert (mind. 3 Punkte)." );
@@ -224,8 +365,8 @@ namespace BIMassist.Services
                     return;
                 }
 
-                // Achse definieren (für Querprofil-Modus)
-                var axis = AskAxis(uiDoc);
+                // Achse definieren oder gespeicherte Achse wiederverwenden (für Querprofil-Modus)
+                var axis = ResolveAxis(uiDoc, doc);
                 if (!axis.HasValue)
                     return;
 
@@ -508,6 +649,77 @@ namespace BIMassist.Services
 
         // ---------- Helper ----------
 
+        private (XYZ p0, XYZ p1)? ResolveAxis(UIDocument uidoc, Document doc)
+        {
+            var savedAxis = Axis;
+            if (savedAxis != null && savedAxis.IsValid())
+            {
+                var tdAxis = new TaskDialog("BIMassist – Achse")
+                {
+                    MainInstruction = "Gespeicherte Achse verwenden?",
+                    MainContent = "Im Projekt ist bereits eine Achse für das 3D-Bodenmodell gespeichert.\n\nJa = gespeicherte Achse verwenden\nNein = Achse neu eingeben und speichern",
+                    CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No | TaskDialogCommonButtons.Cancel,
+                    DefaultButton = TaskDialogResult.Yes
+                };
+
+                var axisChoice = tdAxis.Show();
+                if (axisChoice == TaskDialogResult.Cancel)
+                    return null;
+
+                if (axisChoice == TaskDialogResult.Yes)
+                    return AxisToXyz(doc, savedAxis);
+            }
+
+            var pickedAxis = AskAxis(uidoc);
+            if (!pickedAxis.HasValue)
+                return null;
+
+            var storedAxis = AxisFromXyz(pickedAxis.Value.p0, pickedAxis.Value.p1);
+            Axis = storedAxis;
+            AxisUpdated?.Invoke(storedAxis.Clone());
+            new BoreholeProjectStorage(doc).Save(
+                Boreholes ?? new List<Borehole>(),
+                Layers ?? new List<GeologyLayer>(),
+                BoundaryPoints ?? new List<GroundModelBoundaryPoint>(),
+                null,
+                storedAxis,
+                true);
+
+            return pickedAxis;
+        }
+
+        private static GroundModelAxis AxisFromXyz(XYZ p0, XYZ p1)
+        {
+            return new GroundModelAxis
+            {
+                X0 = UnitUtils.ConvertFromInternalUnits(p0.X, UnitTypeId.Meters),
+                Y0 = UnitUtils.ConvertFromInternalUnits(p0.Y, UnitTypeId.Meters),
+                X1 = UnitUtils.ConvertFromInternalUnits(p1.X, UnitTypeId.Meters),
+                Y1 = UnitUtils.ConvertFromInternalUnits(p1.Y, UnitTypeId.Meters)
+            };
+        }
+
+        private static (XYZ p0, XYZ p1)? AxisToXyz(Document doc, GroundModelAxis axis)
+        {
+            if (axis == null || !axis.IsValid()) return null;
+            double z = 0.0;
+            var vp = doc?.ActiveView as ViewPlan;
+            if (vp?.GenLevel != null)
+            {
+                try { z = vp.GenLevel.Elevation; } catch { z = 0.0; }
+            }
+
+            var p0 = new XYZ(
+                UnitUtils.ConvertToInternalUnits(axis.X0, UnitTypeId.Meters),
+                UnitUtils.ConvertToInternalUnits(axis.Y0, UnitTypeId.Meters),
+                z);
+            var p1 = new XYZ(
+                UnitUtils.ConvertToInternalUnits(axis.X1, UnitTypeId.Meters),
+                UnitUtils.ConvertToInternalUnits(axis.Y1, UnitTypeId.Meters),
+                z);
+            return (p0, p1);
+        }
+
         private (XYZ p0, XYZ p1)? AskAxis(UIDocument uidoc, Level onLevel)
         {
             TaskDialog.Show("AWESBox", "Achse definieren: zwei Punkte nacheinander anklicken (Esc bricht ab).");
@@ -705,8 +917,9 @@ namespace BIMassist.Services
             }
         }
 
-        private CurveLoop DrawBoundaryPolygon(UIDocument uidoc, Level onLevel)
+        private CurveLoop DrawBoundaryPolygon(UIDocument uidoc, Level onLevel, out List<GroundModelBoundaryPoint> storedPoints)
         {
+            storedPoints = new List<GroundModelBoundaryPoint>();
             var doc = uidoc.Document;
             // robustes Level/Elevation-Handling
             Level level = onLevel;
@@ -732,6 +945,11 @@ namespace BIMassist.Services
                         zConst = (level != null) ? level.Elevation : p.Z;
 
                     pts.Add(new XYZ(p.X, p.Y, zConst.Value));
+                    storedPoints.Add(new GroundModelBoundaryPoint
+                    {
+                        X = UnitUtils.ConvertFromInternalUnits(p.X, UnitTypeId.Meters),
+                        Y = UnitUtils.ConvertFromInternalUnits(p.Y, UnitTypeId.Meters)
+                    });
                 }
                 catch (Autodesk.Revit.Exceptions.OperationCanceledException)
                 {
@@ -750,6 +968,52 @@ namespace BIMassist.Services
             }
 
             // sicherstellen: CCW
+            if (!loop.IsCounterclockwise(XYZ.BasisZ))
+            {
+                var flipped = new CurveLoop();
+                var temp = new System.Collections.Generic.List<Curve>();
+                foreach (var c in loop) temp.Insert(0, c.CreateReversed());
+                foreach (var c in temp) flipped.Append(c);
+                loop = flipped;
+            }
+
+            return loop;
+        }
+
+        private CurveLoop BoundaryPointsToCurveLoop(Document doc, IList<GroundModelBoundaryPoint> points, Level onLevel)
+        {
+            if (points == null || points.Count < 3) return null;
+
+            Level level = onLevel;
+            if (level == null)
+            {
+                var vp = doc.ActiveView as ViewPlan;
+                if (vp != null && vp.GenLevel != null)
+                {
+                    try { level = doc.GetElement(vp.GenLevel.Id) as Level; } catch { level = null; }
+                }
+            }
+
+            double z = level != null ? level.Elevation : 0.0;
+            var loop = new CurveLoop();
+            for (int i = 0; i < points.Count; i++)
+            {
+                var a = points[i];
+                var b = points[(i + 1) % points.Count];
+                var pa = new XYZ(
+                    UnitUtils.ConvertToInternalUnits(a.X, UnitTypeId.Meters),
+                    UnitUtils.ConvertToInternalUnits(a.Y, UnitTypeId.Meters),
+                    z);
+                var pb = new XYZ(
+                    UnitUtils.ConvertToInternalUnits(b.X, UnitTypeId.Meters),
+                    UnitUtils.ConvertToInternalUnits(b.Y, UnitTypeId.Meters),
+                    z);
+                if (pa.DistanceTo(pb) > 1e-9)
+                    loop.Append(Line.CreateBound(pa, pb));
+            }
+
+            if (loop.IsOpen()) return null;
+
             if (!loop.IsCounterclockwise(XYZ.BasisZ))
             {
                 var flipped = new CurveLoop();

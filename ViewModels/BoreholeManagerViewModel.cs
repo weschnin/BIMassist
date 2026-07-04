@@ -26,6 +26,23 @@ namespace BIMassist.ViewModels
 
         public ObservableCollection<Borehole> Boreholes { get; } = new();
         public ObservableCollection<GeologyLayer> Layers { get; } = new();
+        public ObservableCollection<GroundModelBoundaryPoint> BoundaryPoints { get; } = new();
+        private GroundModelAxis _groundModelAxis;
+        public GroundModelAxis GroundModelAxis
+        {
+            get => _groundModelAxis;
+            private set
+            {
+                if (Set(ref _groundModelAxis, value))
+                    NotifyAxisChanged();
+            }
+        }
+        public bool HasSavedAxis => GroundModelAxis != null && GroundModelAxis.IsValid();
+        public string AxisStatusText => HasSavedAxis ? "✓ Achse gespeichert" : "⚠ Keine Achse gespeichert";
+        public bool HasSavedBoundary => BoundaryPoints.Count >= 3;
+        public string BoundaryStatusText => HasSavedBoundary
+            ? $"✓ Umriss gespeichert ({BoundaryPoints.Count} Punkte)"
+            : "⚠ Kein Umriss gespeichert";
 
         private Borehole _selectedBorehole;
         public Borehole SelectedBorehole
@@ -54,12 +71,28 @@ namespace BIMassist.ViewModels
         }
 
         private double _boreholeDiameterCm = 30.0;
-        public double BoreholeDiameterCm { get => _boreholeDiameterCm; set => Set(ref _boreholeDiameterCm, value); }
+        public double BoreholeDiameterCm
+        {
+            get => _boreholeDiameterCm;
+            set
+            {
+                if (Set(ref _boreholeDiameterCm, value))
+                    PersistSettingsAfterUserEdit();
+            }
+        }
 
         public IList<string> MaterialNameColumns { get; } = new List<string> { "Description", "Classification", "GeologyCode" };
 
         private string _selectedMaterialNameColumn = "Description";
-        public string SelectedMaterialNameColumn { get => _selectedMaterialNameColumn; set => Set(ref _selectedMaterialNameColumn, value); }
+        public string SelectedMaterialNameColumn
+        {
+            get => _selectedMaterialNameColumn;
+            set
+            {
+                if (Set(ref _selectedMaterialNameColumn, value))
+                    PersistSettingsAfterUserEdit();
+            }
+        }
 
         private GeologyLayer _selectedLayer;
         public GeologyLayer SelectedLayer
@@ -99,6 +132,8 @@ namespace BIMassist.ViewModels
 
         private readonly ExternalEvent _evPickPoint;
         private readonly PickPointOnViewHandler _pickPointHandler;
+        private readonly ExternalEvent _evSetBoundary;
+        private readonly PickGroundModelBoundaryHandler _setBoundaryHandler;
 
         public ICommand ImportHolesCmd { get; private set; }
         public ICommand ImportGeologyCmd { get; private set; }
@@ -112,10 +147,13 @@ namespace BIMassist.ViewModels
         public ICommand NewLayerCmd { get; private set; }
         public ICommand SaveChangesCmd { get; private set; }
         public ICommand PickCoordinateCmd { get; private set; }
+        public ICommand SetBoundaryCmd { get; private set; }
 
         private readonly CsvImportService _csv = new();
         private readonly BoreholeProjectStorage _storage;
         private readonly UIApplication _uiapp;
+        private bool _isInitialized;
+        private bool _suspendSettingsPersistence;
 
         private readonly ExternalEvent _evSave;
         private readonly SaveBoreholeDataHandler _saveHandler;
@@ -141,6 +179,9 @@ namespace BIMassist.ViewModels
             _pickPointHandler = new PickPointOnViewHandler();
             _evPickPoint = ExternalEvent.Create(_pickPointHandler);
 
+            _setBoundaryHandler = new PickGroundModelBoundaryHandler();
+            _evSetBoundary = ExternalEvent.Create(_setBoundaryHandler);
+
             Initialize();
         }
 
@@ -154,6 +195,11 @@ namespace BIMassist.ViewModels
                     var data = dataOpt.Value;
                     foreach (var h in data.holes) Boreholes.Add(h);
                     foreach (var g in data.layers) Layers.Add(g);
+                    foreach (var p in data.boundaryPoints) BoundaryPoints.Add(p);
+                    GroundModelAxis = data.axis?.Clone();
+                    ApplySettings(data.settings);
+                    NotifyBoundaryChanged();
+                    NotifyAxisChanged();
                 }
             }
 
@@ -172,6 +218,8 @@ namespace BIMassist.ViewModels
             CreateExtrusionsCmd = new AwesRelay(_ => CreateExtrusions(), _ => Boreholes.Any() && Layers.Any());
             CreateGroundModelCmd = new AwesRelay(_ => CreateGroundModel(), _ => Boreholes.Any() && Layers.Any());
             PickCoordinateCmd = new AwesRelay(async _ => await PickCoordinateForSelectedAsync(), _ => SelectedBorehole != null);
+            SetBoundaryCmd = new AwesRelay(_ => SetGroundModelBoundary(), _ => true);
+            _isInitialized = true;
         }
 
         private void ClearAll()
@@ -187,9 +235,12 @@ namespace BIMassist.ViewModels
 
             Boreholes.Clear();
             Layers.Clear();
+            BoundaryPoints.Clear();
+            GroundModelAxis = null;
             SelectedBorehole = null;
             SelectedLayer = null;
             PersistToProject();
+            NotifyBoundaryChanged();
             OnPropertyChanged(nameof(LayersForSelection));
         }
 
@@ -275,7 +326,44 @@ namespace BIMassist.ViewModels
         {
             _saveHandler.Boreholes = Boreholes.ToList();
             _saveHandler.Layers = Layers.ToList();
+            _saveHandler.BoundaryPoints = BoundaryPoints.Select(p => p?.Clone()).Where(p => p != null).ToList();
+            _saveHandler.Settings = new BoreholeManagerSettings
+            {
+                BoreholeDiameterCm = BoreholeDiameterCm,
+                MaterialNameColumn = SelectedMaterialNameColumn
+            };
+            _saveHandler.Axis = GroundModelAxis?.Clone();
             _evSave.Raise();
+        }
+
+        private void ApplySettings(BoreholeManagerSettings settings)
+        {
+            if (settings == null) return;
+
+            _suspendSettingsPersistence = true;
+            try
+            {
+                if (settings.BoreholeDiameterCm > 0)
+                    BoreholeDiameterCm = settings.BoreholeDiameterCm;
+
+                if (!string.IsNullOrWhiteSpace(settings.MaterialNameColumn)
+                    && MaterialNameColumns.Contains(settings.MaterialNameColumn))
+                {
+                    SelectedMaterialNameColumn = settings.MaterialNameColumn;
+                }
+            }
+            finally
+            {
+                _suspendSettingsPersistence = false;
+            }
+        }
+
+        private void PersistSettingsAfterUserEdit()
+        {
+            if (!_isInitialized || _suspendSettingsPersistence)
+                return;
+
+            PersistToProject();
         }
 
         private void ImportHoles()
@@ -396,6 +484,39 @@ namespace BIMassist.ViewModels
             PersistToProject();
         }
 
+        private void NotifyBoundaryChanged()
+        {
+            OnPropertyChanged(nameof(HasSavedBoundary));
+            OnPropertyChanged(nameof(BoundaryStatusText));
+            CommandManager.InvalidateRequerySuggested();
+        }
+
+        private void NotifyAxisChanged()
+        {
+            OnPropertyChanged(nameof(HasSavedAxis));
+            OnPropertyChanged(nameof(AxisStatusText));
+            CommandManager.InvalidateRequerySuggested();
+        }
+
+        private void SetGroundModelBoundary()
+        {
+            _setBoundaryHandler.Boreholes = Boreholes.ToList();
+            _setBoundaryHandler.Layers = Layers.ToList();
+            _setBoundaryHandler.BoundaryUpdated = points =>
+            {
+                BoundaryPoints.Clear();
+                foreach (var p in points ?? new List<GroundModelBoundaryPoint>())
+                    BoundaryPoints.Add(p);
+                NotifyBoundaryChanged();
+            };
+            _setBoundaryHandler.AxisUpdated = axis =>
+            {
+                GroundModelAxis = axis?.Clone();
+                NotifyAxisChanged();
+            };
+            _evSetBoundary.Raise();
+        }
+
         private void CreateExtrusions()
         {
             _extrHandler.AssumeMeters = AssumeMeters;
@@ -422,6 +543,20 @@ namespace BIMassist.ViewModels
             _groundHandler.MaxInterpDistanceMeters = MaxInterpDistanceMeters;
             _groundHandler.MinThicknessMeters = MinThicknessMeters;
             _groundHandler.MaterialNameColumn = SelectedMaterialNameColumn;
+            _groundHandler.BoundaryPoints = BoundaryPoints.Select(p => p?.Clone()).Where(p => p != null).ToList();
+            _groundHandler.Axis = GroundModelAxis?.Clone();
+            _groundHandler.BoundaryUpdated = points =>
+            {
+                BoundaryPoints.Clear();
+                foreach (var p in points ?? new List<GroundModelBoundaryPoint>())
+                    BoundaryPoints.Add(p);
+                NotifyBoundaryChanged();
+            };
+            _groundHandler.AxisUpdated = axis =>
+            {
+                GroundModelAxis = axis?.Clone();
+                NotifyAxisChanged();
+            };
             // 3D-Bodenmodell ebenfalls nach Code gruppieren; bei fehlenden Codes bleibt das alte Verhalten.
             bool hasAnyCode = Layers.Any(l => !string.IsNullOrWhiteSpace(l.GeologyCode));
             _groundHandler.UseCodeAsLayerKey = hasAnyCode;

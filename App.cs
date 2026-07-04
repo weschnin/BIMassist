@@ -113,6 +113,20 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                btnData = new PushButtonData("Neue Familie als Schnittmenge", "Neue Familie\nals Schnittmenge", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.SolidsIntersectionToNewFamilyCommand")
+                {
+                    ToolTip = "Neue Familie aus Schnittmengen gewählter Geometrien erstellen",
+                    LongDescription = "Wählt zwei oder mehr Geometrien aus, berechnet alle volumetrischen paarweisen Schnittmengen und erstellt daraus analog zur Funktion 'Neue Familie aus gewählten Geometrien erstellen' eine neue Familie. Alle erzeugten Schnittmengen-Geometrien werden in die neue Familie aufgenommen.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
+                btnData = new PushButtonData("Hülle / Shell Offset", "Hülle /\nShell Offset", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.ShellOffsetCommand")
+                {
+                    ToolTip = "Hülle / Shell Offset aus Flächen oder Solids erstellen",
+                    LongDescription = "Versetzt ausgewählte Revit-Flächen oder ganze vorselektierte Solid-Elemente nach innen oder außen um eine definierte Wandstärke. Gekrümmte Flächen werden über einstellbare Tessellierung approximiert; das Ergebnis wird als neue Familie erzeugt.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 btnData = new PushButtonData("Gewählte Geometrien zu einer Familie hinzufügen", "Gewählte Geometrien zu einer Familie hinzufügen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.SolidsToFamilyCommand")
                 {
                     ToolTip = "Gewählte Geometrien zu einer Familie hinzufügen",
