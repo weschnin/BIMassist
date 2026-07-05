@@ -155,6 +155,24 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                // Leitungs-Funktionen
+
+                PanelgroupData = new PulldownButtonData("Leitungen", "Leitungen")
+                {
+                    Image = GetImageSource("pipe_16px.png"),
+                    LargeImage = GetImageSource("pipe_32px.png"),
+                    ToolTip = "Leitungswerkzeuge",
+                    LongDescription = "Werkzeuge zum Erzeugen und Bearbeiten von Leitungen.",
+                };
+                pulldownGroup = panel.AddItem(PanelgroupData) as PulldownButton;
+
+                btnData = new PushButtonData("Neue Leitung aus Linien erstellen", "Neue Leitung\naus Linien", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.CreatePipePlaceholdersFromLinesCommand")
+                {
+                    ToolTip = "Rohrplatzhalter entlang ausgewählter Linien erstellen",
+                    LongDescription = "Wählt eine oder mehrere Revit-Linien oder importierte/eingebettete CAD-Linien aus und erzeugt entlang der Linien durchgehende Rohrplatzhalter. Unterbrechungen zwischen Linien werden optional überbrückt. Durchmesser, Systemtyp, Rohrtyp und Ebene werden in einem Eingabefenster gewählt.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 // Positions-Funktionen
 
                 PanelgroupData = new PulldownButtonData("Position", "Position")
