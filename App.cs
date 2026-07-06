@@ -160,7 +160,7 @@ namespace BIMassist
                 PanelgroupData = new PulldownButtonData("Leitungen", "Leitungen")
                 {
                     Image = GetImageSource("pipe_16px.png"),
-                    LargeImage = GetImageSource("pipe_32px.png"),
+                    LargeImage = GetImageSource("pipe_24px.png"),
                     ToolTip = "Leitungswerkzeuge",
                     LongDescription = "Werkzeuge zum Erzeugen und Bearbeiten von Leitungen.",
                 };
@@ -257,6 +257,17 @@ namespace BIMassist
                     LongDescription = "Nach Auswahl einer Ebene, Referenzebene oder Referenzlinie werden alle in der aktiven Ansicht dargestellten abhängigen Elemente selektiert."
                 };
                 pulldownGroup.AddPushButton(btnData);
+
+                panel.AddSeparator();
+
+                btnData = new PushButtonData("BIMassist Info", "Info", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AboutBimassistCommand")
+                {
+                    ToolTip = "Info über BIMassist anzeigen",
+                    LongDescription = "Zeigt Add-In-Name, Version, Autor, Kontakt und Lizenz-/Haftungshinweise für BIMassist an.",
+                    Image = GetImageSource("info_24px.png"),
+                    LargeImage = GetImageSource("info_24px.png"),
+                };
+                panel.AddItem(btnData);
 
                 panel.AddSeparator();
 

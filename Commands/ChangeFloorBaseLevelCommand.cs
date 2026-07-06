@@ -108,6 +108,44 @@ namespace BIMassist.Commands
             return Result.Succeeded;
         }
 
+        private enum WallLevelMode
+        {
+            Cancelled,
+            OneSharedLevel,
+            TwoSeparateLevels
+        }
+
+        private static WallLevelMode AskWallLevelMode(bool currentlyHasDifferentLevels)
+        {
+            TaskDialog dialog = new TaskDialog("Basisebene wechseln - Wand")
+            {
+                MainInstruction = "Wie sollen die Ebenen der ausgewählten Wand gewechselt werden?",
+                MainContent = currentlyHasDifferentLevels
+                    ? "Die Wand hat aktuell unterschiedliche untere und obere Ebenen. Wähle, ob weiterhin zwei getrennte Ebenen verwendet werden sollen oder ob beide Abhängigkeiten auf eine gemeinsame Ebene gelegt werden."
+                    : "Die Wand verwendet aktuell dieselbe untere und obere Ebene. Wähle, ob eine gemeinsame Ebene beibehalten oder künftig zwei getrennte Ebenen verwendet werden sollen.",
+                CommonButtons = TaskDialogCommonButtons.Cancel
+            };
+
+            dialog.AddCommandLink(
+                TaskDialogCommandLinkId.CommandLink1,
+                "Eine gemeinsame Ebene verwenden",
+                "Eine Ebene auswählen und diese für untere sowie obere Wandabhängigkeit verwenden. Die bisherige Höhe bleibt über neu berechnete Versätze erhalten.");
+
+            dialog.AddCommandLink(
+                TaskDialogCommandLinkId.CommandLink2,
+                "Zwei getrennte Ebenen verwenden",
+                "Untere und obere Ebene nacheinander separat auswählen. Die bisherigen Höhenpositionen bleiben über neu berechnete Versätze erhalten.");
+
+            TaskDialogResult result = dialog.Show();
+            if (result == TaskDialogResult.CommandLink1)
+                return WallLevelMode.OneSharedLevel;
+
+            if (result == TaskDialogResult.CommandLink2)
+                return WallLevelMode.TwoSeparateLevels;
+
+            return WallLevelMode.Cancelled;
+        }
+
         private static Result ChangeWallLevels(Document doc, Wall wall)
         {
             Parameter? baseLevelParameter = wall.get_Parameter(BuiltInParameter.WALL_BASE_CONSTRAINT);
@@ -142,15 +180,27 @@ namespace BIMassist.Commands
                 return Result.Cancelled;
             }
 
-            Level? newBaseLevel = SelectLevelFromList(doc, "Neue untere Ebene für die Wand auswählen", oldBaseLevel.Id);
-            if (newBaseLevel == null)
+            WallLevelMode levelMode = AskWallLevelMode(oldBaseLevel.Id != oldTopLevel.Id);
+            if (levelMode == WallLevelMode.Cancelled)
                 return Result.Cancelled;
 
-            bool hasDifferentTopAndBaseLevels = oldTopLevel.Id != oldBaseLevel.Id;
-            Level? newTopLevel = newBaseLevel;
+            Level? newBaseLevel;
+            Level? newTopLevel;
 
-            if (hasDifferentTopAndBaseLevels)
+            if (levelMode == WallLevelMode.OneSharedLevel)
             {
+                newBaseLevel = SelectLevelFromList(doc, "Neue gemeinsame Ebene für untere und obere Wandabhängigkeit auswählen", oldBaseLevel.Id);
+                if (newBaseLevel == null)
+                    return Result.Cancelled;
+
+                newTopLevel = newBaseLevel;
+            }
+            else
+            {
+                newBaseLevel = SelectLevelFromList(doc, "Neue untere Ebene für die Wand auswählen", oldBaseLevel.Id);
+                if (newBaseLevel == null)
+                    return Result.Cancelled;
+
                 newTopLevel = SelectLevelFromList(doc, "Neue obere Ebene für die Wand auswählen", oldTopLevel.Id);
                 if (newTopLevel == null)
                     return Result.Cancelled;
@@ -184,9 +234,9 @@ namespace BIMassist.Commands
                 tx.Commit();
             }
 
-            string selectionNote = hasDifferentTopAndBaseLevels
+            string selectionNote = levelMode == WallLevelMode.TwoSeparateLevels
                 ? "Für die Wand wurden untere und obere Ebene separat gewählt."
-                : "Untere und obere Ebene waren gleich; die neue Ebene wurde für beide Abhängigkeiten verwendet.";
+                : "Für die Wand wurde eine gemeinsame Ebene für untere und obere Abhängigkeit gewählt.";
 
             TaskDialog.Show(
                 "Basisebene wechseln",

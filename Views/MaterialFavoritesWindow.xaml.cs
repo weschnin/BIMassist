@@ -396,6 +396,20 @@ namespace BIMassist.Views
                                 continue;
                             }
 
+                            if (IsPipeOrPipeSystemElement(element))
+                            {
+                                if (TryAssignPipeSystemMaterial(doc, element, material.Id, out string pipeSuccessDetail, out string pipeFailureReason))
+                                {
+                                    successCount++;
+                                }
+                                else
+                                {
+                                    failures.Add($"{DescribeElement(element)} – {pipeFailureReason}");
+                                }
+
+                                continue;
+                            }
+
                             if (element is FamilyInstance familyInstance)
                             {
                                 bool isInPlaceFamily = familyInstance.Symbol?.Family != null && familyInstance.Symbol.Family.IsInPlace;
@@ -931,6 +945,26 @@ namespace BIMassist.Views
                 return doc.GetElement(typeId) is HostObjAttributes;
             }
 
+            private static bool IsPipeOrPipeSystemElement(Element element)
+            {
+                if (IsPipeElement(element))
+                    return true;
+
+                if (element == null)
+                    return false;
+
+                if (element is MEPSystem)
+                    return true;
+
+                string categoryName = element.Category?.Name ?? string.Empty;
+                if (categoryName.IndexOf("Rohrsystem", StringComparison.OrdinalIgnoreCase) >= 0
+                    || categoryName.IndexOf("Piping System", StringComparison.OrdinalIgnoreCase) >= 0
+                    || categoryName.IndexOf("Pipe System", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+
+                return false;
+            }
+
             private static bool IsPipeElement(Element element)
             {
                 if (element == null)
@@ -943,6 +977,151 @@ namespace BIMassist.Views
                 return category == BuiltInCategory.OST_PipeCurves
                     || category == BuiltInCategory.OST_FlexPipeCurves
                     || category == BuiltInCategory.OST_PlaceHolderPipes;
+            }
+
+            private static bool TryAssignPipeSystemMaterial(Document doc, Element pipeOrSystemElement, ElementId materialId, out string successDetail, out string failureReason)
+            {
+                successDetail = string.Empty;
+                failureReason = string.Empty;
+
+                if (doc == null || pipeOrSystemElement == null)
+                {
+                    failureReason = "Ungültiger Rohrsystem-Kontext";
+                    return false;
+                }
+
+                List<Element> targets = ResolvePipeSystemMaterialTargets(doc, pipeOrSystemElement)
+                    .Where(target => target != null)
+                    .GroupBy(target => target.Id.Value)
+                    .Select(group => group.First())
+                    .ToList();
+
+                if (targets.Count == 0)
+                {
+                    failureReason = "Zum ausgewählten Rohr/Rohrsystem konnte kein Rohrsystemtyp mit Materialparameter ermittelt werden";
+                    return false;
+                }
+
+                List<string> attemptedTargets = new List<string>();
+                foreach (Element target in targets)
+                {
+                    using (Transaction tx = new Transaction(doc, "Material im Rohrsystem zuweisen"))
+                    {
+                        tx.Start();
+
+                        if (TrySetMaterialParameter(doc, target, materialId, out string parameterName))
+                        {
+                            tx.Commit();
+
+                            Element reloadedTarget = doc.GetElement(target.Id) ?? target;
+                            if (HasMaterialParameterValue(doc, reloadedTarget, materialId, out string verifiedParameterName))
+                            {
+                                successDetail = $"Rohrsystem/Typ \"{reloadedTarget.Name}\" wurde über Parameter \"{verifiedParameterName ?? parameterName}\" gesetzt. Hinweis: Das betrifft alle Rohre, die dieses Rohrsystem bzw. diesen Systemtyp verwenden.";
+                                return true;
+                            }
+
+                            failureReason = $"Rohrsystem/Typ \"{target.Name}\" hat das Material nach der Transaktion nicht verifiziert übernommen";
+                            return false;
+                        }
+
+                        tx.RollBack();
+                    }
+
+                    attemptedTargets.Add($"{target.Name} ({target.GetType().Name})");
+                }
+
+                failureReason = "Kein beschreibbarer Materialparameter am Rohrsystem/Rohrsystemtyp gefunden";
+                if (attemptedTargets.Count > 0)
+                    failureReason += ": " + string.Join(", ", attemptedTargets);
+
+                return false;
+            }
+
+            private static List<Element> ResolvePipeSystemMaterialTargets(Document doc, Element pipeOrSystemElement)
+            {
+                List<Element> targets = new List<Element>();
+
+                void AddTarget(ElementId id)
+                {
+                    if (id == null || id == ElementId.InvalidElementId)
+                        return;
+
+                    Element target = doc.GetElement(id);
+                    if (target != null)
+                        targets.Add(target);
+                }
+
+                if (pipeOrSystemElement is Pipe pipe)
+                {
+                    try
+                    {
+                        AddTarget(pipe.MEPSystem?.GetTypeId());
+                        AddTarget(pipe.MEPSystem?.Id);
+                    }
+                    catch
+                    {
+                        // Einige Platzhalter/defekte Systeme liefern kein MEPSystem.
+                    }
+                }
+
+                try
+                {
+                    Parameter systemTypeParameter = pipeOrSystemElement.get_Parameter(BuiltInParameter.RBS_PIPING_SYSTEM_TYPE_PARAM);
+                    AddTarget(systemTypeParameter?.AsElementId());
+                }
+                catch
+                {
+                    // Parameter ist nicht auf allen MEP-Elementen verfügbar.
+                }
+
+                if (pipeOrSystemElement is MEPSystem)
+                {
+                    AddTarget(pipeOrSystemElement.GetTypeId());
+                    AddTarget(pipeOrSystemElement.Id);
+                }
+
+                string categoryName = pipeOrSystemElement.Category?.Name ?? string.Empty;
+                if (categoryName.IndexOf("Rohrsystem", StringComparison.OrdinalIgnoreCase) >= 0
+                    || categoryName.IndexOf("Piping System", StringComparison.OrdinalIgnoreCase) >= 0
+                    || categoryName.IndexOf("Pipe System", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    AddTarget(pipeOrSystemElement.GetTypeId());
+                    AddTarget(pipeOrSystemElement.Id);
+                }
+
+                return targets;
+            }
+
+            private static bool HasMaterialParameterValue(Document doc, Element element, ElementId materialId, out string parameterName)
+            {
+                parameterName = string.Empty;
+
+                if (element == null)
+                    return false;
+
+                Parameter builtInMaterial = element.get_Parameter(BuiltInParameter.MATERIAL_ID_PARAM);
+                if (builtInMaterial != null && ParameterHasMaterialValue(builtInMaterial, materialId))
+                {
+                    parameterName = builtInMaterial.Definition?.Name ?? "MATERIAL_ID_PARAM";
+                    return true;
+                }
+
+                foreach (Parameter parameter in element.Parameters)
+                {
+                    if (parameter == null || parameter.StorageType != StorageType.ElementId)
+                        continue;
+
+                    if (!LooksLikeMaterialParameter(doc, parameter))
+                        continue;
+
+                    if (ParameterHasMaterialValue(parameter, materialId))
+                    {
+                        parameterName = parameter.Definition?.Name ?? "Material";
+                        return true;
+                    }
+                }
+
+                return false;
             }
 
             private static bool TryAssignPipeSegmentMaterial(Document doc, Element pipeElement, ElementId materialId, out string successDetail, out string failureReason)

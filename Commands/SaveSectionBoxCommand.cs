@@ -30,18 +30,27 @@ namespace BIMassist.Commands
                 return Result.Failed;
             }
 
-            NamePromptWindow nameDlg = new NamePromptWindow();
-            if (WpfOwner.ShowDialog(nameDlg, commandData.Application) != true)
-                return Result.Cancelled;
-
             try
             {
-                SaveNamedSnapshot(doc, view3D, nameDlg.EnteredName);
+                Schema schema = GetOrCreateNamedSchema();
+                SectionBoxSaveWindow saveWindow = new SectionBoxSaveWindow(doc, schema);
+                if (WpfOwner.ShowDialog(saveWindow, commandData.Application) != true)
+                    return Result.Cancelled;
+
+                SaveNamedSnapshot(doc, view3D, saveWindow.SelectedSnapshotName, schema);
+
+                TaskDialog.Show(
+                    "Schnittbox speichern",
+                    saveWindow.OverwriteExisting
+                        ? $"Schnittbox wurde überschrieben:\n\n{saveWindow.SelectedSnapshotName}"
+                        : $"Schnittbox wurde neu gespeichert:\n\n{saveWindow.SelectedSnapshotName}");
+
                 return Result.Succeeded;
             }
             catch (Exception ex)
             {
                 message = ex.Message;
+                TaskDialog.Show("Schnittbox speichern", "Fehler:\n\n" + ex.Message);
                 return Result.Failed;
             }
         }
@@ -72,12 +81,11 @@ namespace BIMassist.Commands
             return sb.Finish();
         }
 
-        private void SaveNamedSnapshot(Document doc, View3D view, string name)
+        private void SaveNamedSnapshot(Document doc, View3D view, string name, Schema schema)
         {
             BoundingBoxXYZ box = view.GetSectionBox();
             Transform t = box.Transform;
 
-            Schema schema = GetOrCreateNamedSchema();
             Entity entity = new Entity(schema);
 
             DataStorageManagement.TrySet(entity, "Name", name);

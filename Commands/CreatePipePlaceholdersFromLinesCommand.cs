@@ -508,7 +508,7 @@ namespace BIMassist.Commands
                 _convertCheckBox.Location = new SD.Point(520, 330);
                 _convertCheckBox.Size = new SD.Size(650, 32);
                 _convertCheckBox.AutoSize = true;
-                _convertCheckBox.Checked = false;
+                _convertCheckBox.Checked = true;
                 Controls.Add(_convertCheckBox);
 
                 _okButton.Text = "Erstellen";
