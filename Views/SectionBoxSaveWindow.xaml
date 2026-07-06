@@ -1,0 +1,33 @@
+<Window x:Class="BIMassist.Views.SectionBoxSaveWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Schnittbox speichern" Height="440" Width="560"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanMinimize" ShowInTaskbar="False">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="8"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="12"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Gespeicherte Schnittboxen:" FontWeight="SemiBold"/>
+
+        <ListBox x:Name="List" Grid.Row="2" DisplayMemberPath="Name"
+                 MouseDoubleClick="List_MouseDoubleClick" />
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="BtnNew" Content="Neu" MinWidth="95" Margin="0,0,8,0" Click="OnNewClick" IsDefault="True"/>
+            <Button x:Name="BtnOverwrite" Content="Überschreiben" MinWidth="125" Margin="0,0,8,0" Click="OnOverwriteClick"/>
+            <Button x:Name="BtnCancel" Content="Abbrechen" MinWidth="105" IsCancel="True"/>
+        </StackPanel>
+
+        <StatusBar Grid.Row="5" Margin="0,8,0,0">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="" />
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>

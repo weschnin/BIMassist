@@ -226,5 +226,17 @@ namespace BIMassist.Properties {
                 this["PfadBGKDatei"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string FavoritenMaterialienJson {
+            get {
+                return ((string)(this["FavoritenMaterialienJson"]));
+            }
+            set {
+                this["FavoritenMaterialienJson"] = value;
+            }
+        }
     }
 }

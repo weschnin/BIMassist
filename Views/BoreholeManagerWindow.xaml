@@ -16,31 +16,85 @@
 
         <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled">
             <WrapPanel Margin="8" Orientation="Horizontal">
-                <Button Content="Bohrungen importieren" Margin="4" Padding="10,6" Command="{Binding ImportHolesCmd}"/>
-                <Button Content="Geologie importieren" Margin="4" Padding="10,6" Command="{Binding ImportGeologyCmd}"/>
-                <Button Content="Paar importieren (CSV mehrfach)" Margin="4" Padding="10,6" Command="{Binding ImportPairCmd}"/>
+                <WrapPanel.Resources>
+                    <Style TargetType="GroupBox">
+                        <Setter Property="Margin" Value="4"/>
+                        <Setter Property="Padding" Value="8,6"/>
+                        <Setter Property="VerticalAlignment" Value="Top"/>
+                    </Style>
+                    <Style TargetType="Button">
+                        <Setter Property="Margin" Value="3"/>
+                        <Setter Property="Padding" Value="10,6"/>
+                        <Setter Property="MinHeight" Value="30"/>
+                    </Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="VerticalAlignment" Value="Center"/>
+                    </Style>
+                </WrapPanel.Resources>
 
-                <Separator Margin="12,0"/>
+                <GroupBox Header="Datenimport">
+                    <StackPanel Orientation="Vertical">
+                        <WrapPanel>
+                            <Button Content="Bohrungen importieren" Command="{Binding ImportHolesCmd}"/>
+                            <Button Content="Geologie importieren" Command="{Binding ImportGeologyCmd}"/>
+                            <Button Content="Paar importieren (CSV mehrfach)" Command="{Binding ImportPairCmd}"/>
+                        </WrapPanel>
+                        <Button Content="Änderungen speichern" HorizontalAlignment="Left" Margin="3,8,3,3" Command="{Binding SaveChangesCmd}"/>
+                    </StackPanel>
+                </GroupBox>
 
-                <Button Content="Neue Bohrung" Margin="4" Padding="10,6" Command="{Binding NewBoreholeCmd}"/>
-                <Button Content="Koordinate wählen" Margin="4" Padding="10,6" ToolTip="Rechts-/Hochwert durch Klick in der aktuellen Ansicht setzen" Command="{Binding PickCoordinateCmd}"/>
-                <Button Content="Bohrung löschen" Margin="4" Padding="10,6" Command="{Binding DeleteHoleCmd}"/>
-                <Button Content="Neue Schicht" Margin="4" Padding="10,6" Command="{Binding NewLayerCmd}"/>
-                <Button Content="Schicht löschen" Margin="4" Padding="10,6" Command="{Binding DeleteLayerCmd}"/>
-                <Button Content="Alle Daten löschen" Margin="4" Padding="10,6" Command="{Binding ClearAllCmd}"/>
+                <GroupBox Header="Modelle">
+                    <StackPanel Orientation="Vertical">
+                        <WrapPanel>
+                            <Button Content="Extrusionen erstellen" Command="{Binding CreateExtrusionsCmd}"/>
+                            <Button Content="Umriss eingeben" ToolTip="Umriss für das 3D-Bodenmodell neu anklicken und im Projekt speichern" Command="{Binding SetBoundaryCmd}"/>
+                            <Button Content="3D-Bodenmodell erzeugen" Command="{Binding CreateGroundModelCmd}"/>
+                        </WrapPanel>
+                        <TextBlock Text="{Binding BoundaryStatusText}" Margin="6,8,3,0" FontWeight="SemiBold">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="#B00020"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasSavedBoundary}" Value="True">
+                                            <Setter Property="Foreground" Value="#107C10"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <TextBlock Text="{Binding AxisStatusText}" Margin="6,3,3,0" FontWeight="SemiBold">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="#B00020"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasSavedAxis}" Value="True">
+                                            <Setter Property="Foreground" Value="#107C10"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </GroupBox>
 
-                <Separator Margin="12,0"/>
-
-                <Button Content="Extrusionen erstellen" Margin="4" Padding="10,6" Command="{Binding CreateExtrusionsCmd}"/>
-                <Button Content="3D-Bodenmodell erzeugen" Margin="4" Padding="10,6" Command="{Binding CreateGroundModelCmd}"/>
-
-                <Button Content="Änderungen speichern" Margin="4" Padding="10,6" Command="{Binding SaveChangesCmd}"/>
-
-                <TextBlock Text="Ø [cm]:" Margin="16,0,6,0" VerticalAlignment="Center"/>
-                <TextBox Width="70" Margin="4" Padding="4,2" VerticalContentAlignment="Center" Text="{Binding BoreholeDiameterCm, UpdateSourceTrigger=PropertyChanged, StringFormat=F0}"/>
-
-                <TextBlock Text="Material aus:" Margin="16,0,6,0" VerticalAlignment="Center"/>
-                <ComboBox Width="170" Margin="4" ItemsSource="{Binding MaterialNameColumns}" SelectedItem="{Binding SelectedMaterialNameColumn}"/>
+                <GroupBox Header="Eingaben">
+                    <StackPanel Orientation="Vertical">
+                        <WrapPanel>
+                            <Button Content="Neue Bohrung" Command="{Binding NewBoreholeCmd}"/>
+                            <Button Content="Koordinate wählen" ToolTip="Rechts-/Hochwert durch Klick in der aktuellen Ansicht setzen" Command="{Binding PickCoordinateCmd}"/>
+                            <Button Content="Bohrung löschen" Command="{Binding DeleteHoleCmd}"/>
+                            <Button Content="Neue Schicht" Command="{Binding NewLayerCmd}"/>
+                            <Button Content="Schicht löschen" Command="{Binding DeleteLayerCmd}"/>
+                            <Button Content="Alle Daten löschen" Command="{Binding ClearAllCmd}"/>
+                        </WrapPanel>
+                        <WrapPanel Margin="0,8,0,0">
+                            <TextBlock Text="Ø [cm]:" Margin="3,0,6,0"/>
+                            <TextBox Width="70" Margin="3" Padding="4,2" VerticalContentAlignment="Center" Text="{Binding BoreholeDiameterCm, UpdateSourceTrigger=PropertyChanged, StringFormat=F0}"/>
+                            <TextBlock Text="Material aus:" Margin="16,0,6,0"/>
+                            <ComboBox Width="170" Margin="3" ItemsSource="{Binding MaterialNameColumns}" SelectedItem="{Binding SelectedMaterialNameColumn}"/>
+                        </WrapPanel>
+                    </StackPanel>
+                </GroupBox>
             </WrapPanel>
         </ScrollViewer>
 
@@ -128,3 +182,4 @@
         </Grid>
     </Grid>
 </Window>
+

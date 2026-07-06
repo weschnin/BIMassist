@@ -92,8 +92,8 @@ namespace BIMassist
                 {
                     ToolTip = "Borehole Manager öffnen",
                     LongDescription = "Öffnet den Borehole Manager (nicht-modales Fenster)",
-                    Image = GetImageSource("import_16px.png"),
-                    LargeImage = GetImageSource("import_24px.png")
+                    Image = GetImageSource("Borehole Manager_16px.png"),
+                    LargeImage = GetImageSource("Borehole Manager_32px.png")
                 };
                 panel.AddItem(btnData);
 
@@ -113,6 +113,20 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                btnData = new PushButtonData("Neue Familie als Schnittmenge", "Neue Familie\nals Schnittmenge", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.SolidsIntersectionToNewFamilyCommand")
+                {
+                    ToolTip = "Neue Familie aus Schnittmengen gewählter Geometrien erstellen",
+                    LongDescription = "Wählt zwei oder mehr Geometrien aus, berechnet alle volumetrischen paarweisen Schnittmengen und erstellt daraus analog zur Funktion 'Neue Familie aus gewählten Geometrien erstellen' eine neue Familie. Alle erzeugten Schnittmengen-Geometrien werden in die neue Familie aufgenommen.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
+                btnData = new PushButtonData("Hülle / Shell Offset", "Hülle /\nShell Offset", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.ShellOffsetCommand")
+                {
+                    ToolTip = "Hülle / Shell Offset aus Flächen oder Solids erstellen",
+                    LongDescription = "Versetzt ausgewählte Revit-Flächen oder ganze vorselektierte Solid-Elemente nach innen oder außen um eine definierte Wandstärke. Gekrümmte Flächen werden über einstellbare Tessellierung approximiert; das Ergebnis wird als neue Familie erzeugt.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 btnData = new PushButtonData("Gewählte Geometrien zu einer Familie hinzufügen", "Gewählte Geometrien zu einer Familie hinzufügen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.SolidsToFamilyCommand")
                 {
                     ToolTip = "Gewählte Geometrien zu einer Familie hinzufügen",
@@ -127,6 +141,13 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                btnData = new PushButtonData("Volumenkörper konstruieren", "Volumenkörper\nkonstruieren", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.ConstructVolumeFromFacesCommand")
+                {
+                    ToolTip = "Aus selektierten Flächen einen Volumenkörper konstruieren",
+                    LongDescription = "Konstruiert aus mehreren selektierten Begrenzungsflächen einen Volumenkörper. Unterstützt derzeit konvexe Körper aus planaren Flächen sowie zylindrische Körper aus einer Zylinderfläche und planaren Begrenzungsflächen."
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 btnData = new PushButtonData("Bodenverdrängung", "Bodenverdrängung", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.BodenverdrängungCommand")
                 {
                     ToolTip = "Außenhülle durch Raycasting erstellen",
@@ -134,7 +155,51 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                // Leitungs-Funktionen
+
+                PanelgroupData = new PulldownButtonData("Leitungen", "Leitungen")
+                {
+                    Image = GetImageSource("pipe_16px.png"),
+                    LargeImage = GetImageSource("pipe_24px.png"),
+                    ToolTip = "Leitungswerkzeuge",
+                    LongDescription = "Werkzeuge zum Erzeugen und Bearbeiten von Leitungen.",
+                };
+                pulldownGroup = panel.AddItem(PanelgroupData) as PulldownButton;
+
+                btnData = new PushButtonData("Neue Leitung aus Linien erstellen", "Neue Leitung\naus Linien", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.CreatePipePlaceholdersFromLinesCommand")
+                {
+                    ToolTip = "Rohrplatzhalter entlang ausgewählter Linien erstellen",
+                    LongDescription = "Wählt eine oder mehrere Revit-Linien oder importierte/eingebettete CAD-Linien aus und erzeugt entlang der Linien durchgehende Rohrplatzhalter. Unterbrechungen zwischen Linien werden optional überbrückt. Durchmesser, Systemtyp, Rohrtyp und Ebene werden in einem Eingabefenster gewählt.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
+                // Positions-Funktionen
+
+                PanelgroupData = new PulldownButtonData("Position", "Position")
+                {
+                    Image = GetImageSource("Position_16px.png"),
+                    LargeImage = GetImageSource("Position_32px.png"),
+                    ToolTip = "Positionswerkzeuge",
+                    LongDescription = "Werkzeuge zum Anzeigen und Ändern von Elementpositionen.",
+                };
+                pulldownGroup = panel.AddItem(PanelgroupData) as PulldownButton;
+
+                btnData = new PushButtonData("Elementkoordinaten", "Elementkoordinaten", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.ElementCoordinatesCommand")
+                {
+                    ToolTip = "Familie oder Projektfamilie nach Rechts-/Hochwert setzen",
+                    LongDescription = "Zeigt die aktuellen Rechts-/Hochwerte einer ausgewählten ladbaren Familie oder Projektfamilie an und verschiebt das Element auf neu eingegebene Koordinaten. Systemfamilien sind ausgeschlossen.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
+                btnData = new PushButtonData("Basisebene wechseln", "Basisebene\nwechseln", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.ChangeFloorBaseLevelCommand")
+                {
+                    ToolTip = "Basisebene einer Geschossdecke, Wand oder eines Rohrs wechseln",
+                    LongDescription = "Wählt zuerst eine Geschossdecke, Wand oder ein Rohr. Die neue Ebene wird über eine Liste der vorhandenen Ebenen gewählt. Bei Wänden und Rohren mit unterschiedlichen Start-/End- bzw. oberer/unterer Ebene werden die Ebenen nacheinander abgefragt. Die Versätze werden so neu berechnet, dass die Höhenpositionen erhalten bleiben.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 // Materialien-Funktionen
+
 
                 PanelgroupData = new PulldownButtonData("Materialien", "Materialien")
                 {
@@ -159,12 +224,19 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                btnData = new PushButtonData("Material zuweisen", "Material zuweisen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AssignMaterialCommand")
+                {
+                    ToolTip = "Favorisierte Materialien speichern und ausgewählten Elementen zuweisen",
+                    LongDescription = "Öffnet eine dauerhaft geöffnete Favoritenliste für Materialien. Nach Auswahl eines Favoriten können Elemente markiert und das Material zugewiesen werden.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 // Schnittboxfunktionen
 
-                PanelgroupData = new PulldownButtonData("3D Schnittbereich", "3D Schnittbereich")
+                PanelgroupData = new PulldownButtonData("Ansichten", "Ansichten")
                 {
-                    ToolTip = "3D Schnittberecih funktionen",
-                    LongDescription = "3D Schnittberecih funktionen",
+                    ToolTip = "Ansichts-Funktionen",
+                    LongDescription = "Werkzeuge für Ansichten und Referenzen",
                     Image = GetImageSource("3D Box.png"), //GetImageSource(_3D_Box),
                     LargeImage = GetImageSource("3D Box.png"),  //GetImageSource(_3D_Box),
                 };
@@ -178,6 +250,24 @@ namespace BIMassist
 
                 btnData = new PushButtonData("Schnittbereich verwalten/auswählen", "Schnittbereich verwalten/auswählen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.RestoreSectionBoxCommand");
                 pulldownGroup.AddPushButton(btnData);
+
+                btnData = new PushButtonData("Reference abhängige Elemente auswählen", "Reference abhängige\nElemente auswählen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.SelectReferenceDependentElementsCommand")
+                {
+                    ToolTip = "Wählt in der aktuellen Ansicht alle Elemente aus, die von einer Ebene, Referenzebene oder Referenzlinie abhängen.",
+                    LongDescription = "Nach Auswahl einer Ebene, Referenzebene oder Referenzlinie werden alle in der aktiven Ansicht dargestellten abhängigen Elemente selektiert."
+                };
+                pulldownGroup.AddPushButton(btnData);
+
+                panel.AddSeparator();
+
+                btnData = new PushButtonData("BIMassist Info", "Info", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AboutBimassistCommand")
+                {
+                    ToolTip = "Info über BIMassist anzeigen",
+                    LongDescription = "Zeigt Add-In-Name, Version, Autor, Kontakt und Lizenz-/Haftungshinweise für BIMassist an.",
+                    Image = GetImageSource("info_24px.png"),
+                    LargeImage = GetImageSource("info_24px.png"),
+                };
+                panel.AddItem(btnData);
 
                 panel.AddSeparator();
 
@@ -423,7 +513,7 @@ namespace BIMassist
             {
                 foreach (Window window in windows.OfType<Window>().ToList())
                 {
-                    if (window is SnapshotManagerWindow || window is Einstellungen)
+                    if (window is SnapshotManagerWindow || window is Einstellungen || window is ElementCoordinatesWindow)
                     {
                         try { window.Close(); } catch { }
                     }
