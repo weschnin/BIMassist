@@ -41,6 +41,18 @@ public static class BridgeOperations
     public static IReadOnlySet<string> RequiresDocument { get; } =
         new HashSet<string>(All.Where(operation => operation is not GetStatus and not GetDocumentContext), StringComparer.Ordinal);
 
+    public static IReadOnlySet<string> Reads { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        ListFamilies,
+        GetFamilyMetadata,
+        ListParameters,
+        GetParameterMetadata,
+        ListSharedDefinitions,
+        ListProjectBindings,
+        GetParameterValues,
+        ExportMetadataSnapshot
+    };
+
     public static IReadOnlySet<string> Changes { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         PlanSetParameterValues,

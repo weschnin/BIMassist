@@ -5,6 +5,7 @@ using BIMassist.Mcp.Contracts.Reads;
 using BIMassist.Mcp.Contracts.Serialization;
 using BIMassist.Mcp.Contracts.Sessions;
 using BIMassist.Mcp.RevitBridge.Adapters;
+using BIMassist.Mcp.RevitBridge.Reads;
 
 namespace BIMassist.Mcp.RevitBridge.Tests.Adapters;
 
@@ -50,6 +51,67 @@ public sealed class BridgeRequestProcessorTests
 
         Assert.False(response.Success);
         Assert.Equal(BridgeErrorCodes.NoActiveDocument, response.Error?.Code);
+    }
+
+    [Fact]
+    public void Read_operation_dispatches_exact_document_and_returns_revision()
+    {
+        SessionDescriptor session = CreateSession();
+        var page = new PageResult<FamilySummary>
+        {
+            Items =
+            [
+                new FamilySummary
+                {
+                    UniqueId = "family-uid-1",
+                    ElementId = 42,
+                    Name = "Door - Single",
+                    IsInPlace = false,
+                    IsEditable = true,
+                    IsShared = false,
+                    TypeCount = 1
+                }
+            ],
+            TotalCount = 1
+        };
+        var reads = new FakeReadDispatcher(new ReadOperationResult(
+            JsonSerializer.SerializeToElement(page, ContractJson.Options),
+            session.Documents[0].Revision));
+        var processor = new BridgeRequestProcessor(new FakeContext(session, session.Documents[0]), reads);
+        BridgeRequest request = CreateRequest(BridgeOperations.ListFamilies) with
+        {
+            SessionId = session.SessionId,
+            DocumentKey = session.Documents[0].DocumentKey,
+            Payload = JsonDocument.Parse("{\"page\":{\"pageSize\":25},\"includeInPlace\":false}").RootElement.Clone()
+        };
+
+        BridgeResponse response = processor.Process(request);
+
+        Assert.True(response.Success);
+        Assert.Equal(session.Documents[0].Revision, response.DocumentRevision);
+        Assert.Equal(BridgeOperations.ListFamilies, reads.LastRequest?.Operation);
+        Assert.Single(ContractJson.Deserialize<PageResult<FamilySummary>>(response.Result!.Value.GetRawText()).Items);
+    }
+
+    [Fact]
+    public void Read_operation_maps_machine_readable_failures_without_leaking_exception_text()
+    {
+        SessionDescriptor session = CreateSession();
+        var processor = new BridgeRequestProcessor(
+            new FakeContext(session, session.Documents[0]),
+            new ThrowingReadDispatcher());
+        BridgeRequest request = CreateRequest(BridgeOperations.ListFamilies) with
+        {
+            SessionId = session.SessionId,
+            DocumentKey = session.Documents[0].DocumentKey,
+            Payload = JsonDocument.Parse("{\"page\":{\"pageSize\":25},\"includeInPlace\":false}").RootElement.Clone()
+        };
+
+        BridgeResponse response = processor.Process(request);
+
+        Assert.False(response.Success);
+        Assert.Equal(BridgeErrorCodes.DocumentChanged, response.Error?.Code);
+        Assert.DoesNotContain("secret", response.Error?.Message ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -104,6 +166,23 @@ public sealed class BridgeRequestProcessorTests
             StartedAtUtc = DateTimeOffset.Parse("2026-09-23T10:00:00Z"),
             Documents = [document]
         };
+    }
+
+    private sealed class ThrowingReadDispatcher : IReadOperationDispatcher
+    {
+        public ReadOperationResult Process(BridgeRequest request) =>
+            throw new ReadCursorException(BridgeErrorCodes.DocumentChanged);
+    }
+
+    private sealed class FakeReadDispatcher(ReadOperationResult result) : IReadOperationDispatcher
+    {
+        public BridgeRequest? LastRequest { get; private set; }
+
+        public ReadOperationResult Process(BridgeRequest request)
+        {
+            LastRequest = request;
+            return result;
+        }
     }
 
     private sealed class FakeContext(SessionDescriptor session, DocumentDescriptor? activeDocument)
