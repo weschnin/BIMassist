@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimassist.local/schemas/bridge-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "success", "warnings", "durationMs"],
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "success": { "type": "boolean" },
+    "result": true,
+    "warnings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/warning" },
+      "maxItems": 1000
+    },
+    "error": { "oneOf": [{ "$ref": "#/$defs/error" }, { "type": "null" }] },
+    "documentRevision": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "durationMs": { "type": "integer", "minimum": 0 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "success": { "const": false } }, "required": ["success"] },
+      "then": {
+        "required": ["error"],
+        "properties": {
+          "error": { "$ref": "#/$defs/error" },
+          "result": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "success": { "const": true } }, "required": ["success"] },
+      "then": {
+        "required": ["result"],
+        "properties": {
+          "result": { "not": { "type": "null" } },
+          "error": { "type": "null" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "details": {
+          "type": "object",
+          "maxProperties": 100,
+          "propertyNames": { "minLength": 1, "maxLength": 128 },
+          "additionalProperties": { "type": "string", "maxLength": 4096 }
+        }
+      }
+    }
+  }
+}

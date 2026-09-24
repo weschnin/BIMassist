@@ -1,0 +1,11 @@
+{
+  "solution": {
+    "path": "BIMassist.sln",
+    "projects": [
+      "mcp\\src\\BIMassist.Mcp.Contracts\\BIMassist.Mcp.Contracts.csproj",
+      "mcp\\src\\BIMassist.Mcp.RevitBridge\\BIMassist.Mcp.RevitBridge.csproj",
+      "mcp\\tests\\BIMassist.Mcp.Contracts.Tests\\BIMassist.Mcp.Contracts.Tests.csproj",
+      "mcp\\tests\\BIMassist.Mcp.RevitBridge.Tests\\BIMassist.Mcp.RevitBridge.Tests.csproj"
+    ]
+  }
+}

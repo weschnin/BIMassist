@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimassist.local/schemas/bridge-request.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "schemaVersion", "requestId", "operation", "payload"],
+  "properties": {
+    "protocolVersion": { "const": "1" },
+    "schemaVersion": { "const": "1" },
+    "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sessionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "documentKey": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "expectedRevision": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "idempotencyKey": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "operation": {
+      "enum": [
+        "status.get",
+        "document.context.get",
+        "family.list",
+        "family.metadata.get",
+        "parameter.list",
+        "parameter.metadata.get",
+        "sharedDefinition.list",
+        "projectBinding.list",
+        "parameterValue.get",
+        "metadataSnapshot.export",
+        "parameterValue.set.plan",
+        "sharedParameter.family.add.plan",
+        "sharedParameter.bind.plan",
+        "changePlan.apply"
+      ]
+    },
+    "payload": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "operation": { "not": { "const": "status.get" } } }, "required": ["operation"] },
+      "then": { "required": ["sessionId"] }
+    },
+    {
+      "if": { "properties": { "operation": { "not": { "enum": ["status.get", "document.context.get"] } } }, "required": ["operation"] },
+      "then": { "required": ["documentKey"] }
+    },
+    {
+      "if": { "properties": { "operation": { "enum": ["parameterValue.set.plan", "sharedParameter.family.add.plan", "sharedParameter.bind.plan", "changePlan.apply"] } }, "required": ["operation"] },
+      "then": { "required": ["expectedRevision", "idempotencyKey"] }
+    },
+    {
+      "if": { "properties": { "operation": { "const": "changePlan.apply" } }, "required": ["operation"] },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["planId", "planHash", "expectedRevision", "idempotencyKey", "approval"],
+            "properties": {
+              "planId": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "planHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "expectedRevision": { "type": "string", "minLength": 1, "maxLength": 256 },
+              "idempotencyKey": { "type": "string", "minLength": 1, "maxLength": 256 },
+              "approval": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["approvedBy", "approvedAtUtc", "source"],
+                "properties": {
+                  "approvedBy": { "type": "string", "minLength": 1, "maxLength": 256 },
+                  "approvedAtUtc": { "type": "string", "format": "date-time", "pattern": "^(?!0001-).*(Z|[+]00:00)$" },
+                  "source": { "type": "string", "minLength": 1, "maxLength": 128 }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

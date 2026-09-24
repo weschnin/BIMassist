@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimassist.local/schemas/change-plan.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["planId", "sessionId", "documentKey", "expectedRevision", "createdAtUtc", "expiresAtUtc", "operations", "warnings", "planHash"],
+  "properties": {
+    "planId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sessionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "documentKey": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "expectedRevision": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "createdAtUtc": { "type": "string", "format": "date-time" },
+    "expiresAtUtc": { "type": "string", "format": "date-time" },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1000,
+      "items": { "$ref": "#/$defs/operation" }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": { "$ref": "#/$defs/warning" }
+    },
+    "planHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  },
+  "$defs": {
+    "warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operationId", "kind", "target", "parameter", "options"],
+      "properties": {
+        "operationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "kind": { "enum": ["setParameterValue", "addSharedParameterToFamily", "bindSharedParameter"] },
+        "target": { "$ref": "#/$defs/target" },
+        "parameter": { "$ref": "#/$defs/parameterIdentity" },
+        "before": { "$ref": "#/$defs/parameterValue" },
+        "after": { "$ref": "#/$defs/parameterValue" },
+        "beforeBinding": { "$ref": "#/$defs/bindingState" },
+        "afterBinding": { "$ref": "#/$defs/bindingState" },
+        "beforeDefinition": { "$ref": "#/$defs/definitionState" },
+        "afterDefinition": { "$ref": "#/$defs/definitionState" },
+        "options": {
+          "type": "object",
+          "propertyNames": { "minLength": 1, "maxLength": 128 },
+          "additionalProperties": { "type": "string", "maxLength": 4096 },
+          "maxProperties": 100
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "setParameterValue" } }, "required": ["kind"] },
+          "then": {
+            "required": ["before", "after"],
+            "properties": { "after": { "properties": { "isReadOnly": { "const": false } } } },
+            "not": { "anyOf": [{ "required": ["beforeBinding"] }, { "required": ["afterBinding"] }, { "required": ["beforeDefinition"] }, { "required": ["afterDefinition"] }] }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "addSharedParameterToFamily" } }, "required": ["kind"] },
+          "then": {
+            "required": ["afterDefinition"],
+            "properties": {
+              "target": { "properties": { "kind": { "const": "family" } } },
+              "parameter": { "properties": { "kind": { "const": "sharedGuid" } } }
+            },
+            "not": { "anyOf": [{ "required": ["before"] }, { "required": ["after"] }, { "required": ["beforeBinding"] }, { "required": ["afterBinding"] }] }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "bindSharedParameter" } }, "required": ["kind"] },
+          "then": {
+            "required": ["afterBinding"],
+            "properties": {
+              "target": { "properties": { "kind": { "const": "document" } } },
+              "parameter": { "properties": { "kind": { "const": "sharedGuid" } } },
+              "afterBinding": { "properties": { "kind": { "enum": ["projectInstance", "projectType"] } } },
+              "beforeBinding": { "properties": { "kind": { "enum": ["none", "projectInstance", "projectType"] } } }
+            },
+            "not": { "anyOf": [{ "required": ["before"] }, { "required": ["after"] }, { "required": ["beforeDefinition"] }, { "required": ["afterDefinition"] }] }
+          }
+        }
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["document", "element", "elementType", "family", "familyType"] },
+        "uniqueId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "elementId": { "type": "integer", "minimum": 1 },
+        "familyName": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "typeName": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "document" } }, "required": ["kind"] },
+          "then": { "not": { "anyOf": [{ "required": ["uniqueId"] }, { "required": ["elementId"] }, { "required": ["familyName"] }, { "required": ["typeName"] }] } }
+        },
+        {
+          "if": { "properties": { "kind": { "enum": ["element", "elementType"] } }, "required": ["kind"] },
+          "then": {
+            "anyOf": [{ "required": ["uniqueId"] }, { "required": ["elementId"] }],
+            "not": { "anyOf": [{ "required": ["familyName"] }, { "required": ["typeName"] }] }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "family" } }, "required": ["kind"] },
+          "then": {
+            "required": ["familyName"],
+            "not": { "anyOf": [{ "required": ["uniqueId"] }, { "required": ["elementId"] }, { "required": ["typeName"] }] }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "familyType" } }, "required": ["kind"] },
+          "then": {
+            "required": ["familyName", "typeName"],
+            "not": { "anyOf": [{ "required": ["uniqueId"] }, { "required": ["elementId"] }] }
+          }
+        }
+      ]
+    },
+    "parameterIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "stableId", "name"],
+      "properties": {
+        "kind": { "enum": ["sharedGuid", "builtIn", "parameterElement", "familyDefinition"] },
+        "sharedGuid": { "type": "string", "format": "uuid" },
+        "stableId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "ownerContext": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "definitionId": { "type": "integer", "minimum": 1 },
+        "dataTypeId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "isInstance": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "sharedGuid" } }, "required": ["kind"] },
+          "then": { "required": ["sharedGuid"] }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "builtIn" } }, "required": ["kind"] },
+          "then": { "not": { "required": ["sharedGuid"] } }
+        },
+        {
+          "if": { "properties": { "kind": { "enum": ["parameterElement", "familyDefinition"] } }, "required": ["kind"] },
+          "then": {
+            "required": ["ownerContext", "definitionId", "dataTypeId"],
+            "not": { "required": ["sharedGuid"] }
+          }
+        }
+      ]
+    },
+    "parameterValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "hasValue", "isReadOnly"],
+      "properties": {
+        "kind": { "enum": ["none", "string", "integer", "double", "boolean", "elementReference", "materialReference", "typeReference"] },
+        "hasValue": { "type": "boolean" },
+        "isReadOnly": { "type": "boolean" },
+        "stringValue": { "type": "string", "maxLength": 32768 },
+        "integerValue": { "type": "integer" },
+        "internalDoubleValue": { "type": "number" },
+        "booleanValue": { "type": "boolean" },
+        "displayValue": { "type": "string", "maxLength": 32768 },
+        "specTypeId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "inputUnitTypeId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "reference": { "$ref": "#/$defs/reference" },
+        "formula": { "type": "string", "minLength": 1, "maxLength": 32768 },
+        "blockingReason": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      },
+      "oneOf": [
+        {
+          "properties": { "kind": { "const": "none" }, "hasValue": { "const": false } },
+          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }, { "required": ["reference"] }] }
+        },
+        {
+          "properties": { "kind": { "const": "string" }, "hasValue": { "const": true } },
+          "required": ["stringValue"],
+          "not": { "anyOf": [{ "required": ["integerValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }, { "required": ["reference"] }] }
+        },
+        {
+          "properties": { "kind": { "const": "integer" }, "hasValue": { "const": true } },
+          "required": ["integerValue"],
+          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }, { "required": ["reference"] }] }
+        },
+        {
+          "properties": { "kind": { "const": "double" }, "hasValue": { "const": true } },
+          "required": ["internalDoubleValue", "specTypeId", "inputUnitTypeId"],
+          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["booleanValue"] }, { "required": ["reference"] }] }
+        },
+        {
+          "properties": { "kind": { "const": "boolean" }, "hasValue": { "const": true } },
+          "required": ["booleanValue"],
+          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["reference"] }] }
+        },
+        {
+          "properties": { "kind": { "const": "elementReference" }, "hasValue": { "const": true }, "reference": { "properties": { "referenceKind": { "const": "element" } } } },
+          "required": ["reference"],
+          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }] }
+        },
+        {
+          "properties": { "kind": { "const": "materialReference" }, "hasValue": { "const": true }, "reference": { "properties": { "referenceKind": { "const": "material" } } } },
+          "required": ["reference"],
+          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }] }
+        },
+        {
+          "properties": { "kind": { "const": "typeReference" }, "hasValue": { "const": true }, "reference": { "properties": { "referenceKind": { "const": "type" } } } },
+          "required": ["reference"],
+          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }] }
+        }
+      ],
+      "allOf": [
+        {
+          "if": { "required": ["formula"] },
+          "then": { "properties": { "isReadOnly": { "const": true } }, "required": ["blockingReason"] }
+        }
+      ]
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["elementId", "referenceKind"],
+      "properties": {
+        "uniqueId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "elementId": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string", "maxLength": 4096 },
+        "referenceKind": { "enum": ["element", "material", "type"] }
+      },
+      "anyOf": [
+        { "required": ["uniqueId"] },
+        { "properties": { "elementId": { "minimum": 1 } } }
+      ]
+    },
+    "bindingState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "categoryIds"],
+      "properties": {
+        "kind": { "enum": ["none", "shared", "familyInstance", "familyType", "projectInstance", "projectType"] },
+        "categoryIds": { "type": "array", "maxItems": 1000, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+        "groupTypeId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "enum": ["projectInstance", "projectType"] } }, "required": ["kind"] },
+          "then": { "properties": { "categoryIds": { "minItems": 1 } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "none" } }, "required": ["kind"] },
+          "then": { "properties": { "categoryIds": { "maxItems": 0 } } }
+        }
+      ]
+    },
+    "definitionState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sharedGuid", "name", "dataTypeId", "groupName", "isInstance"],
+      "properties": {
+        "sharedGuid": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "dataTypeId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "groupName": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "isInstance": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "planId": "plan-fixture-1",
+  "planHash": "7a504df4e28608f192c022251b55d0668cfa8e8f1c697a9d111e3d2d1556ddcb",
+  "expectedRevision": "revision-4",
+  "idempotencyKey": "idempotency-fixture-1",
+  "approval": {
+    "approvedBy": "user:wesch",
+    "approvedAtUtc": "2026-09-21T12:01:00Z",
+    "source": "hermes"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "protocolVersion": "1",
+  "schemaVersion": "1",
+  "requestId": "request-fixture-1",
+  "operation": "status.get",
+  "payload": {}
+}

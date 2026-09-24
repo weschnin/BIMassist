@@ -1,23 +1,61 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.13.35913.81 d17.13
+VisualStudioVersion = 17.13.35913.81
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BIMassist", "BIMassist.csproj", "{4398234A-AA0D-4B8A-97C7-D04B59C56094}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "mcp", "mcp", "{60D02A9B-BD8A-21E2-79E7-27A6B3D0EB49}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{9FED3C2F-EF6E-FA8F-66F9-2CE0D07730B7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BIMassist.Mcp.Contracts", "mcp\src\BIMassist.Mcp.Contracts\BIMassist.Mcp.Contracts.csproj", "{E1A3B65A-EB6F-4372-AFEA-1CD02B048731}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{D97FE15B-1488-14BC-6E4E-A2CE3480960D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BIMassist.Mcp.Contracts.Tests", "mcp\tests\BIMassist.Mcp.Contracts.Tests\BIMassist.Mcp.Contracts.Tests.csproj", "{3714682E-45D5-4501-A595-2BAF5365B287}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BIMassist.Mcp.RevitBridge", "mcp\src\BIMassist.Mcp.RevitBridge\BIMassist.Mcp.RevitBridge.csproj", "{0B1C3B14-35E9-4ACD-B33D-8B8079ED762A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BIMassist.Mcp.RevitBridge.Tests", "mcp\tests\BIMassist.Mcp.RevitBridge.Tests\BIMassist.Mcp.RevitBridge.Tests.csproj", "{8EDC1FAB-19A5-4D47-90DE-49AC4F60CBEC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug|Any CPU = Debug|Any CPU
-		Release|Any CPU = Release|Any CPU
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{4398234A-AA0D-4B8A-97C7-D04B59C56094}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{4398234A-AA0D-4B8A-97C7-D04B59C56094}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{4398234A-AA0D-4B8A-97C7-D04B59C56094}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{4398234A-AA0D-4B8A-97C7-D04B59C56094}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4398234A-AA0D-4B8A-97C7-D04B59C56094}.Debug|x64.ActiveCfg = Debug|x64
+		{4398234A-AA0D-4B8A-97C7-D04B59C56094}.Debug|x64.Build.0 = Debug|x64
+		{4398234A-AA0D-4B8A-97C7-D04B59C56094}.Release|x64.ActiveCfg = Release|x64
+		{4398234A-AA0D-4B8A-97C7-D04B59C56094}.Release|x64.Build.0 = Release|x64
+		{E1A3B65A-EB6F-4372-AFEA-1CD02B048731}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{E1A3B65A-EB6F-4372-AFEA-1CD02B048731}.Debug|x64.Build.0 = Debug|Any CPU
+		{E1A3B65A-EB6F-4372-AFEA-1CD02B048731}.Release|x64.ActiveCfg = Release|Any CPU
+		{E1A3B65A-EB6F-4372-AFEA-1CD02B048731}.Release|x64.Build.0 = Release|Any CPU
+		{3714682E-45D5-4501-A595-2BAF5365B287}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{3714682E-45D5-4501-A595-2BAF5365B287}.Debug|x64.Build.0 = Debug|Any CPU
+		{3714682E-45D5-4501-A595-2BAF5365B287}.Release|x64.ActiveCfg = Release|Any CPU
+		{3714682E-45D5-4501-A595-2BAF5365B287}.Release|x64.Build.0 = Release|Any CPU
+		{0B1C3B14-35E9-4ACD-B33D-8B8079ED762A}.Debug|x64.ActiveCfg = Debug|x64
+		{0B1C3B14-35E9-4ACD-B33D-8B8079ED762A}.Debug|x64.Build.0 = Debug|x64
+		{0B1C3B14-35E9-4ACD-B33D-8B8079ED762A}.Release|x64.ActiveCfg = Release|x64
+		{0B1C3B14-35E9-4ACD-B33D-8B8079ED762A}.Release|x64.Build.0 = Release|x64
+		{8EDC1FAB-19A5-4D47-90DE-49AC4F60CBEC}.Debug|x64.ActiveCfg = Debug|x64
+		{8EDC1FAB-19A5-4D47-90DE-49AC4F60CBEC}.Debug|x64.Build.0 = Debug|x64
+		{8EDC1FAB-19A5-4D47-90DE-49AC4F60CBEC}.Release|x64.ActiveCfg = Release|x64
+		{8EDC1FAB-19A5-4D47-90DE-49AC4F60CBEC}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{9FED3C2F-EF6E-FA8F-66F9-2CE0D07730B7} = {60D02A9B-BD8A-21E2-79E7-27A6B3D0EB49}
+		{E1A3B65A-EB6F-4372-AFEA-1CD02B048731} = {9FED3C2F-EF6E-FA8F-66F9-2CE0D07730B7}
+		{D97FE15B-1488-14BC-6E4E-A2CE3480960D} = {60D02A9B-BD8A-21E2-79E7-27A6B3D0EB49}
+		{3714682E-45D5-4501-A595-2BAF5365B287} = {D97FE15B-1488-14BC-6E4E-A2CE3480960D}
+		{0B1C3B14-35E9-4ACD-B33D-8B8079ED762A} = {9FED3C2F-EF6E-FA8F-66F9-2CE0D07730B7}
+		{8EDC1FAB-19A5-4D47-90DE-49AC4F60CBEC} = {D97FE15B-1488-14BC-6E4E-A2CE3480960D}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {62C688EB-656A-4D73-88EC-A26BD3DA3045}

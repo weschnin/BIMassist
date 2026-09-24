@@ -1,0 +1,40 @@
+{
+  "planId": "plan-fixture-1",
+  "sessionId": "session-fixture-1",
+  "documentKey": "document-fixture-1",
+  "expectedRevision": "revision-4",
+  "createdAtUtc": "2026-09-21T12:00:00+00:00",
+  "expiresAtUtc": "2026-09-21T12:05:00+00:00",
+  "operations": [
+    {
+      "operationId": "operation-fixture-1",
+      "kind": "setParameterValue",
+      "target": {
+        "kind": "element",
+        "uniqueId": "unique-fixture-1",
+        "elementId": 42
+      },
+      "parameter": {
+        "kind": "sharedGuid",
+        "sharedGuid": "9f51461a-bda5-4a03-8e7d-fb52e6e7d50c",
+        "stableId": "shared:9f51461a-bda5-4a03-8e7d-fb52e6e7d50c",
+        "name": "Brandschutzklasse"
+      },
+      "before": {
+        "kind": "string",
+        "hasValue": true,
+        "isReadOnly": false,
+        "stringValue": "EI30"
+      },
+      "after": {
+        "kind": "string",
+        "hasValue": true,
+        "isReadOnly": false,
+        "stringValue": "EI90"
+      },
+      "options": {}
+    }
+  ],
+  "warnings": [],
+  "planHash": "7a504df4e28608f192c022251b55d0668cfa8e8f1c697a9d111e3d2d1556ddcb"
+}

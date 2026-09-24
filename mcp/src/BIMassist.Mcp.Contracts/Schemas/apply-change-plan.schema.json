@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimassist.local/schemas/apply-change-plan.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["planId", "planHash", "expectedRevision", "idempotencyKey", "approval"],
+  "properties": {
+    "planId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "planHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "expectedRevision": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "idempotencyKey": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approvedBy", "approvedAtUtc", "source"],
+      "properties": {
+        "approvedBy": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "approvedAtUtc": { "type": "string", "format": "date-time", "pattern": "^(?!0001-).*(Z|[+]00:00)$" },
+        "source": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    }
+  }
+}

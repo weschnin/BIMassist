@@ -1,0 +1,15 @@
+{
+  "requestId": "request-fixture-3",
+  "success": false,
+  "warnings": [],
+  "error": {
+    "code": "DOCUMENT_CHANGED",
+    "message": "The document revision changed.",
+    "details": {
+      "expected": "revision-4",
+      "actual": "revision-5"
+    }
+  },
+  "documentRevision": "revision-5",
+  "durationMs": 7
+}

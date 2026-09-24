@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>BIMassist MCP Revit Bridge</Name>
+    <Assembly>BIMassist.Mcp\BIMassist.Mcp.RevitBridge.dll</Assembly>
+    <AddInId>72C808CD-BA16-4BC7-BD11-EBE6202C6B84</AddInId>
+    <FullClassName>BIMassist.Mcp.RevitBridge.App</FullClassName>
+    <VendorId>WESCH</VendorId>
+    <VendorDescription>BIMassist</VendorDescription>
+  </AddIn>
+</RevitAddIns>
