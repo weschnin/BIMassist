@@ -30,7 +30,17 @@ public sealed class BridgeExternalEventHandler : IExternalEventHandler
         var context = new RevitContextSnapshotProvider(application, _sessions, _revisions);
         var familySource = new RevitFamilyReadSource(application, _sessions, _revisions);
         var familyService = new FamilyReadService(_paginator);
-        var readDispatcher = new RevitReadOperationDispatcher(familySource, familyService);
+        var sharedDefinitionSource = new RevitSharedDefinitionReadSource(application, _sessions, _revisions);
+        var sharedDefinitionService = new SharedDefinitionReadService(_paginator);
+        var projectBindingSource = new RevitProjectBindingReadSource(application, _sessions, _revisions);
+        var projectBindingService = new ProjectBindingReadService(_paginator);
+        var readDispatcher = new RevitReadOperationDispatcher(
+            familySource,
+            familyService,
+            sharedDefinitionSource,
+            sharedDefinitionService,
+            projectBindingSource,
+            projectBindingService);
         var processor = new BridgeRequestProcessor(context, readDispatcher);
         _queue.ExecuteNext(processor.Process);
     }
