@@ -8,6 +8,7 @@ using BIMassist.Mcp.Contracts.Sessions;
 using BIMassist.Mcp.RevitBridge.Adapters;
 using BIMassist.Mcp.RevitBridge.Documents;
 using BIMassist.Mcp.RevitBridge.Sessions;
+using ContractParameterValue = BIMassist.Mcp.Contracts.Parameters.ParameterValue;
 using ContractStorageType = BIMassist.Mcp.Contracts.Parameters.ParameterStorageType;
 using RevitStorageType = Autodesk.Revit.DB.StorageType;
 
@@ -210,7 +211,119 @@ internal sealed class RevitParameterReadSource : IRevitParameterReadSource
             BindingKind = binding.Kind,
             IsReadOnly = metadata.IsReadOnly
         };
-        return new ParameterReadRecord(summary, metadata);
+        return new ParameterReadRecord(summary, metadata, BuildValue(document, parameter, dataType, metadata));
+    }
+
+    private static ContractParameterValue BuildValue(
+        Document document,
+        Parameter parameter,
+        ForgeTypeId dataType,
+        ParameterMetadata metadata)
+    {
+        if (!parameter.HasValue)
+        {
+            return new ContractParameterValue
+            {
+                Kind = ParameterValueKind.None,
+                HasValue = false,
+                IsReadOnly = parameter.IsReadOnly,
+                BlockingReason = metadata.BlockedReason
+            };
+        }
+
+        string? displayValue = parameter.AsValueString();
+        if (parameter.StorageType == RevitStorageType.String)
+        {
+            return new ContractParameterValue
+            {
+                Kind = ParameterValueKind.String,
+                HasValue = true,
+                IsReadOnly = parameter.IsReadOnly,
+                StringValue = parameter.AsString() ?? string.Empty,
+                DisplayValue = displayValue,
+                BlockingReason = metadata.BlockedReason
+            };
+        }
+
+        if (parameter.StorageType == RevitStorageType.Integer)
+        {
+            int value = parameter.AsInteger();
+            bool isBoolean = string.Equals(
+                dataType.TypeId,
+                SpecTypeId.Boolean.YesNo.TypeId,
+                StringComparison.Ordinal);
+            return new ContractParameterValue
+            {
+                Kind = isBoolean ? ParameterValueKind.Boolean : ParameterValueKind.Integer,
+                HasValue = true,
+                IsReadOnly = parameter.IsReadOnly,
+                IntegerValue = isBoolean ? null : value,
+                BooleanValue = isBoolean ? value != 0 : null,
+                DisplayValue = displayValue,
+                BlockingReason = metadata.BlockedReason
+            };
+        }
+
+        if (parameter.StorageType == RevitStorageType.Double && UnitUtils.IsMeasurableSpec(dataType))
+        {
+            double internalValue = parameter.AsDouble();
+            ForgeTypeId unitType = document.GetUnits().GetFormatOptions(dataType).GetUnitTypeId();
+            return new ContractParameterValue
+            {
+                Kind = ParameterValueKind.Double,
+                HasValue = true,
+                IsReadOnly = parameter.IsReadOnly,
+                DoubleValue = UnitUtils.ConvertFromInternalUnits(internalValue, unitType),
+                InternalDoubleValue = internalValue,
+                DisplayValue = displayValue,
+                SpecTypeId = dataType.TypeId,
+                InputUnitTypeId = unitType.TypeId,
+                BlockingReason = metadata.BlockedReason
+            };
+        }
+
+        if (parameter.StorageType == RevitStorageType.ElementId)
+        {
+            ElementId referenceId = parameter.AsElementId();
+            Element? referencedElement = document.GetElement(referenceId);
+            if (referencedElement is not null && referenceId.Value > 0)
+            {
+                ParameterReferenceKind referenceKind = referencedElement switch
+                {
+                    Material => ParameterReferenceKind.Material,
+                    ElementType => ParameterReferenceKind.Type,
+                    _ => ParameterReferenceKind.Element
+                };
+                ParameterValueKind valueKind = referenceKind switch
+                {
+                    ParameterReferenceKind.Material => ParameterValueKind.MaterialReference,
+                    ParameterReferenceKind.Type => ParameterValueKind.TypeReference,
+                    _ => ParameterValueKind.ElementReference
+                };
+                return new ContractParameterValue
+                {
+                    Kind = valueKind,
+                    HasValue = true,
+                    IsReadOnly = parameter.IsReadOnly,
+                    DisplayValue = displayValue,
+                    Reference = new ElementReferenceValue(
+                        referencedElement.UniqueId,
+                        referenceId.Value,
+                        referencedElement.Name,
+                        referenceKind),
+                    BlockingReason = metadata.BlockedReason
+                };
+            }
+        }
+
+        return new ContractParameterValue
+        {
+            Kind = ParameterValueKind.None,
+            HasValue = false,
+            IsReadOnly = parameter.IsReadOnly,
+            DisplayValue = displayValue,
+            BlockingReason = metadata.BlockedReason
+        };
     }
 
     private static ParameterIdentity BuildIdentity(

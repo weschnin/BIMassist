@@ -10,7 +10,8 @@ namespace BIMassist.Mcp.RevitBridge.Reads;
 
 internal sealed record ParameterReadRecord(
     ParameterSummary Summary,
-    ParameterMetadata Metadata);
+    ParameterMetadata Metadata,
+    ParameterValue? Value = null);
 
 internal sealed class ParameterReadService
 {

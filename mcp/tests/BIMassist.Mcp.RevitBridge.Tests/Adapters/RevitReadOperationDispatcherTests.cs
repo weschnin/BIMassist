@@ -134,7 +134,7 @@ public sealed class RevitReadOperationDispatcherTests
     }
 
     [Fact]
-    public void Parameter_list_is_materialized_serialized_and_revision_bound()
+    public void Parameter_reads_are_materialized_serialized_and_revision_bound()
     {
         var target = new ParameterTarget
         {
@@ -194,8 +194,19 @@ public sealed class RevitReadOperationDispatcherTests
             new SharedDefinitionReadSnapshot("document-1", "revision-6", []));
         var bindingSource = new FakeProjectBindingSource(
             new ProjectBindingReadSnapshot("document-1", "revision-6", []));
+        var value = new ParameterValue
+        {
+            Kind = ParameterValueKind.String,
+            HasValue = true,
+            IsReadOnly = false,
+            StringValue = "Exterior door"
+        };
         var parameterSource = new FakeParameterSource(
-            new ParameterReadSnapshot("document-1", "revision-6", target, [new ParameterReadRecord(summary, metadata)]));
+            new ParameterReadSnapshot(
+                "document-1",
+                "revision-6",
+                target,
+                [new ParameterReadRecord(summary, metadata, value)]));
         var paginator = new StablePaginator(new ReadCursorCodec(SHA256.HashData("parameter dispatcher test"u8)));
         var dispatcher = new RevitReadOperationDispatcher(
             familySource,
@@ -205,7 +216,8 @@ public sealed class RevitReadOperationDispatcherTests
             bindingSource,
             new ProjectBindingReadService(paginator),
             parameterSource,
-            new ParameterReadService(paginator));
+            new ParameterReadService(paginator),
+            new ParameterValueReadService(paginator));
         BridgeRequest request = CreateRequest(
             BridgeOperations.ListParameters,
             "{\"page\":{\"pageSize\":25},\"target\":{\"kind\":\"element\",\"uniqueId\":\"element-uid-1\",\"elementId\":100}}");
@@ -218,6 +230,15 @@ public sealed class RevitReadOperationDispatcherTests
         Assert.Equal("session-1", parameterSource.SessionId);
         Assert.Equal("document-1", parameterSource.DocumentKey);
         Assert.Equal(identity.StableId, Assert.Single(page.Items).Identity.StableId);
+
+        ReadOperationResult valuesResult = dispatcher.Process(CreateRequest(
+            BridgeOperations.GetParameterValues,
+            "{\"page\":{\"pageSize\":25},\"target\":{\"kind\":\"element\",\"uniqueId\":\"element-uid-1\",\"elementId\":100}}"));
+        PageResult<ParameterValueEntry> values =
+            ContractJson.Deserialize<PageResult<ParameterValueEntry>>(valuesResult.Result.GetRawText());
+
+        Assert.Equal("Exterior door", Assert.Single(values.Items).Value.StringValue);
+        Assert.Equal("revision-6", valuesResult.DocumentRevision);
     }
 
     private static BridgeRequest CreateRequest(string operation, string payload) => new()

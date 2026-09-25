@@ -17,11 +17,12 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
     private readonly ProjectBindingReadService? _projectBindingService;
     private readonly IRevitParameterReadSource? _parameters;
     private readonly ParameterReadService? _parameterService;
+    private readonly ParameterValueReadService? _parameterValueService;
 
     internal RevitReadOperationDispatcher(
         IRevitFamilyReadSource families,
         FamilyReadService familyService)
-        : this(families, familyService, null, null, null, null, null, null)
+        : this(families, familyService, null, null, null, null, null, null, null)
     {
     }
 
@@ -30,7 +31,7 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
         FamilyReadService familyService,
         IRevitSharedDefinitionReadSource? sharedDefinitions,
         SharedDefinitionReadService? sharedDefinitionService)
-        : this(families, familyService, sharedDefinitions, sharedDefinitionService, null, null, null, null)
+        : this(families, familyService, sharedDefinitions, sharedDefinitionService, null, null, null, null, null)
     {
     }
 
@@ -49,6 +50,7 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
             projectBindings,
             projectBindingService,
             null,
+            null,
             null)
     {
     }
@@ -62,6 +64,29 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
         ProjectBindingReadService? projectBindingService,
         IRevitParameterReadSource? parameters,
         ParameterReadService? parameterService)
+        : this(
+            families,
+            familyService,
+            sharedDefinitions,
+            sharedDefinitionService,
+            projectBindings,
+            projectBindingService,
+            parameters,
+            parameterService,
+            null)
+    {
+    }
+
+    internal RevitReadOperationDispatcher(
+        IRevitFamilyReadSource families,
+        FamilyReadService familyService,
+        IRevitSharedDefinitionReadSource? sharedDefinitions,
+        SharedDefinitionReadService? sharedDefinitionService,
+        IRevitProjectBindingReadSource? projectBindings,
+        ProjectBindingReadService? projectBindingService,
+        IRevitParameterReadSource? parameters,
+        ParameterReadService? parameterService,
+        ParameterValueReadService? parameterValueService)
     {
         _families = families ?? throw new ArgumentNullException(nameof(families));
         _familyService = familyService ?? throw new ArgumentNullException(nameof(familyService));
@@ -71,6 +96,7 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
         _projectBindingService = projectBindingService;
         _parameters = parameters;
         _parameterService = parameterService;
+        _parameterValueService = parameterValueService;
     }
 
     public ReadOperationResult Process(BridgeRequest request)
@@ -85,6 +111,7 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
             BridgeOperations.ListProjectBindings => ListProjectBindings(request),
             BridgeOperations.ListParameters => ListParameters(request),
             BridgeOperations.GetParameterMetadata => GetParameterMetadata(request),
+            BridgeOperations.GetParameterValues => GetParameterValues(request),
             _ => throw new ReadCursorException(BridgeErrorCodes.OperationNotSupported)
         };
     }
@@ -182,6 +209,25 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
         ParameterReadSnapshot snapshot =
             _parameters.ReadParameters(request.SessionId!, request.DocumentKey!, payload.Target);
         ParameterMetadata result = _parameterService.GetParameterMetadata(snapshot.Parameters, payload);
+        return Serialize(result, snapshot.DocumentRevision);
+    }
+
+    private ReadOperationResult GetParameterValues(BridgeRequest request)
+    {
+        if (_parameters is null || _parameterValueService is null)
+        {
+            throw new ReadCursorException(BridgeErrorCodes.OperationNotSupported);
+        }
+
+        GetParameterValuesRequest payload =
+            ContractJson.Deserialize<GetParameterValuesRequest>(request.Payload.GetRawText());
+        ParameterReadSnapshot snapshot =
+            _parameters.ReadParameters(request.SessionId!, request.DocumentKey!, payload.Target);
+        PageResult<ParameterValueEntry> result = _parameterValueService.GetValues(
+            snapshot.Parameters,
+            payload,
+            snapshot.DocumentKey,
+            snapshot.DocumentRevision);
         return Serialize(result, snapshot.DocumentRevision);
     }
 
