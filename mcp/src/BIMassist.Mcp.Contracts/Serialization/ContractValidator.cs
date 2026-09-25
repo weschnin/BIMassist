@@ -499,7 +499,11 @@ public static class ContractValidator
     private static void Validate(ParameterDefinitionMetadata definition)
     {
         RequireText(definition.Name, nameof(definition.Name));
-        RequireText(definition.DataTypeId, nameof(definition.DataTypeId), ContractLimits.MaximumIdentifierLength);
+        ValidateOptionalText(
+            definition.DataTypeId,
+            nameof(definition.DataTypeId),
+            ContractLimits.MaximumIdentifierLength,
+            requireNonWhitespace: true);
         ValidateOptionalText(definition.GroupTypeId, nameof(definition.GroupTypeId), ContractLimits.MaximumIdentifierLength, requireNonWhitespace: true);
         ValidateOptionalText(definition.Description, nameof(definition.Description), ContractLimits.MaximumTextLength);
     }

@@ -75,6 +75,50 @@ public sealed class ParameterContractTests
     }
 
     [Fact]
+    public void Parameter_metadata_allows_an_unavailable_Revit_data_type()
+    {
+        var metadata = new ParameterMetadata
+        {
+            Identity = new ParameterIdentity
+            {
+                Kind = ParameterIdentityKind.BuiltIn,
+                BuiltInId = -1001001,
+                StableId = "built-in:-1001001",
+                Name = "Project parameter without data type"
+            },
+            Definition = new ParameterDefinitionMetadata(
+                "Project parameter without data type",
+                null!,
+                null,
+                null,
+                true,
+                true),
+            Binding = new ParameterBindingMetadata(ParameterBindingKind.None, [], null, "target-element"),
+            StorageType = ParameterStorageType.None,
+            IsReadOnly = true,
+            BlockedReason = "parameter_read_only",
+            Context = new ParameterContextMetadata
+            {
+                DocumentKey = "document-1",
+                Target = new ParameterTarget { Kind = ParameterTargetKind.Document },
+                IsTypeParameter = false,
+                IsFamilyParameter = false
+            },
+            Worksharing = new ParameterWorksharingMetadata
+            {
+                IsWorkshared = false,
+                IsOwnedByCurrentUser = false,
+                IsEditable = false
+            }
+        };
+
+        ContractValidator.Validate(metadata);
+        ParameterMetadata restored = ContractJson.Deserialize<ParameterMetadata>(ContractJson.Serialize(metadata));
+
+        Assert.Null(restored.Definition.DataTypeId);
+    }
+
+    [Fact]
     public void Full_parameter_metadata_roundtrip_preserves_identity_binding_and_write_blocker()
     {
         var metadata = new ParameterMetadata

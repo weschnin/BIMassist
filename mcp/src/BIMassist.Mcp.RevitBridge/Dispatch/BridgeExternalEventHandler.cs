@@ -34,13 +34,17 @@ public sealed class BridgeExternalEventHandler : IExternalEventHandler
         var sharedDefinitionService = new SharedDefinitionReadService(_paginator);
         var projectBindingSource = new RevitProjectBindingReadSource(application, _sessions, _revisions);
         var projectBindingService = new ProjectBindingReadService(_paginator);
+        var parameterSource = new RevitParameterReadSource(application, _sessions, _revisions);
+        var parameterService = new ParameterReadService(_paginator);
         var readDispatcher = new RevitReadOperationDispatcher(
             familySource,
             familyService,
             sharedDefinitionSource,
             sharedDefinitionService,
             projectBindingSource,
-            projectBindingService);
+            projectBindingService,
+            parameterSource,
+            parameterService);
         var processor = new BridgeRequestProcessor(context, readDispatcher);
         _queue.ExecuteNext(processor.Process);
     }

@@ -23,7 +23,7 @@ public enum ParameterBindingKind
 
 public sealed record ParameterDefinitionMetadata(
     [property: JsonRequired] string Name,
-    [property: JsonRequired] string DataTypeId,
+    string? DataTypeId,
     string? GroupTypeId,
     string? Description,
     [property: JsonRequired] bool IsVisible,

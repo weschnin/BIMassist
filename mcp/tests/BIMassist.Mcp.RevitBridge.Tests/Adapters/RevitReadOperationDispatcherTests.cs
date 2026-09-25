@@ -133,6 +133,93 @@ public sealed class RevitReadOperationDispatcherTests
         Assert.Equal("parameter-element:parameter-uid-1", Assert.Single(page.Items).Identity.StableId);
     }
 
+    [Fact]
+    public void Parameter_list_is_materialized_serialized_and_revision_bound()
+    {
+        var target = new ParameterTarget
+        {
+            Kind = ParameterTargetKind.Element,
+            UniqueId = "element-uid-1",
+            ElementId = 100
+        };
+        var identity = new ParameterIdentity
+        {
+            Kind = ParameterIdentityKind.BuiltIn,
+            BuiltInId = -1001203,
+            StableId = "built-in:-1001203",
+            Name = "Description",
+            DataTypeId = "autodesk.spec.aec:string.text-2.0.0",
+            IsInstance = true
+        };
+        var summary = new ParameterSummary
+        {
+            Identity = identity,
+            StorageType = ParameterStorageType.String,
+            BindingKind = ParameterBindingKind.ProjectInstance,
+            IsReadOnly = false
+        };
+        var metadata = new ParameterMetadata
+        {
+            Identity = identity,
+            Definition = new ParameterDefinitionMetadata(
+                identity.Name,
+                identity.DataTypeId!,
+                null,
+                null,
+                true,
+                true),
+            Binding = new ParameterBindingMetadata(
+                ParameterBindingKind.ProjectInstance,
+                ["revit-category:-2000011"],
+                null,
+                "element"),
+            StorageType = ParameterStorageType.String,
+            IsReadOnly = false,
+            Context = new ParameterContextMetadata
+            {
+                DocumentKey = "document-1",
+                Target = target,
+                IsTypeParameter = false,
+                IsFamilyParameter = false
+            },
+            Worksharing = new ParameterWorksharingMetadata
+            {
+                IsWorkshared = false,
+                IsOwnedByCurrentUser = false,
+                IsEditable = true
+            }
+        };
+        var familySource = new FakeFamilySource(new FamilyReadSnapshot("document-1", "revision-6", []));
+        var sharedSource = new FakeSharedDefinitionSource(
+            new SharedDefinitionReadSnapshot("document-1", "revision-6", []));
+        var bindingSource = new FakeProjectBindingSource(
+            new ProjectBindingReadSnapshot("document-1", "revision-6", []));
+        var parameterSource = new FakeParameterSource(
+            new ParameterReadSnapshot("document-1", "revision-6", target, [new ParameterReadRecord(summary, metadata)]));
+        var paginator = new StablePaginator(new ReadCursorCodec(SHA256.HashData("parameter dispatcher test"u8)));
+        var dispatcher = new RevitReadOperationDispatcher(
+            familySource,
+            new FamilyReadService(paginator),
+            sharedSource,
+            new SharedDefinitionReadService(paginator),
+            bindingSource,
+            new ProjectBindingReadService(paginator),
+            parameterSource,
+            new ParameterReadService(paginator));
+        BridgeRequest request = CreateRequest(
+            BridgeOperations.ListParameters,
+            "{\"page\":{\"pageSize\":25},\"target\":{\"kind\":\"element\",\"uniqueId\":\"element-uid-1\",\"elementId\":100}}");
+
+        ReadOperationResult result = dispatcher.Process(request);
+        PageResult<ParameterSummary> page =
+            ContractJson.Deserialize<PageResult<ParameterSummary>>(result.Result.GetRawText());
+
+        Assert.Equal("revision-6", result.DocumentRevision);
+        Assert.Equal("session-1", parameterSource.SessionId);
+        Assert.Equal("document-1", parameterSource.DocumentKey);
+        Assert.Equal(identity.StableId, Assert.Single(page.Items).Identity.StableId);
+    }
+
     private static BridgeRequest CreateRequest(string operation, string payload) => new()
     {
         ProtocolVersion = ProtocolVersions.ProtocolVersion,
@@ -143,6 +230,22 @@ public sealed class RevitReadOperationDispatcherTests
         Operation = operation,
         Payload = JsonDocument.Parse(payload).RootElement.Clone()
     };
+
+    private sealed class FakeParameterSource(ParameterReadSnapshot snapshot) : IRevitParameterReadSource
+    {
+        public string? SessionId { get; private set; }
+        public string? DocumentKey { get; private set; }
+
+        public ParameterReadSnapshot ReadParameters(
+            string sessionId,
+            string documentKey,
+            ParameterTarget target)
+        {
+            SessionId = sessionId;
+            DocumentKey = documentKey;
+            return snapshot;
+        }
+    }
 
     private sealed class FakeProjectBindingSource(ProjectBindingReadSnapshot snapshot) : IRevitProjectBindingReadSource
     {
