@@ -1,0 +1,20 @@
+# Snippet for %USERPROFILE%\.codex\config.toml.
+# Merge this block into the existing file; do not replace user configuration wholesale.
+[mcp_servers.bimassist_revit]
+command = "dotnet"
+args = ["<INSTALL_DIR>\\BIMassist.Mcp.Server.dll"]
+startup_timeout_sec = 15
+tool_timeout_sec = 120
+default_tools_approval_mode = "prompt"
+enabled_tools = [
+  "revit_get_status",
+  "revit_get_document_context",
+  "revit_list_families",
+  "revit_get_family_metadata",
+  "revit_list_parameters",
+  "revit_get_parameter_metadata",
+  "revit_list_shared_definitions",
+  "revit_list_project_bindings",
+  "revit_get_parameter_values",
+  "revit_export_metadata_snapshot",
+]

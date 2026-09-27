@@ -1,0 +1,22 @@
+# Snippet for %LOCALAPPDATA%\hermes\config.yaml or the active Hermes profile's config.yaml.
+# Merge this block into the existing file; do not replace user configuration wholesale.
+mcp_servers:
+  bimassist_revit:
+    command: "dotnet"
+    args:
+      - "<INSTALL_DIR>\\BIMassist.Mcp.Server.dll"
+    connect_timeout: 15
+    timeout: 120
+    supports_parallel_tool_calls: false
+    tools:
+      include:
+        - revit_get_status
+        - revit_get_document_context
+        - revit_list_families
+        - revit_get_family_metadata
+        - revit_list_parameters
+        - revit_get_parameter_metadata
+        - revit_list_shared_definitions
+        - revit_list_project_bindings
+        - revit_get_parameter_values
+        - revit_export_metadata_snapshot
