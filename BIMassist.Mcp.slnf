@@ -4,8 +4,10 @@
     "projects": [
       "mcp\\src\\BIMassist.Mcp.Contracts\\BIMassist.Mcp.Contracts.csproj",
       "mcp\\src\\BIMassist.Mcp.RevitBridge\\BIMassist.Mcp.RevitBridge.csproj",
+      "mcp\\src\\BIMassist.Mcp.Server\\BIMassist.Mcp.Server.csproj",
       "mcp\\tests\\BIMassist.Mcp.Contracts.Tests\\BIMassist.Mcp.Contracts.Tests.csproj",
-      "mcp\\tests\\BIMassist.Mcp.RevitBridge.Tests\\BIMassist.Mcp.RevitBridge.Tests.csproj"
+      "mcp\\tests\\BIMassist.Mcp.RevitBridge.Tests\\BIMassist.Mcp.RevitBridge.Tests.csproj",
+      "mcp\\tests\\BIMassist.Mcp.Server.Tests\\BIMassist.Mcp.Server.Tests.csproj"
     ]
   }
 }

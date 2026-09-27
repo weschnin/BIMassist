@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace BIMassist.Mcp.Contracts.Protocol;
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record PageRequest
 {
     [JsonRequired]

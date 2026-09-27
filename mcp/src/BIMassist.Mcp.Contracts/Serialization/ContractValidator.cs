@@ -35,6 +35,8 @@ public static class ContractValidator
             case BridgeWarning warning:
                 Validate(warning);
                 break;
+            case EmptyPayload:
+                break;
             case ChangePlan plan:
                 Validate(plan);
                 break;

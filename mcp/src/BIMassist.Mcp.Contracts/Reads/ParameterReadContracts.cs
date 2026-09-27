@@ -4,6 +4,7 @@ using BIMassist.Mcp.Contracts.Protocol;
 
 namespace BIMassist.Mcp.Contracts.Reads;
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ListParametersRequest
 {
     [JsonRequired]
@@ -38,6 +39,7 @@ public sealed record ParameterSummary
     public string? BlockedReason { get; init; }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record GetParameterMetadataRequest
 {
     [JsonRequired]

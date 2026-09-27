@@ -19,6 +19,7 @@ namespace BIMassist.Mcp.Contracts.Serialization;
 [JsonSerializable(typeof(BridgeResponse))]
 [JsonSerializable(typeof(BridgeError))]
 [JsonSerializable(typeof(BridgeWarning))]
+[JsonSerializable(typeof(EmptyPayload))]
 [JsonSerializable(typeof(SessionDescriptor))]
 [JsonSerializable(typeof(DocumentDescriptor))]
 [JsonSerializable(typeof(ParameterIdentity))]

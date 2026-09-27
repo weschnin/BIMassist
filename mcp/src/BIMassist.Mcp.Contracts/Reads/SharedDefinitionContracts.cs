@@ -3,6 +3,7 @@ using BIMassist.Mcp.Contracts.Protocol;
 
 namespace BIMassist.Mcp.Contracts.Reads;
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ListSharedDefinitionsRequest
 {
     [JsonRequired]

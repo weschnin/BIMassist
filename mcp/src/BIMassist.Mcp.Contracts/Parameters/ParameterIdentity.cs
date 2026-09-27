@@ -10,6 +10,7 @@ public enum ParameterIdentityKind
     FamilyDefinition
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ParameterIdentity
 {
     [JsonRequired]

@@ -11,6 +11,7 @@ public enum ParameterTargetKind
     FamilyType
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ParameterTarget
 {
     [JsonRequired]

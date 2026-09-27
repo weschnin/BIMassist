@@ -3,6 +3,7 @@ using BIMassist.Mcp.Contracts.Protocol;
 
 namespace BIMassist.Mcp.Contracts.Reads;
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ListFamiliesRequest
 {
     [JsonRequired]
@@ -14,6 +15,7 @@ public sealed record ListFamiliesRequest
     public required bool IncludeInPlace { get; init; }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record GetFamilyMetadataRequest
 {
     [JsonRequired]

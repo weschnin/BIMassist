@@ -19,6 +19,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BIMassist.Mcp.RevitBridge",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BIMassist.Mcp.RevitBridge.Tests", "mcp\tests\BIMassist.Mcp.RevitBridge.Tests\BIMassist.Mcp.RevitBridge.Tests.csproj", "{8EDC1FAB-19A5-4D47-90DE-49AC4F60CBEC}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BIMassist.Mcp.Server", "mcp\src\BIMassist.Mcp.Server\BIMassist.Mcp.Server.csproj", "{8D960A67-BA70-447F-8AF3-CA16FFC7127A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BIMassist.Mcp.Server.Tests", "mcp\tests\BIMassist.Mcp.Server.Tests\BIMassist.Mcp.Server.Tests.csproj", "{288205CD-C66F-4328-A244-FD924D46EFB4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -45,6 +49,14 @@ Global
 		{8EDC1FAB-19A5-4D47-90DE-49AC4F60CBEC}.Debug|x64.Build.0 = Debug|x64
 		{8EDC1FAB-19A5-4D47-90DE-49AC4F60CBEC}.Release|x64.ActiveCfg = Release|x64
 		{8EDC1FAB-19A5-4D47-90DE-49AC4F60CBEC}.Release|x64.Build.0 = Release|x64
+		{8D960A67-BA70-447F-8AF3-CA16FFC7127A}.Debug|x64.ActiveCfg = Debug|x64
+		{8D960A67-BA70-447F-8AF3-CA16FFC7127A}.Debug|x64.Build.0 = Debug|x64
+		{8D960A67-BA70-447F-8AF3-CA16FFC7127A}.Release|x64.ActiveCfg = Release|x64
+		{8D960A67-BA70-447F-8AF3-CA16FFC7127A}.Release|x64.Build.0 = Release|x64
+		{288205CD-C66F-4328-A244-FD924D46EFB4}.Debug|x64.ActiveCfg = Debug|x64
+		{288205CD-C66F-4328-A244-FD924D46EFB4}.Debug|x64.Build.0 = Debug|x64
+		{288205CD-C66F-4328-A244-FD924D46EFB4}.Release|x64.ActiveCfg = Release|x64
+		{288205CD-C66F-4328-A244-FD924D46EFB4}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -56,6 +68,8 @@ Global
 		{3714682E-45D5-4501-A595-2BAF5365B287} = {D97FE15B-1488-14BC-6E4E-A2CE3480960D}
 		{0B1C3B14-35E9-4ACD-B33D-8B8079ED762A} = {9FED3C2F-EF6E-FA8F-66F9-2CE0D07730B7}
 		{8EDC1FAB-19A5-4D47-90DE-49AC4F60CBEC} = {D97FE15B-1488-14BC-6E4E-A2CE3480960D}
+		{8D960A67-BA70-447F-8AF3-CA16FFC7127A} = {9FED3C2F-EF6E-FA8F-66F9-2CE0D07730B7}
+		{288205CD-C66F-4328-A244-FD924D46EFB4} = {D97FE15B-1488-14BC-6E4E-A2CE3480960D}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {62C688EB-656A-4D73-88EC-A26BD3DA3045}
