@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Collections.Concurrent;
 
 using BIMassist.Mcp.Contracts.Changes;
@@ -62,6 +63,45 @@ public sealed class ContractSchemaFixtureTests
             .Replace("2026-09-21T12:01:00Z", "not-a-date", StringComparison.Ordinal);
 
         Assert.False(Evaluate("apply-change-plan.schema.json", json).IsValid);
+    }
+
+    [Theory]
+    [InlineData("target", "elementId", "9223372036854775808")]
+    [InlineData("parameter", "builtInId", "9223372036854775808")]
+    [InlineData("parameter", "builtInId", "-9223372036854775809")]
+    public void Change_plan_schema_rejects_Int64_overflow(string path, string property, string number)
+    {
+        JsonNode node = JsonNode.Parse(ReadFixture("change-plan.valid.json"))!;
+        JsonNode operation = node["operations"]![0]!;
+        if (path == "parameter")
+            operation["parameter"] = JsonNode.Parse("""{"kind":"builtIn","builtInId":-1001203,"stableId":"builtin:description","name":"Description"}""");
+        operation[path]![property] = JsonNode.Parse(number);
+        Assert.False(Evaluate("change-plan.schema.json", node.ToJsonString()).IsValid);
+    }
+
+    [Theory]
+    [InlineData("definitionId")]
+    [InlineData("integerValue")]
+    [InlineData("reference.elementId")]
+    public void Change_plan_schema_rejects_remaining_Int64_overflows(string field)
+    {
+        JsonNode node = JsonNode.Parse(ReadFixture("change-plan.valid.json"))!;
+        JsonNode operation = node["operations"]![0]!;
+        switch (field)
+        {
+            case "definitionId":
+                operation["parameter"] = JsonNode.Parse("""{"kind":"parameterElement","definitionId":9223372036854775808,"ownerContext":"project","dataTypeId":"spec:text","stableId":"parameter:1","name":"Name"}""");
+                break;
+            case "integerValue":
+                operation["after"] = JsonNode.Parse("""{"kind":"integer","hasValue":true,"isReadOnly":false,"integerValue":9223372036854775808}""");
+                break;
+            default:
+                operation["after"] = JsonNode.Parse("""{"kind":"elementReference","hasValue":true,"isReadOnly":false,"reference":{"referenceKind":"element","uniqueId":"uid1","elementId":9223372036854775808}}""");
+                break;
+        }
+        string json = node.ToJsonString();
+        Assert.False(Evaluate("change-plan.schema.json", json).IsValid);
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<ChangePlan>(json, ContractJson.Options));
     }
 
     [Fact]
@@ -171,7 +211,7 @@ public sealed class ContractSchemaFixtureTests
     private static string ReadFixture(string name) =>
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", name));
 
-    private static EvaluationResults Evaluate(string schemaName, string json)
+    internal static EvaluationResults Evaluate(string schemaName, string json)
     {
         JsonSchema schema = SchemaCache.GetOrAdd(
             schemaName,

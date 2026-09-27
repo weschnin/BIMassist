@@ -9,7 +9,7 @@ public sealed class BridgeMessageSerializationTests
     [Fact]
     public void Request_roundtrip_preserves_transport_and_concurrency_fields()
     {
-        var payload = JsonDocument.Parse("""{"target":"uid-1","value":42}""").RootElement.Clone();
+        var payload = JsonDocument.Parse("""{"target":{"kind":"element","uniqueId":"uid-1"},"parameter":{"kind":"builtIn","builtInId":-1001203,"stableId":"builtin:description","name":"Description"},"after":{"kind":"string","hasValue":true,"isReadOnly":false,"stringValue":"new"}}""").RootElement.Clone();
         var request = new BridgeRequest
         {
             ProtocolVersion = ProtocolVersions.ProtocolVersion,
@@ -32,7 +32,7 @@ public sealed class BridgeMessageSerializationTests
         Assert.Equal(request.ExpectedRevision, restored.ExpectedRevision);
         Assert.Equal(request.IdempotencyKey, restored.IdempotencyKey);
         Assert.Equal(request.Operation, restored.Operation);
-        Assert.Equal(42, restored.Payload.GetProperty("value").GetInt32());
+        Assert.Equal("new", restored.Payload.GetProperty("after").GetProperty("stringValue").GetString());
     }
 
     [Fact]

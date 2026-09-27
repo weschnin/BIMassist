@@ -124,7 +124,8 @@ public sealed class BridgeRequestProcessorTests
             SessionId = session.SessionId,
             DocumentKey = session.Documents[0].DocumentKey,
             ExpectedRevision = session.Documents[0].Revision,
-            IdempotencyKey = "idempotency-1"
+            IdempotencyKey = "idempotency-1",
+            Payload = JsonDocument.Parse("""{"target":{"kind":"element","uniqueId":"uid-1"},"parameter":{"kind":"builtIn","builtInId":-1001203,"stableId":"builtin:description","name":"Description"},"after":{"kind":"string","hasValue":true,"isReadOnly":false,"stringValue":"new"}}""").RootElement.Clone()
         };
 
         BridgeResponse response = processor.Process(request);

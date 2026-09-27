@@ -23,6 +23,9 @@ public static class ContractValidator
             case BridgeResponse response:
                 Validate(response);
                 break;
+            case PlanSetParameterValueRequest planSet:
+                Validate(planSet);
+                break;
             case ApplyChangePlanRequest apply:
                 Validate(apply);
                 break;
@@ -769,6 +772,10 @@ public static class ContractValidator
             case BridgeOperations.ExportMetadataSnapshot:
                 ValidatePayload<ExportMetadataSnapshotRequest>(request.Payload);
                 break;
+            case BridgeOperations.PlanSetParameterValues:
+                ValidatePayload<PlanSetParameterValueRequest>(request.Payload);
+                ValidatePlanSetParameterValueFields(request.Payload);
+                break;
             case BridgeOperations.ApplyChangePlan:
                 ApplyChangePlanRequest apply = DeserializePayload<ApplyChangePlanRequest>(request.Payload);
                 Validate(apply);
@@ -876,6 +883,57 @@ public static class ContractValidator
                 detail.Value.Length > ContractLimits.MaximumTextLength))
         {
             throw new JsonException("Error details contain invalid entries or exceed the configured limit.");
+        }
+    }
+
+    internal static void ValidatePlanSetParameterValueFields(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object ||
+            !payload.TryGetProperty("target", out JsonElement target) ||
+            !payload.TryGetProperty("parameter", out JsonElement parameter) ||
+            !payload.TryGetProperty("after", out JsonElement after) ||
+            target.ValueKind != JsonValueKind.Object || parameter.ValueKind != JsonValueKind.Object ||
+            after.ValueKind != JsonValueKind.Object)
+        {
+            throw new JsonException("Set-parameter plan requires object-valued target, parameter, and after fields.");
+        }
+        RequireOnlyPlanFields(payload, "target", "parameter", "after");
+        RequireOnlyPlanFields(target, "kind", "uniqueId", "elementId");
+        RequireOnlyPlanFields(parameter, "kind", "sharedGuid", "builtInId", "stableId", "name",
+            "ownerContext", "dataTypeId", "isInstance");
+        RequireOnlyPlanFields(after, "kind", "hasValue", "isReadOnly", "stringValue");
+    }
+
+    private static void RequireOnlyPlanFields(JsonElement value, params string[] allowed)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (JsonProperty property in value.EnumerateObject())
+        {
+            if (!names.Add(property.Name) || property.Value.ValueKind == JsonValueKind.Null ||
+                !allowed.Contains(property.Name, StringComparer.Ordinal))
+            {
+                throw new JsonException("Set-parameter plan has a duplicate, unsupported, or null field.");
+            }
+        }
+    }
+
+    private static void Validate(PlanSetParameterValueRequest request)
+    {
+        if (request.Target is null || request.Parameter is null || request.After is null)
+        {
+            throw new JsonException("Set-parameter plan requires target, parameter, and after value.");
+        }
+        Validate(request.Target);
+        Validate(request.Parameter);
+        Validate(request.After);
+        if (request.Target.Kind is not (ParameterTargetKind.Document or ParameterTargetKind.Element or ParameterTargetKind.ElementType) ||
+            request.Parameter.Kind is not (ParameterIdentityKind.SharedGuid or ParameterIdentityKind.BuiltIn) ||
+            request.After.Kind != ParameterValueKind.String || !request.After.HasValue ||
+            request.After.IsReadOnly || request.After.DisplayValue is not null ||
+            request.After.BlockingReason is not null || request.After.Formula is not null ||
+            request.After.SpecTypeId is not null || request.After.InputUnitTypeId is not null)
+        {
+            throw new JsonException("Set-parameter plan supports only writable string values and stable project identities.");
         }
     }
 

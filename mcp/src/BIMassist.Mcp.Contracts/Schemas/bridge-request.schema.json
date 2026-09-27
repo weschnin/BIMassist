@@ -46,6 +46,10 @@
       "then": { "required": ["expectedRevision", "idempotencyKey"] }
     },
     {
+      "if": { "properties": { "operation": { "const": "parameterValue.set.plan" } }, "required": ["operation"] },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/planSetParameterValue" } } }
+    },
+    {
       "if": { "properties": { "operation": { "const": "changePlan.apply" } }, "required": ["operation"] },
       "then": {
         "properties": {
@@ -73,5 +77,50 @@
         }
       }
     }
-  ]
+  ],
+  "$defs": {
+    "planSetParameterValue": {
+      "type": "object", "additionalProperties": false, "required": ["target", "parameter", "after"],
+      "properties": {
+        "target": {
+          "type": "object", "additionalProperties": false, "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["document", "element", "elementType"] },
+            "uniqueId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
+            "elementId": { "type": "integer", "minimum": 1, "maximum": 9223372036854775807 }
+          },
+          "allOf": [
+            { "if": { "properties": { "kind": { "const": "document" } }, "required": ["kind"] }, "then": { "not": { "anyOf": [{ "required": ["uniqueId"] }, { "required": ["elementId"] }] } } },
+            { "if": { "properties": { "kind": { "enum": ["element", "elementType"] } }, "required": ["kind"] }, "then": { "anyOf": [{ "required": ["uniqueId"] }, { "required": ["elementId"] }] } }
+          ]
+        },
+        "parameter": {
+          "type": "object", "additionalProperties": false, "required": ["kind", "stableId", "name"],
+          "properties": {
+            "kind": { "enum": ["sharedGuid", "builtIn"] },
+            "sharedGuid": { "type": "string", "format": "uuid", "not": { "const": "00000000-0000-0000-0000-000000000000" } },
+            "builtInId": { "type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807, "not": { "const": 0 } },
+            "stableId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
+            "name": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "\\S" },
+            "ownerContext": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
+            "dataTypeId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
+            "isInstance": { "type": "boolean" }
+          },
+          "allOf": [
+            { "if": { "properties": { "kind": { "const": "sharedGuid" } }, "required": ["kind"] }, "then": { "required": ["sharedGuid"], "not": { "required": ["builtInId"] } } },
+            { "if": { "properties": { "kind": { "const": "builtIn" } }, "required": ["kind"] }, "then": { "required": ["builtInId"], "not": { "required": ["sharedGuid"] } } }
+          ]
+        },
+        "after": {
+          "type": "object", "additionalProperties": false, "required": ["kind", "hasValue", "isReadOnly", "stringValue"],
+          "properties": {
+            "kind": { "const": "string" },
+            "hasValue": { "const": true },
+            "isReadOnly": { "const": false },
+            "stringValue": { "type": "string", "maxLength": 32768 }
+          }
+        }
+      }
+    }
+  }
 }

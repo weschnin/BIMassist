@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BIMassist.Mcp.Contracts.Changes;
 using BIMassist.Mcp.Contracts.Protocol;
 
 
@@ -22,6 +23,11 @@ public static class ContractJson
     {
         ArgumentNullException.ThrowIfNull(json);
         EnsureWithinContractLimit(Encoding.UTF8.GetByteCount(json));
+        if (typeof(T) == typeof(PlanSetParameterValueRequest) || typeof(T) == typeof(BridgeRequest))
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            ValidateInboundShape<T>(document.RootElement);
+        }
         T value = JsonSerializer.Deserialize<T>(json, Options)
             ?? throw new JsonException($"JSON did not contain a {typeof(T).Name} value.");
         ContractValidator.Validate(value);
@@ -31,10 +37,32 @@ public static class ContractJson
     public static T Deserialize<T>(ReadOnlySpan<byte> utf8Json)
     {
         EnsureWithinContractLimit(utf8Json.Length);
+        if (typeof(T) == typeof(PlanSetParameterValueRequest) || typeof(T) == typeof(BridgeRequest))
+        {
+            using JsonDocument document = JsonDocument.Parse(utf8Json.ToArray());
+            ValidateInboundShape<T>(document.RootElement);
+        }
         T value = JsonSerializer.Deserialize<T>(utf8Json, Options)
             ?? throw new JsonException($"JSON did not contain a {typeof(T).Name} value.");
         ContractValidator.Validate(value);
         return value;
+    }
+
+    private static void ValidateInboundShape<T>(JsonElement root)
+    {
+        if (typeof(T) == typeof(PlanSetParameterValueRequest))
+        {
+            ContractValidator.ValidatePlanSetParameterValueFields(root);
+            return;
+        }
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new JsonException("Bridge request must be an object.");
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (JsonProperty property in root.EnumerateObject())
+        {
+            if (!names.Add(property.Name))
+                throw new JsonException("Bridge request contains a duplicate field.");
+        }
     }
 
     private static void EnsureWithinContractLimit(int utf8Length)

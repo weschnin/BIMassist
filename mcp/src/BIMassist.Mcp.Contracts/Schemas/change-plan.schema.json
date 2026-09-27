@@ -98,7 +98,7 @@
       "properties": {
         "kind": { "enum": ["document", "element", "elementType", "family", "familyType"] },
         "uniqueId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "elementId": { "type": "integer", "minimum": 1 },
+        "elementId": { "type": "integer", "minimum": 1, "maximum": 9223372036854775807 },
         "familyName": { "type": "string", "minLength": 1, "maxLength": 4096 },
         "typeName": { "type": "string", "minLength": 1, "maxLength": 4096 }
       },
@@ -137,27 +137,28 @@
       "properties": {
         "kind": { "enum": ["sharedGuid", "builtIn", "parameterElement", "familyDefinition"] },
         "sharedGuid": { "type": "string", "format": "uuid" },
+        "builtInId": { "type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807, "not": { "const": 0 } },
         "stableId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "name": { "type": "string", "minLength": 1, "maxLength": 4096 },
         "ownerContext": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "definitionId": { "type": "integer", "minimum": 1 },
+        "definitionId": { "type": "integer", "minimum": 1, "maximum": 9223372036854775807 },
         "dataTypeId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "isInstance": { "type": "boolean" }
       },
       "allOf": [
         {
           "if": { "properties": { "kind": { "const": "sharedGuid" } }, "required": ["kind"] },
-          "then": { "required": ["sharedGuid"] }
+          "then": { "required": ["sharedGuid"], "not": { "required": ["builtInId"] } }
         },
         {
           "if": { "properties": { "kind": { "const": "builtIn" } }, "required": ["kind"] },
-          "then": { "not": { "required": ["sharedGuid"] } }
+          "then": { "required": ["builtInId"], "not": { "required": ["sharedGuid"] } }
         },
         {
           "if": { "properties": { "kind": { "enum": ["parameterElement", "familyDefinition"] } }, "required": ["kind"] },
           "then": {
             "required": ["ownerContext", "definitionId", "dataTypeId"],
-            "not": { "required": ["sharedGuid"] }
+            "not": { "anyOf": [{ "required": ["sharedGuid"] }, { "required": ["builtInId"] }] }
           }
         }
       ]
@@ -171,7 +172,8 @@
         "hasValue": { "type": "boolean" },
         "isReadOnly": { "type": "boolean" },
         "stringValue": { "type": "string", "maxLength": 32768 },
-        "integerValue": { "type": "integer" },
+        "integerValue": { "type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807 },
+        "doubleValue": { "type": "number" },
         "internalDoubleValue": { "type": "number" },
         "booleanValue": { "type": "boolean" },
         "displayValue": { "type": "string", "maxLength": 32768 },
@@ -184,42 +186,42 @@
       "oneOf": [
         {
           "properties": { "kind": { "const": "none" }, "hasValue": { "const": false } },
-          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }, { "required": ["reference"] }] }
+          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["doubleValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }, { "required": ["reference"] }] }
         },
         {
           "properties": { "kind": { "const": "string" }, "hasValue": { "const": true } },
           "required": ["stringValue"],
-          "not": { "anyOf": [{ "required": ["integerValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }, { "required": ["reference"] }] }
+          "not": { "anyOf": [{ "required": ["integerValue"] }, { "required": ["doubleValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }, { "required": ["reference"] }] }
         },
         {
           "properties": { "kind": { "const": "integer" }, "hasValue": { "const": true } },
           "required": ["integerValue"],
-          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }, { "required": ["reference"] }] }
+          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["doubleValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }, { "required": ["reference"] }] }
         },
         {
           "properties": { "kind": { "const": "double" }, "hasValue": { "const": true } },
-          "required": ["internalDoubleValue", "specTypeId", "inputUnitTypeId"],
+          "required": ["doubleValue", "internalDoubleValue", "specTypeId", "inputUnitTypeId"],
           "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["booleanValue"] }, { "required": ["reference"] }] }
         },
         {
           "properties": { "kind": { "const": "boolean" }, "hasValue": { "const": true } },
           "required": ["booleanValue"],
-          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["reference"] }] }
+          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["doubleValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["reference"] }] }
         },
         {
           "properties": { "kind": { "const": "elementReference" }, "hasValue": { "const": true }, "reference": { "properties": { "referenceKind": { "const": "element" } } } },
           "required": ["reference"],
-          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }] }
+          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["doubleValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }] }
         },
         {
           "properties": { "kind": { "const": "materialReference" }, "hasValue": { "const": true }, "reference": { "properties": { "referenceKind": { "const": "material" } } } },
           "required": ["reference"],
-          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }] }
+          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["doubleValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }] }
         },
         {
           "properties": { "kind": { "const": "typeReference" }, "hasValue": { "const": true }, "reference": { "properties": { "referenceKind": { "const": "type" } } } },
           "required": ["reference"],
-          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }] }
+          "not": { "anyOf": [{ "required": ["stringValue"] }, { "required": ["integerValue"] }, { "required": ["doubleValue"] }, { "required": ["internalDoubleValue"] }, { "required": ["booleanValue"] }] }
         }
       ],
       "allOf": [
@@ -235,7 +237,7 @@
       "required": ["elementId", "referenceKind"],
       "properties": {
         "uniqueId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "elementId": { "type": "integer", "minimum": 0 },
+        "elementId": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
         "name": { "type": "string", "maxLength": 4096 },
         "referenceKind": { "enum": ["element", "material", "type"] }
       },
