@@ -110,11 +110,8 @@ internal sealed class RevitParameterReadSource : IRevitParameterReadSource
         {
             ParameterTargetKind.Element => element is not ElementType,
             ParameterTargetKind.ElementType => element is ElementType,
-            ParameterTargetKind.Family => element is Family family &&
-                string.Equals(family.Name, target.FamilyName, StringComparison.Ordinal),
-            ParameterTargetKind.FamilyType => element is FamilySymbol symbol &&
-                string.Equals(symbol.Name, target.TypeName, StringComparison.Ordinal) &&
-                string.Equals(symbol.FamilyName, target.FamilyName, StringComparison.Ordinal),
+            ParameterTargetKind.Family => element is Family,
+            ParameterTargetKind.FamilyType => element is FamilySymbol,
             _ => false
         };
         if (!matches)

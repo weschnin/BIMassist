@@ -134,6 +134,67 @@ public sealed class RevitReadOperationDispatcherTests
     }
 
     [Fact]
+    public void Metadata_snapshot_is_materialized_once_and_continued_from_cache()
+    {
+        var record = new FamilyReadRecord(
+            new FamilySummary
+            {
+                UniqueId = "family-uid-snapshot",
+                ElementId = 501,
+                Name = "Snapshot Door",
+                IsInPlace = false,
+                IsEditable = true,
+                IsShared = false,
+                TypeCount = 1
+            },
+            [new FamilyTypeSummary { UniqueId = "type-uid-snapshot", ElementId = 502, Name = "1000 x 2100" }]);
+        var familySource = new FakeFamilySource(new FamilyReadSnapshot("document-1", "revision-8", [record]));
+        var codec = new ReadCursorCodec(SHA256.HashData("snapshot dispatcher test"u8));
+        var paginator = new StablePaginator(codec);
+        var snapshotService = new MetadataSnapshotService(codec);
+        var dispatcher = new RevitReadOperationDispatcher(
+            familySource,
+            new FamilyReadService(paginator),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            snapshotService);
+        const string firstPayload = "{\"page\":{\"pageSize\":1},\"selection\":{\"includeFamilies\":true,\"includeSharedDefinitions\":false,\"includeProjectBindings\":false,\"parameterTargets\":[],\"includeParameterValues\":false}}";
+
+        ReadOperationResult firstResult = dispatcher.Process(CreateRequest(
+            BridgeOperations.ExportMetadataSnapshot,
+            firstPayload));
+        MetadataSnapshotPage first = ContractJson.Deserialize<MetadataSnapshotPage>(firstResult.Result.GetRawText());
+        string continuationPayload = JsonSerializer.Serialize(new ExportMetadataSnapshotRequest
+        {
+            Page = new PageRequest { PageSize = 1, Cursor = first.Page.NextCursor },
+            Selection = new MetadataSnapshotSelection
+            {
+                IncludeFamilies = true,
+                IncludeSharedDefinitions = false,
+                IncludeProjectBindings = false,
+                ParameterTargets = [],
+                IncludeParameterValues = false
+            }
+        }, ContractJson.Options);
+        ReadOperationResult secondResult = dispatcher.Process(CreateRequest(
+            BridgeOperations.ExportMetadataSnapshot,
+            continuationPayload));
+        MetadataSnapshotPage second = ContractJson.Deserialize<MetadataSnapshotPage>(secondResult.Result.GetRawText());
+
+        Assert.Equal(2, first.Page.TotalCount);
+        Assert.Single(first.Page.Items);
+        Assert.Single(second.Page.Items);
+        Assert.Equal(first.SnapshotId, second.SnapshotId);
+        Assert.Equal("revision-8", secondResult.DocumentRevision);
+        Assert.Equal(1, familySource.ReadCount);
+    }
+
+    [Fact]
     public void Parameter_reads_are_materialized_serialized_and_revision_bound()
     {
         var target = new ParameterTarget
@@ -298,9 +359,11 @@ public sealed class RevitReadOperationDispatcherTests
     {
         public string? SessionId { get; private set; }
         public string? DocumentKey { get; private set; }
+        public int ReadCount { get; private set; }
 
         public FamilyReadSnapshot ReadFamilies(string sessionId, string documentKey)
         {
+            ReadCount++;
             SessionId = sessionId;
             DocumentKey = documentKey;
             return snapshot;

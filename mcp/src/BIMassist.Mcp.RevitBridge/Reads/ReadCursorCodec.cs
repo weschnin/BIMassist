@@ -12,6 +12,14 @@ internal sealed record ReadCursorContext(
     int Offset,
     string LastKey);
 
+internal sealed record VerifiedReadCursorContext(
+    string Operation,
+    string DocumentKey,
+    string DocumentRevision,
+    string QueryHash,
+    int Offset,
+    string LastKey);
+
 internal sealed class ReadCursorException : Exception
 {
     internal ReadCursorException(string errorCode)
@@ -66,6 +74,35 @@ internal sealed class ReadCursorCodec
     internal ReadCursorContext Decode(string cursor, ReadCursorContext expected)
     {
         ValidateExpected(expected);
+        ReadCursorContext actual = DecodeAuthenticated(cursor);
+        if (!string.Equals(actual.DocumentRevision, expected.DocumentRevision, StringComparison.Ordinal))
+        {
+            throw new ReadCursorException(BridgeErrorCodes.DocumentChanged);
+        }
+        if (!string.Equals(actual.Operation, expected.Operation, StringComparison.Ordinal) ||
+            !string.Equals(actual.DocumentKey, expected.DocumentKey, StringComparison.Ordinal) ||
+            !string.Equals(actual.QueryHash, expected.QueryHash, StringComparison.Ordinal))
+        {
+            throw Invalid();
+        }
+
+        return actual;
+    }
+
+    internal VerifiedReadCursorContext DecodeVerified(string cursor)
+    {
+        ReadCursorContext actual = DecodeAuthenticated(cursor);
+        return new VerifiedReadCursorContext(
+            actual.Operation,
+            actual.DocumentKey,
+            actual.DocumentRevision,
+            actual.QueryHash,
+            actual.Offset,
+            actual.LastKey);
+    }
+
+    private ReadCursorContext DecodeAuthenticated(string cursor)
+    {
         byte[] bytes;
         try
         {
@@ -90,7 +127,6 @@ internal sealed class ReadCursorCodec
             throw Invalid();
         }
 
-        ReadCursorContext actual;
         try
         {
             using var stream = new MemoryStream(bytes, 0, payloadLength, writable: false);
@@ -100,7 +136,7 @@ internal sealed class ReadCursorCodec
                 throw Invalid();
             }
 
-            actual = new ReadCursorContext(
+            var actual = new ReadCursorContext(
                 reader.ReadString(),
                 reader.ReadString(),
                 reader.ReadString(),
@@ -112,6 +148,7 @@ internal sealed class ReadCursorCodec
                 throw Invalid();
             }
             ValidateContext(actual, requirePosition: true);
+            return actual;
         }
         catch (ReadCursorException)
         {
@@ -121,19 +158,6 @@ internal sealed class ReadCursorCodec
         {
             throw Invalid();
         }
-
-        if (!string.Equals(actual.DocumentRevision, expected.DocumentRevision, StringComparison.Ordinal))
-        {
-            throw new ReadCursorException(BridgeErrorCodes.DocumentChanged);
-        }
-        if (!string.Equals(actual.Operation, expected.Operation, StringComparison.Ordinal) ||
-            !string.Equals(actual.DocumentKey, expected.DocumentKey, StringComparison.Ordinal) ||
-            !string.Equals(actual.QueryHash, expected.QueryHash, StringComparison.Ordinal))
-        {
-            throw Invalid();
-        }
-
-        return actual;
     }
 
     private static void ValidateExpected(ReadCursorContext context) => ValidateContext(context, requirePosition: false);

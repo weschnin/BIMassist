@@ -17,6 +17,7 @@ public static class ContractLimits
     public const int MaximumSessionDocuments = 1_000;
     public const int MaximumBindingCategories = 1_000;
     public const int MaximumParameterSelectors = 1_000;
+    public const int MaximumSnapshotParameterTargets = 32;
     public const int MaximumOperationOptions = 100;
     public const int MaximumErrorDetails = 100;
 }

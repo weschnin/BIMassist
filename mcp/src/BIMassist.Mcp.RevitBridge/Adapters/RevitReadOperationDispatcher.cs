@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using BIMassist.Mcp.Contracts.Parameters;
 using BIMassist.Mcp.Contracts.Protocol;
@@ -18,6 +20,8 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
     private readonly IRevitParameterReadSource? _parameters;
     private readonly ParameterReadService? _parameterService;
     private readonly ParameterValueReadService? _parameterValueService;
+    private readonly MetadataSnapshotService? _metadataSnapshotService;
+    private readonly Func<string, string>? _currentRevision;
 
     internal RevitReadOperationDispatcher(
         IRevitFamilyReadSource families,
@@ -86,7 +90,9 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
         ProjectBindingReadService? projectBindingService,
         IRevitParameterReadSource? parameters,
         ParameterReadService? parameterService,
-        ParameterValueReadService? parameterValueService)
+        ParameterValueReadService? parameterValueService,
+        MetadataSnapshotService? metadataSnapshotService = null,
+        Func<string, string>? currentRevision = null)
     {
         _families = families ?? throw new ArgumentNullException(nameof(families));
         _familyService = familyService ?? throw new ArgumentNullException(nameof(familyService));
@@ -97,6 +103,8 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
         _parameters = parameters;
         _parameterService = parameterService;
         _parameterValueService = parameterValueService;
+        _metadataSnapshotService = metadataSnapshotService;
+        _currentRevision = currentRevision;
     }
 
     public ReadOperationResult Process(BridgeRequest request)
@@ -112,6 +120,7 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
             BridgeOperations.ListParameters => ListParameters(request),
             BridgeOperations.GetParameterMetadata => GetParameterMetadata(request),
             BridgeOperations.GetParameterValues => GetParameterValues(request),
+            BridgeOperations.ExportMetadataSnapshot => ExportMetadataSnapshot(request),
             _ => throw new ReadCursorException(BridgeErrorCodes.OperationNotSupported)
         };
     }
@@ -229,6 +238,191 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
             snapshot.DocumentKey,
             snapshot.DocumentRevision);
         return Serialize(result, snapshot.DocumentRevision);
+    }
+
+    private ReadOperationResult ExportMetadataSnapshot(BridgeRequest request)
+    {
+        if (_metadataSnapshotService is null)
+        {
+            throw new ReadCursorException(BridgeErrorCodes.OperationNotSupported);
+        }
+
+        ExportMetadataSnapshotRequest payload =
+            ContractJson.Deserialize<ExportMetadataSnapshotRequest>(request.Payload.GetRawText());
+        if (payload.Page.Cursor is not null)
+        {
+            MetadataSnapshotPage cached = _metadataSnapshotService.Continue(payload, request.DocumentKey!);
+            return Serialize(cached, cached.DocumentRevision);
+        }
+
+        MetadataSnapshotCollector collector = _metadataSnapshotService.CreateCollector();
+        string? revision = null;
+        string documentKey = request.DocumentKey!;
+        void BindSnapshot(string actualDocumentKey, string actualRevision)
+        {
+            if (!string.Equals(actualDocumentKey, documentKey, StringComparison.Ordinal))
+            {
+                throw new ReadCursorException(BridgeErrorCodes.InvalidRequest);
+            }
+            if (revision is not null && !string.Equals(revision, actualRevision, StringComparison.Ordinal))
+            {
+                throw new ReadCursorException(BridgeErrorCodes.DocumentChanged);
+            }
+
+            revision = actualRevision;
+        }
+
+        if (payload.Selection.IncludeFamilies)
+        {
+            FamilyReadSnapshot snapshot = _families.ReadFamilies(request.SessionId!, documentKey);
+            BindSnapshot(snapshot.DocumentKey, snapshot.DocumentRevision);
+            foreach (FamilyReadRecord family in snapshot.Families)
+            {
+                collector.Add(
+                    $"family:{HashIdentity(family.Family.UniqueId)}",
+                    new MetadataSnapshotItem
+                    {
+                        Kind = MetadataSnapshotItemKind.Family,
+                        Family = family.Family with { TypeCount = family.Types.Count }
+                    });
+                foreach (FamilyTypeSummary type in family.Types)
+                {
+                    collector.Add(
+                        $"familyType:{HashIdentity(family.Family.UniqueId, type.UniqueId)}",
+                        new MetadataSnapshotItem
+                        {
+                            Kind = MetadataSnapshotItemKind.FamilyType,
+                            FamilyType = new FamilyTypeSnapshotItem
+                            {
+                                FamilyUniqueId = family.Family.UniqueId,
+                                Type = type
+                            }
+                        });
+                }
+            }
+        }
+
+        if (payload.Selection.IncludeSharedDefinitions)
+        {
+            if (_sharedDefinitions is null)
+            {
+                throw new ReadCursorException(BridgeErrorCodes.OperationNotSupported);
+            }
+
+            SharedDefinitionReadSnapshot snapshot =
+                _sharedDefinitions.ReadSharedDefinitions(request.SessionId!, documentKey);
+            BindSnapshot(snapshot.DocumentKey, snapshot.DocumentRevision);
+            foreach (SharedDefinitionDescriptor definition in snapshot.Definitions)
+            {
+                collector.Add(
+                    $"shared:{definition.SharedGuid:D}",
+                    new MetadataSnapshotItem
+                    {
+                        Kind = MetadataSnapshotItemKind.SharedDefinition,
+                        SharedDefinition = definition
+                    });
+            }
+        }
+
+        if (payload.Selection.IncludeProjectBindings)
+        {
+            if (_projectBindings is null)
+            {
+                throw new ReadCursorException(BridgeErrorCodes.OperationNotSupported);
+            }
+
+            ProjectBindingReadSnapshot snapshot =
+                _projectBindings.ReadProjectBindings(request.SessionId!, documentKey);
+            BindSnapshot(snapshot.DocumentKey, snapshot.DocumentRevision);
+            foreach (ProjectBindingDescriptor binding in snapshot.Bindings)
+            {
+                collector.Add(
+                    $"binding:{HashIdentity(binding.Identity.StableId)}",
+                    new MetadataSnapshotItem
+                    {
+                        Kind = MetadataSnapshotItemKind.ProjectBinding,
+                        ProjectBinding = binding
+                    });
+            }
+        }
+
+        foreach (ParameterTarget target in payload.Selection.ParameterTargets)
+        {
+            if (_parameters is null)
+            {
+                throw new ReadCursorException(BridgeErrorCodes.OperationNotSupported);
+            }
+
+            ParameterReadSnapshot snapshot =
+                _parameters.ReadParameters(request.SessionId!, documentKey, target);
+            BindSnapshot(snapshot.DocumentKey, snapshot.DocumentRevision);
+            string targetIdentity = TargetIdentity(target);
+            foreach (ParameterReadRecord parameter in snapshot.Parameters)
+            {
+                collector.Add(
+                    $"parameterMetadata:{HashIdentity(targetIdentity, parameter.Summary.Identity.StableId)}",
+                    new MetadataSnapshotItem
+                    {
+                        Kind = MetadataSnapshotItemKind.ParameterMetadata,
+                        ParameterMetadata = parameter.Metadata
+                    });
+                if (payload.Selection.IncludeParameterValues && parameter.Value is not null)
+                {
+                    collector.Add(
+                        $"parameterValue:{HashIdentity(targetIdentity, parameter.Summary.Identity.StableId)}",
+                        new MetadataSnapshotItem
+                        {
+                            Kind = MetadataSnapshotItemKind.ParameterValue,
+                            ParameterValue = new ParameterValueEntry
+                            {
+                                Target = target,
+                                Parameter = parameter.Summary.Identity,
+                                Value = parameter.Value
+                            }
+                        });
+                }
+            }
+        }
+
+        if (revision is null)
+        {
+            throw new ReadCursorException(BridgeErrorCodes.InvalidRequest);
+        }
+        if (_currentRevision is not null &&
+            !string.Equals(_currentRevision(documentKey), revision, StringComparison.Ordinal))
+        {
+            throw new ReadCursorException(BridgeErrorCodes.DocumentChanged);
+        }
+
+        MetadataSnapshotPage result = _metadataSnapshotService.Create(
+            payload,
+            documentKey,
+            revision,
+            collector);
+        return Serialize(result, revision);
+    }
+
+    private static string TargetIdentity(ParameterTarget target)
+    {
+        string uniqueId = target.UniqueId ?? string.Empty;
+        string elementId = target.ElementId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+        return string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"{(int)target.Kind}:{uniqueId.Length}:{uniqueId}:{elementId}");
+    }
+
+    private static string HashIdentity(params string[] parts)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
+        {
+            foreach (string part in parts)
+            {
+                writer.Write(part);
+            }
+        }
+
+        return Convert.ToHexString(SHA256.HashData(stream.ToArray())).ToLowerInvariant();
     }
 
     private FamilyReadSnapshot ReadSnapshot(BridgeRequest request) =>

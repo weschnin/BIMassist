@@ -13,6 +13,7 @@ public sealed class BridgeExternalEventHandler : IExternalEventHandler
     private readonly RevitSessionRegistry _sessions;
     private readonly DocumentRevisionService _revisions;
     private readonly StablePaginator _paginator;
+    private readonly MetadataSnapshotService _metadataSnapshotService;
 
     public BridgeExternalEventHandler(
         BridgeRequestQueue queue,
@@ -22,7 +23,9 @@ public sealed class BridgeExternalEventHandler : IExternalEventHandler
         _queue = queue ?? throw new ArgumentNullException(nameof(queue));
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _revisions = revisions ?? throw new ArgumentNullException(nameof(revisions));
-        _paginator = new StablePaginator(new ReadCursorCodec(RandomNumberGenerator.GetBytes(32)));
+        var cursorCodec = new ReadCursorCodec(RandomNumberGenerator.GetBytes(32));
+        _paginator = new StablePaginator(cursorCodec);
+        _metadataSnapshotService = new MetadataSnapshotService(cursorCodec);
     }
 
     public void Execute(UIApplication application)
@@ -46,7 +49,9 @@ public sealed class BridgeExternalEventHandler : IExternalEventHandler
             projectBindingService,
             parameterSource,
             parameterService,
-            parameterValueService);
+            parameterValueService,
+            _metadataSnapshotService,
+            _revisions.GetCurrent);
         var processor = new BridgeRequestProcessor(context, readDispatcher);
         _queue.ExecuteNext(processor.Process);
     }

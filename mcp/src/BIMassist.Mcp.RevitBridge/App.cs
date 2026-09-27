@@ -67,6 +67,8 @@ public sealed class App : IExternalApplication
 
                 _controlledApplication = application;
                 application.ControlledApplication.DocumentChanged += OnDocumentChanged;
+                application.ControlledApplication.DocumentOpened += OnDocumentOpened;
+                application.ControlledApplication.DocumentCreated += OnDocumentCreated;
                 _runtime.StartAsync().GetAwaiter().GetResult();
                 return Result.Succeeded;
             }
@@ -87,6 +89,8 @@ public sealed class App : IExternalApplication
             if (_controlledApplication is not null)
             {
                 _controlledApplication.ControlledApplication.DocumentChanged -= OnDocumentChanged;
+                _controlledApplication.ControlledApplication.DocumentOpened -= OnDocumentOpened;
+                _controlledApplication.ControlledApplication.DocumentCreated -= OnDocumentCreated;
                 _controlledApplication = null;
             }
 
@@ -131,11 +135,32 @@ public sealed class App : IExternalApplication
         _revisions.MarkChanged(key);
     }
 
+    private void OnDocumentOpened(object? sender, DocumentOpenedEventArgs args) =>
+        MarkDocumentInstance(args.Document);
+
+    private void OnDocumentCreated(object? sender, DocumentCreatedEventArgs args) =>
+        MarkDocumentInstance(args.Document);
+
+    private void MarkDocumentInstance(Document document)
+    {
+        if (Volatile.Read(ref _shuttingDown) != 0 || _sessions is null || _revisions is null)
+        {
+            return;
+        }
+
+        string key = RevitContextSnapshotProvider.CreateDocumentKey(
+            document,
+            _sessions.GetSnapshot().SessionId);
+        _revisions.MarkChanged(key);
+    }
+
     private void CleanupAfterFailedStartup()
     {
         if (_controlledApplication is not null)
         {
             _controlledApplication.ControlledApplication.DocumentChanged -= OnDocumentChanged;
+            _controlledApplication.ControlledApplication.DocumentOpened -= OnDocumentOpened;
+            _controlledApplication.ControlledApplication.DocumentCreated -= OnDocumentCreated;
             _controlledApplication = null;
         }
 

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BIMassist.Mcp.Contracts.Parameters;
 using BIMassist.Mcp.Contracts.Protocol;
 using BIMassist.Mcp.Contracts.Reads;
 using BIMassist.Mcp.Contracts.Serialization;
@@ -7,6 +8,46 @@ namespace BIMassist.Mcp.Contracts.Tests.Reads;
 
 public sealed class MetadataSnapshotContractTests
 {
+    [Fact]
+    public void Metadata_snapshot_rejects_duplicate_stable_targets_and_excessive_target_work()
+    {
+        var duplicateSelection = new MetadataSnapshotSelection
+        {
+            IncludeFamilies = false,
+            IncludeSharedDefinitions = false,
+            IncludeProjectBindings = false,
+            ParameterTargets =
+            [
+                new ParameterTarget
+                {
+                    Kind = ParameterTargetKind.Element,
+                    UniqueId = "element-uid-1",
+                    ElementId = 42
+                },
+                new ParameterTarget
+                {
+                    Kind = ParameterTargetKind.Element,
+                    UniqueId = "element-uid-1",
+                    ElementId = 42
+                }
+            ],
+            IncludeParameterValues = false
+        };
+        var excessiveSelection = duplicateSelection with
+        {
+            ParameterTargets = Enumerable.Range(1, ContractLimits.MaximumSnapshotParameterTargets + 1)
+                .Select(id => new ParameterTarget
+                {
+                    Kind = ParameterTargetKind.Element,
+                    ElementId = id
+                })
+                .ToArray()
+        };
+
+        Assert.Throws<JsonException>(() => ContractValidator.Validate(duplicateSelection));
+        Assert.Throws<JsonException>(() => ContractValidator.Validate(excessiveSelection));
+    }
+
     [Fact]
     public void Metadata_snapshot_payload_and_page_roundtrip_through_closed_contract()
     {

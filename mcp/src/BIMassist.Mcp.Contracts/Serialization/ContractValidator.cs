@@ -383,7 +383,7 @@ public static class ContractValidator
     private static void Validate(MetadataSnapshotSelection selection)
     {
         if (selection.ParameterTargets is null ||
-            selection.ParameterTargets.Count > ContractLimits.MaximumParameterSelectors ||
+            selection.ParameterTargets.Count > ContractLimits.MaximumSnapshotParameterTargets ||
             selection.ParameterTargets.Any(target => target is null))
         {
             throw new JsonException("Metadata-snapshot parameter targets must be a bounded non-null array.");
@@ -392,6 +392,13 @@ public static class ContractValidator
         foreach (ParameterTarget target in selection.ParameterTargets)
         {
             Validate(target);
+        }
+        if (selection.ParameterTargets
+                .Select(CanonicalTargetIdentity)
+                .Distinct(StringComparer.Ordinal)
+                .Count() != selection.ParameterTargets.Count)
+        {
+            throw new JsonException("Metadata-snapshot parameter targets must have unique stable identities.");
         }
 
         if (!selection.IncludeFamilies && !selection.IncludeSharedDefinitions &&
@@ -1151,6 +1158,15 @@ public static class ContractValidator
                 when target.UniqueId is null || target.ElementId is null or <= 0:
                 throw new JsonException("Family-type targets require stable symbol unique and element IDs; names are display-only.");
         }
+    }
+
+    private static string CanonicalTargetIdentity(ParameterTarget target)
+    {
+        string uniqueId = target.UniqueId ?? string.Empty;
+        string elementId = target.ElementId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+        return string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"{(int)target.Kind}:{uniqueId.Length}:{uniqueId}:{elementId}");
     }
 
     private static void Validate(ParameterValue value)

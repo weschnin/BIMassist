@@ -9,6 +9,30 @@ public sealed class ReadCursorCodecTests
     private static readonly byte[] Key = SHA256.HashData("BIMassist Phase 3 cursor tests"u8);
 
     [Fact]
+    public void Verified_decode_exposes_only_authenticated_cursor_context()
+    {
+        var codec = new ReadCursorCodec(Key);
+        var context = new ReadCursorContext(
+            BridgeOperations.ExportMetadataSnapshot,
+            "document-1",
+            "revision-7",
+            "d9f6c10d7334f7f5de7dc19cd3e7d8e9786f60d9bfc804f8fc97fc88ca62cd6f",
+            25,
+            "snapshot-item-25");
+        string cursor = codec.Encode(context);
+        char replacement = cursor[^2] == 'A' ? 'B' : 'A';
+        string tampered = cursor[..^2] + replacement + cursor[^1];
+
+        VerifiedReadCursorContext restored = codec.DecodeVerified(cursor);
+        ReadCursorException error = Assert.Throws<ReadCursorException>(() => codec.DecodeVerified(tampered));
+
+        Assert.Equal(context.Operation, restored.Operation);
+        Assert.Equal(context.QueryHash, restored.QueryHash);
+        Assert.Equal(context.Offset, restored.Offset);
+        Assert.Equal(BridgeErrorCodes.InvalidCursor, error.ErrorCode);
+    }
+
+    [Fact]
     public void Cursor_roundtrip_preserves_revision_bound_query_context()
     {
         var codec = new ReadCursorCodec(Key);
