@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Autodesk.Revit.UI;
 using BIMassist.Mcp.RevitBridge.Adapters;
+using BIMassist.Mcp.RevitBridge.Changes;
 using BIMassist.Mcp.RevitBridge.Documents;
 using BIMassist.Mcp.RevitBridge.Reads;
 using BIMassist.Mcp.RevitBridge.Sessions;
@@ -12,6 +13,7 @@ public sealed class BridgeExternalEventHandler : IExternalEventHandler
     private readonly BridgeRequestQueue _queue;
     private readonly RevitSessionRegistry _sessions;
     private readonly DocumentRevisionService _revisions;
+    private readonly ChangePlanRegistry _plans;
     private readonly StablePaginator _paginator;
     private readonly MetadataSnapshotService _metadataSnapshotService;
 
@@ -19,10 +21,20 @@ public sealed class BridgeExternalEventHandler : IExternalEventHandler
         BridgeRequestQueue queue,
         RevitSessionRegistry sessions,
         DocumentRevisionService revisions)
+        : this(queue, sessions, revisions, new ChangePlanRegistry())
+    {
+    }
+
+    internal BridgeExternalEventHandler(
+        BridgeRequestQueue queue,
+        RevitSessionRegistry sessions,
+        DocumentRevisionService revisions,
+        ChangePlanRegistry plans)
     {
         _queue = queue ?? throw new ArgumentNullException(nameof(queue));
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _revisions = revisions ?? throw new ArgumentNullException(nameof(revisions));
+        _plans = plans ?? throw new ArgumentNullException(nameof(plans));
         var cursorCodec = new ReadCursorCodec(RandomNumberGenerator.GetBytes(32));
         _paginator = new StablePaginator(cursorCodec);
         _metadataSnapshotService = new MetadataSnapshotService(cursorCodec);
@@ -52,7 +64,9 @@ public sealed class BridgeExternalEventHandler : IExternalEventHandler
             parameterValueService,
             _metadataSnapshotService,
             _revisions.GetCurrent);
-        var processor = new BridgeRequestProcessor(context, readDispatcher);
+        var planSource = new RevitSetParameterPlanSource(application, _sessions, _revisions, parameterSource);
+        var planDispatcher = new SetParameterPlanDispatcher(planSource, _plans, () => DateTimeOffset.UtcNow);
+        var processor = new BridgeRequestProcessor(context, readDispatcher, planDispatcher);
         _queue.ExecuteNext(processor.Process);
     }
 

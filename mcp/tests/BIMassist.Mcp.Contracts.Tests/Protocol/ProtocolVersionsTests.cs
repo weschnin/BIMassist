@@ -9,7 +9,7 @@ public sealed class ProtocolVersionsTests
     {
         Assert.Equal("1", ProtocolVersions.ProtocolVersion);
         Assert.Equal("1", ProtocolVersions.SchemaVersion);
-        Assert.Equal("0.1.7", ProtocolVersions.AddonVersion);
+        Assert.Equal("0.1.8", ProtocolVersions.AddonVersion);
         Assert.Equal(2026, ProtocolVersions.RevitMajor);
     }
 

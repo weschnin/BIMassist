@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Text.Json;
+using BIMassist.Mcp.Contracts.Changes;
 using BIMassist.Mcp.Contracts.Documents;
 using BIMassist.Mcp.Contracts.Protocol;
 using BIMassist.Mcp.Contracts.Serialization;
 using BIMassist.Mcp.Contracts.Sessions;
+using BIMassist.Mcp.RevitBridge.Changes;
 using BIMassist.Mcp.RevitBridge.Reads;
 
 namespace BIMassist.Mcp.RevitBridge.Adapters;
@@ -19,16 +21,26 @@ public sealed class BridgeRequestProcessor
 {
     private readonly IRevitContextSnapshotProvider _context;
     private readonly IReadOperationDispatcher? _reads;
+    private readonly IPlanOperationDispatcher? _plans;
 
     public BridgeRequestProcessor(IRevitContextSnapshotProvider context)
-        : this(context, null)
+        : this(context, null, null)
     {
     }
 
     internal BridgeRequestProcessor(IRevitContextSnapshotProvider context, IReadOperationDispatcher? reads)
+        : this(context, reads, null)
+    {
+    }
+
+    internal BridgeRequestProcessor(
+        IRevitContextSnapshotProvider context,
+        IReadOperationDispatcher? reads,
+        IPlanOperationDispatcher? plans)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _reads = reads;
+        _plans = plans;
     }
 
     public BridgeResponse Process(BridgeRequest request)
@@ -46,6 +58,7 @@ public sealed class BridgeRequestProcessor
                 started),
             BridgeOperations.GetDocumentContext => ProcessDocumentContext(request, started),
             _ when BridgeOperations.Reads.Contains(request.Operation) => ProcessRead(request, started),
+            BridgeOperations.PlanSetParameterValues => ProcessPlan(request, started),
             _ => Failure(
                 request.RequestId,
                 BridgeErrorCodes.OperationNotSupported,
@@ -80,6 +93,60 @@ public sealed class BridgeRequestProcessor
         }
 
         return Success(request.RequestId, document, document.Revision, started);
+    }
+
+    private BridgeResponse ProcessPlan(BridgeRequest request, long started)
+    {
+        SessionDescriptor session = _context.GetSessionSnapshot();
+        if (!string.Equals(request.SessionId, session.SessionId, StringComparison.Ordinal))
+        {
+            return Failure(request.RequestId, BridgeErrorCodes.SessionNotFound,
+                "The requested Revit session is not active.", started);
+        }
+        DocumentDescriptor? document = session.Documents.SingleOrDefault(candidate =>
+            string.Equals(candidate.DocumentKey, request.DocumentKey, StringComparison.Ordinal));
+        if (document is null)
+        {
+            return Failure(request.RequestId, BridgeErrorCodes.DocumentNotFound,
+                "The requested Revit document is not open in this session.", started);
+        }
+        if (document.IsFamilyDocument || document.IsReadOnly)
+        {
+            return Failure(request.RequestId, BridgeErrorCodes.DocumentNotWritable,
+                "The requested document cannot be changed by this operation.", started);
+        }
+        if (!string.Equals(request.ExpectedRevision, document.Revision, StringComparison.Ordinal))
+        {
+            return Failure(request.RequestId, BridgeErrorCodes.DocumentChanged,
+                "The requested document has changed.", started);
+        }
+        if (_plans is null)
+        {
+            return Failure(request.RequestId, BridgeErrorCodes.OperationNotSupported,
+                "The requested plan operation is not available in the current bridge phase.", started);
+        }
+        try
+        {
+            ChangePlan plan = _plans.Plan(request);
+            if (!string.Equals(plan.SessionId, session.SessionId, StringComparison.Ordinal) ||
+                !string.Equals(plan.DocumentKey, document.DocumentKey, StringComparison.Ordinal) ||
+                !string.Equals(plan.ExpectedRevision, document.Revision, StringComparison.Ordinal))
+            {
+                return Failure(request.RequestId, BridgeErrorCodes.DocumentChanged,
+                    "The plan no longer matches the requested document state.", started);
+            }
+            return Success(request.RequestId, plan, plan.ExpectedRevision, started);
+        }
+        catch (ChangePlanFailure error)
+        {
+            return Failure(request.RequestId, error.Code,
+                "The plan could not be created for the requested document state.", started);
+        }
+        catch (ReadCursorException error)
+        {
+            return Failure(request.RequestId, error.ErrorCode,
+                "The plan could not be created for the requested document state.", started);
+        }
     }
 
     private BridgeResponse ProcessRead(BridgeRequest request, long started)

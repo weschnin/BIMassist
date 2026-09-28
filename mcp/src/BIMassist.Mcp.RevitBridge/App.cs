@@ -6,6 +6,7 @@ using Autodesk.Revit.UI;
 using BIMassist.Mcp.Contracts.Protocol;
 using BIMassist.Mcp.Contracts.Sessions;
 using BIMassist.Mcp.RevitBridge.Adapters;
+using BIMassist.Mcp.RevitBridge.Changes;
 using BIMassist.Mcp.RevitBridge.Dispatch;
 using BIMassist.Mcp.RevitBridge.Documents;
 using BIMassist.Mcp.RevitBridge.Lifecycle;
@@ -20,6 +21,8 @@ public sealed class App : IExternalApplication
     private BridgeRuntime? _runtime;
     private RevitSessionRegistry? _sessions;
     private DocumentRevisionService? _revisions;
+    private ChangePlanRegistry? _plans;
+    private ChangePlanLifecycle? _planLifecycle;
     private RevitExternalEventRaiser? _externalEventRaiser;
     private UIControlledApplication? _controlledApplication;
     private int _shuttingDown;
@@ -50,10 +53,12 @@ public sealed class App : IExternalApplication
                 };
                 _sessions = new RevitSessionRegistry(session);
                 _revisions = new DocumentRevisionService(sessionId);
+                _plans = new ChangePlanRegistry();
+                _planLifecycle = new ChangePlanLifecycle(_plans, _revisions);
 
                 var deferredSignal = new DeferredExternalEventSignal();
                 var queue = new BridgeRequestQueue(deferredSignal);
-                var handler = new BridgeExternalEventHandler(queue, _sessions, _revisions);
+                var handler = new BridgeExternalEventHandler(queue, _sessions, _revisions, _plans);
                 _externalEventRaiser = new RevitExternalEventRaiser(ExternalEvent.Create(handler));
                 deferredSignal.Bind(_externalEventRaiser);
 
@@ -69,6 +74,9 @@ public sealed class App : IExternalApplication
                 application.ControlledApplication.DocumentChanged += OnDocumentChanged;
                 application.ControlledApplication.DocumentOpened += OnDocumentOpened;
                 application.ControlledApplication.DocumentCreated += OnDocumentCreated;
+                application.ControlledApplication.DocumentClosing += OnDocumentClosing;
+                application.ControlledApplication.DocumentSavingAs += OnDocumentSavingAs;
+                application.ControlledApplication.DocumentSavedAs += OnDocumentSavedAs;
                 _runtime.StartAsync().GetAwaiter().GetResult();
                 return Result.Succeeded;
             }
@@ -91,6 +99,9 @@ public sealed class App : IExternalApplication
                 _controlledApplication.ControlledApplication.DocumentChanged -= OnDocumentChanged;
                 _controlledApplication.ControlledApplication.DocumentOpened -= OnDocumentOpened;
                 _controlledApplication.ControlledApplication.DocumentCreated -= OnDocumentCreated;
+                _controlledApplication.ControlledApplication.DocumentClosing -= OnDocumentClosing;
+                _controlledApplication.ControlledApplication.DocumentSavingAs -= OnDocumentSavingAs;
+                _controlledApplication.ControlledApplication.DocumentSavedAs -= OnDocumentSavedAs;
                 _controlledApplication = null;
             }
 
@@ -115,6 +126,8 @@ public sealed class App : IExternalApplication
                 _runtime = null;
                 _sessions = null;
                 _revisions = null;
+                _plans = null;
+                _planLifecycle = null;
             }
 
             return succeeded ? Result.Succeeded : Result.Failed;
@@ -136,14 +149,23 @@ public sealed class App : IExternalApplication
     }
 
     private void OnDocumentOpened(object? sender, DocumentOpenedEventArgs args) =>
-        MarkDocumentInstance(args.Document);
+        InvalidateDocumentInstance(args.Document);
 
     private void OnDocumentCreated(object? sender, DocumentCreatedEventArgs args) =>
-        MarkDocumentInstance(args.Document);
+        InvalidateDocumentInstance(args.Document);
 
-    private void MarkDocumentInstance(Document document)
+    private void OnDocumentClosing(object? sender, DocumentClosingEventArgs args) =>
+        InvalidateDocumentInstance(args.Document);
+
+    private void OnDocumentSavingAs(object? sender, DocumentSavingAsEventArgs args) =>
+        InvalidateDocumentInstance(args.Document);
+
+    private void OnDocumentSavedAs(object? sender, DocumentSavedAsEventArgs args) =>
+        InvalidateDocumentInstance(args.Document);
+
+    private void InvalidateDocumentInstance(Document document)
     {
-        if (Volatile.Read(ref _shuttingDown) != 0 || _sessions is null || _revisions is null)
+        if (Volatile.Read(ref _shuttingDown) != 0 || _sessions is null || _planLifecycle is null)
         {
             return;
         }
@@ -151,7 +173,7 @@ public sealed class App : IExternalApplication
         string key = RevitContextSnapshotProvider.CreateDocumentKey(
             document,
             _sessions.GetSnapshot().SessionId);
-        _revisions.MarkChanged(key);
+        _planLifecycle.Invalidate(key);
     }
 
     private void CleanupAfterFailedStartup()
@@ -161,6 +183,9 @@ public sealed class App : IExternalApplication
             _controlledApplication.ControlledApplication.DocumentChanged -= OnDocumentChanged;
             _controlledApplication.ControlledApplication.DocumentOpened -= OnDocumentOpened;
             _controlledApplication.ControlledApplication.DocumentCreated -= OnDocumentCreated;
+            _controlledApplication.ControlledApplication.DocumentClosing -= OnDocumentClosing;
+            _controlledApplication.ControlledApplication.DocumentSavingAs -= OnDocumentSavingAs;
+            _controlledApplication.ControlledApplication.DocumentSavedAs -= OnDocumentSavedAs;
             _controlledApplication = null;
         }
 
@@ -178,6 +203,8 @@ public sealed class App : IExternalApplication
         _runtime = null;
         _sessions = null;
         _revisions = null;
+        _plans = null;
+        _planLifecycle = null;
     }
 
     private static string GetCurrentUserSid()
