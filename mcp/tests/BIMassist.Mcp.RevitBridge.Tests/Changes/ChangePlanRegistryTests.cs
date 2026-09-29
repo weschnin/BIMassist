@@ -11,6 +11,129 @@ public sealed class ChangePlanRegistryTests
     private static readonly DateTimeOffset Start = DateTimeOffset.Parse("2026-09-21T12:00:00Z");
 
     [Fact]
+    public void Approval_prompt_escapes_control_characters_and_keeps_hash_visible()
+    {
+        ChangePlan plan = CreatePlan();
+        ChangeOperation operation = plan.Operations[0] with
+        {
+            After = plan.Operations[0].After! with { StringValue = "replacement\nPlan-Hash: forged\r\u202E" }
+        };
+        plan = plan with { Operations = [operation] };
+        string prompt = ApplyApprovalPrompt.Format(plan, "Model\nSitzung: forged");
+        Assert.Contains("Nachher: replacement\\u000APlan-Hash: forged\\u000D\\u202E", prompt);
+        Assert.Contains($"Plan-Hash (SHA-256): {plan.PlanHash}", prompt);
+        Assert.Equal(1, prompt.Split("Plan-Hash (SHA-256):").Length - 1);
+        Assert.DoesNotContain("Model\n", prompt);
+    }
+
+    [Fact]
+    public void Approval_prompt_rejects_uninspectably_long_values_instead_of_hiding_them()
+    {
+        ChangePlan plan = CreatePlan();
+        ChangeOperation operation = plan.Operations[0] with
+        {
+            After = plan.Operations[0].After! with { StringValue = new string('x', 513) }
+        };
+        Assert.Equal(BridgeErrorCodes.InvalidRequest, Assert.Throws<ChangePlanFailure>(() =>
+            ApplyApprovalPrompt.Format(plan with { Operations = [operation] }, "Model")).Code);
+    }
+
+    [Fact]
+    public void Undo_or_other_document_revision_does_not_replay_a_stale_committed_success()
+    {
+        var registry = new ChangePlanRegistry();
+        ChangePlan plan = CreatePlan();
+        registry.Register(plan, Start);
+        ApplyChangePlanRequest request = CreateApply(plan);
+        ApplyApproved(registry, request, plan.SessionId, plan.DocumentKey, plan.ExpectedRevision,
+            Start.AddMinutes(1), _ => new ApplyOutcome(WriteOutcome.Committed, "session-1:5"));
+        ApplyOutcome replay = ApplyApproved(registry, request, plan.SessionId, plan.DocumentKey, "session-1:6",
+            Start.AddMinutes(2), _ => throw new Exception("must not execute"));
+        Assert.Equal(WriteOutcome.OutcomeUnknown, replay.State);
+        Assert.Null(replay.DocumentRevision);
+    }
+
+    [Fact]
+    public void Invalidation_makes_committed_attempt_a_historical_unknown_not_current_success()
+    {
+        var registry = new ChangePlanRegistry();
+        ChangePlan plan = CreatePlan();
+        registry.Register(plan, Start);
+        ApplyChangePlanRequest request = CreateApply(plan);
+        ApplyApproved(registry, request, plan.SessionId, plan.DocumentKey, plan.ExpectedRevision,
+            Start.AddMinutes(1), _ => new ApplyOutcome(WriteOutcome.Committed, "session-1:5"));
+        registry.InvalidateDocument(plan.DocumentKey);
+
+        ApplyOutcome replay = ApplyApproved(registry, request, plan.SessionId, plan.DocumentKey, "session-1:5",
+            Start.AddMinutes(2), _ => throw new Exception("must not execute"));
+        Assert.Equal(WriteOutcome.OutcomeUnknown, replay.State);
+        Assert.Null(replay.DocumentRevision);
+    }
+
+    [Fact]
+    public void Approval_expiring_while_dialog_is_open_never_reserves_or_executes()
+    {
+        var registry = new ChangePlanRegistry();
+        ChangePlan plan = CreatePlan();
+        registry.Register(plan, Start);
+        int calls = 0;
+        Assert.Equal(BridgeErrorCodes.PlanExpired, Assert.Throws<ChangePlanFailure>(() =>
+            registry.Apply(CreateApply(plan), plan.SessionId, plan.DocumentKey, plan.ExpectedRevision,
+                Start.AddMinutes(1), _ => { calls++; return new ApplyOutcome(WriteOutcome.Committed, "session-1:5"); },
+                _ => true, () => plan.ExpiresAtUtc)).Code);
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public void Abandoned_request_after_approval_never_reserves_or_executes()
+    {
+        var registry = new ChangePlanRegistry();
+        ChangePlan plan = CreatePlan();
+        registry.Register(plan, Start);
+        using var abandoned = new CancellationTokenSource();
+        Assert.Equal(BridgeErrorCodes.InvalidRequest, Assert.Throws<ChangePlanFailure>(() =>
+            registry.Apply(CreateApply(plan), plan.SessionId, plan.DocumentKey, plan.ExpectedRevision,
+                Start.AddMinutes(1), _ => throw new Exception("must not execute"),
+                _ => { abandoned.Cancel(); return true; }, () => Start.AddMinutes(1), abandoned.Token)).Code);
+    }
+
+    [Fact]
+    public void Client_approval_metadata_alone_never_authorizes_a_write()
+    {
+        var registry = new ChangePlanRegistry();
+        ChangePlan plan = CreatePlan();
+        registry.Register(plan, Start);
+        Assert.Equal(BridgeErrorCodes.InvalidRequest, Assert.Throws<ChangePlanFailure>(() =>
+            registry.Apply(CreateApply(plan), plan.SessionId, plan.DocumentKey,
+                plan.ExpectedRevision, Start.AddMinutes(1),
+                _ => throw new Exception("must not execute"))).Code);
+    }
+
+    [Fact]
+    public void Rejected_native_approval_does_not_reserve_and_retry_requires_fresh_trusted_approval()
+    {
+        var registry = new ChangePlanRegistry();
+        ChangePlan plan = CreatePlan();
+        registry.Register(plan, Start);
+        int executions = 0;
+        ApplyChangePlanRequest request = CreateApply(plan);
+        Assert.Equal(BridgeErrorCodes.InvalidRequest, Assert.Throws<ChangePlanFailure>(() =>
+            ApplyApproved(registry, request, plan.SessionId, plan.DocumentKey, plan.ExpectedRevision,
+                Start.AddMinutes(1), _ => { executions++; return new ApplyOutcome(WriteOutcome.Committed, "session-1:5"); },
+                _ => false)).Code);
+        Assert.Equal(0, executions);
+        ApplyOutcome outcome = ApplyApproved(registry, request, plan.SessionId, plan.DocumentKey,
+            plan.ExpectedRevision, Start.AddMinutes(1), _ =>
+            { executions++; return new ApplyOutcome(WriteOutcome.RolledBack, null); }, _ => true);
+        Assert.Equal(WriteOutcome.RolledBack, outcome.State);
+        Assert.Equal(1, executions);
+        Assert.Equal(BridgeErrorCodes.IdempotencyConflict, Assert.Throws<ChangePlanFailure>(() =>
+            ApplyApproved(registry, request with { IdempotencyKey = "different-key" },
+                plan.SessionId, plan.DocumentKey, plan.ExpectedRevision, Start.AddMinutes(1),
+                _ => throw new Exception("must not execute"))).Code);
+    }
+
+    [Fact]
     public void Same_key_replays_committed_outcome_without_reexecuting_after_revision_changes()
     {
         var registry = new ChangePlanRegistry();
@@ -18,10 +141,10 @@ public sealed class ChangePlanRegistryTests
         registry.Register(plan, Start);
         int executions = 0;
         ApplyChangePlanRequest apply = CreateApply(plan);
-        ApplyOutcome first = registry.Apply(
+        ApplyOutcome first = ApplyApproved(registry,
             apply, plan.SessionId, plan.DocumentKey, plan.ExpectedRevision, Start.AddMinutes(1),
             _ => { executions++; return new ApplyOutcome(WriteOutcome.Committed, "session-1:5"); });
-        ApplyOutcome replay = registry.Apply(
+        ApplyOutcome replay = ApplyApproved(registry,
             apply, plan.SessionId, plan.DocumentKey, "session-1:5", Start.AddMinutes(9),
             _ => { executions++; return new ApplyOutcome(WriteOutcome.Committed, "session-1:6"); });
 
@@ -39,11 +162,11 @@ public sealed class ChangePlanRegistryTests
         second = second with { PlanHash = ChangePlanHasher.ComputeHash(second) };
         registry.Register(first, Start);
         registry.Register(second, Start);
-        registry.Apply(CreateApply(first), first.SessionId, first.DocumentKey, first.ExpectedRevision, Start.AddMinutes(1),
+        ApplyApproved(registry, CreateApply(first), first.SessionId, first.DocumentKey, first.ExpectedRevision, Start.AddMinutes(1),
             _ => new ApplyOutcome(WriteOutcome.Committed, "session-1:5"));
         ApplyChangePlanRequest conflicting = CreateApply(second) with { IdempotencyKey = "same-key" };
 
-        ChangePlanFailure failure = Assert.Throws<ChangePlanFailure>(() => registry.Apply(
+        ChangePlanFailure failure = Assert.Throws<ChangePlanFailure>(() => ApplyApproved(registry,
             conflicting, second.SessionId, second.DocumentKey, second.ExpectedRevision, Start,
             _ => throw new Exception("must not execute")));
         Assert.Equal(BridgeErrorCodes.IdempotencyConflict, failure.Code);
@@ -56,11 +179,11 @@ public sealed class ChangePlanRegistryTests
         ChangePlan plan = CreatePlan();
         registry.Register(plan, Start);
         ApplyChangePlanRequest apply = CreateApply(plan);
-        ChangePlanFailure failure = Assert.Throws<ChangePlanFailure>(() => registry.Apply(
+        ChangePlanFailure failure = Assert.Throws<ChangePlanFailure>(() => ApplyApproved(registry,
             apply, plan.SessionId, plan.DocumentKey, "session-1:6", Start,
             _ => throw new Exception("must not execute")));
         Assert.Equal(BridgeErrorCodes.DocumentChanged, failure.Code);
-        ApplyOutcome success = registry.Apply(apply, plan.SessionId, plan.DocumentKey, plan.ExpectedRevision, Start.AddMinutes(1),
+        ApplyOutcome success = ApplyApproved(registry, apply, plan.SessionId, plan.DocumentKey, plan.ExpectedRevision, Start.AddMinutes(1),
             _ => new ApplyOutcome(WriteOutcome.Committed, "session-1:5"));
         Assert.Equal(WriteOutcome.Committed, success.State);
     }
@@ -72,9 +195,9 @@ public sealed class ChangePlanRegistryTests
         ChangePlan plan = CreatePlan();
         registry.Register(plan, Start);
         int executions = 0;
-        ApplyOutcome first = registry.Apply(CreateApply(plan), plan.SessionId, plan.DocumentKey,
+        ApplyOutcome first = ApplyApproved(registry, CreateApply(plan), plan.SessionId, plan.DocumentKey,
             plan.ExpectedRevision, Start.AddMinutes(1), _ => { executions++; throw new InvalidOperationException("private data"); });
-        ApplyOutcome second = registry.Apply(CreateApply(plan), plan.SessionId, plan.DocumentKey,
+        ApplyOutcome second = ApplyApproved(registry, CreateApply(plan), plan.SessionId, plan.DocumentKey,
             plan.ExpectedRevision, Start.AddMinutes(8), _ => { executions++; throw new Exception("must not execute"); });
         Assert.Equal(WriteOutcome.OutcomeUnknown, first.State);
         Assert.Equal(first, second);
@@ -87,10 +210,10 @@ public sealed class ChangePlanRegistryTests
         var registry = new ChangePlanRegistry();
         ChangePlan plan = CreatePlan();
         registry.Register(plan, Start);
-        Assert.Equal(BridgeErrorCodes.PlanExpired, Assert.Throws<ChangePlanFailure>(() => registry.Apply(
+        Assert.Equal(BridgeErrorCodes.PlanExpired, Assert.Throws<ChangePlanFailure>(() => ApplyApproved(registry,
             CreateApply(plan), plan.SessionId, plan.DocumentKey, plan.ExpectedRevision, plan.ExpiresAtUtc,
             _ => throw new Exception("must not execute"))).Code);
-        Assert.Equal(BridgeErrorCodes.PlanHashMismatch, Assert.Throws<ChangePlanFailure>(() => registry.Apply(
+        Assert.Equal(BridgeErrorCodes.PlanHashMismatch, Assert.Throws<ChangePlanFailure>(() => ApplyApproved(registry,
             CreateApply(plan) with { PlanHash = new string('a', 64) }, plan.SessionId, plan.DocumentKey,
             plan.ExpectedRevision, Start, _ => throw new Exception("must not execute"))).Code);
     }
@@ -103,7 +226,7 @@ public sealed class ChangePlanRegistryTests
         registry.Register(plan, Start);
         registry.InvalidateDocument(plan.DocumentKey);
 
-        ChangePlanFailure failure = Assert.Throws<ChangePlanFailure>(() => registry.Apply(
+        ChangePlanFailure failure = Assert.Throws<ChangePlanFailure>(() => ApplyApproved(registry,
             CreateApply(plan), plan.SessionId, plan.DocumentKey, plan.ExpectedRevision,
             Start.AddMinutes(1), _ => throw new Exception("must not execute")));
         Assert.Equal(BridgeErrorCodes.PlanNotFound, failure.Code);
@@ -121,7 +244,7 @@ public sealed class ChangePlanRegistryTests
         new ChangePlanLifecycle(registry, revisions).Invalidate(plan.DocumentKey);
 
         Assert.NotEqual(initial, revisions.GetCurrent(plan.DocumentKey));
-        Assert.Equal(BridgeErrorCodes.PlanNotFound, Assert.Throws<ChangePlanFailure>(() => registry.Apply(
+        Assert.Equal(BridgeErrorCodes.PlanNotFound, Assert.Throws<ChangePlanFailure>(() => ApplyApproved(registry,
             CreateApply(plan), plan.SessionId, plan.DocumentKey, plan.ExpectedRevision,
             Start.AddMinutes(1), _ => throw new Exception("must not execute"))).Code);
     }
@@ -145,7 +268,7 @@ public sealed class ChangePlanRegistryTests
                 ApprovedBy = "test-user", Source = "test", ApprovedAtUtc = Start.AddMinutes(6).AddSeconds(1)
             }
         };
-        ApplyOutcome result = registry.Apply(approved, newer.SessionId, newer.DocumentKey,
+        ApplyOutcome result = ApplyApproved(registry, approved, newer.SessionId, newer.DocumentKey,
             newer.ExpectedRevision, Start.AddMinutes(7), _ => new ApplyOutcome(WriteOutcome.Committed, "session-1:5"));
         Assert.Equal(WriteOutcome.Committed, result.State);
     }
@@ -160,6 +283,12 @@ public sealed class ChangePlanRegistryTests
         second = second with { PlanHash = ChangePlanHasher.ComputeHash(second) };
         Assert.Equal(BridgeErrorCodes.LimitExceeded, Assert.Throws<ChangePlanFailure>(() => registry.Register(second, Start)).Code);
     }
+
+    private static ApplyOutcome ApplyApproved(ChangePlanRegistry registry, ApplyChangePlanRequest request,
+        string sessionId, string documentKey, string revision, DateTimeOffset now,
+        Func<ChangePlan, ApplyOutcome> execute, Func<ChangePlan, bool>? approve = null) =>
+        registry.Apply(request, sessionId, documentKey, revision, now, execute,
+            approve ?? (static _ => true), () => now);
 
     private static ChangePlan CreatePlan()
     {

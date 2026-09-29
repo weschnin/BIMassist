@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using BIMassist.Mcp.Contracts.Protocol;
 using BIMassist.Mcp.RevitBridge.Dispatch;
@@ -17,6 +18,8 @@ public enum NamedPipeListenerState
 
 public sealed class NamedPipeListener : IBridgeRuntimeComponent, IAsyncDisposable
 {
+    private static readonly TimeSpan DefaultApplyDeadline = TimeSpan.FromSeconds(60);
+    private readonly TimeSpan _applyDeadline;
     private readonly string _endpointName;
     private readonly BridgeRequestQueue _queue;
     private readonly object _sync = new();
@@ -27,7 +30,15 @@ public sealed class NamedPipeListener : IBridgeRuntimeComponent, IAsyncDisposabl
     private int _disposed;
 
     public NamedPipeListener(string endpointName, BridgeRequestQueue queue)
+        : this(endpointName, queue, DefaultApplyDeadline)
     {
+    }
+
+    internal NamedPipeListener(string endpointName, BridgeRequestQueue queue, TimeSpan applyDeadline)
+    {
+        if (applyDeadline <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(applyDeadline));
+        _applyDeadline = applyDeadline;
         _endpointName = string.IsNullOrWhiteSpace(endpointName)
             ? throw new ArgumentException("A pipe endpoint name is required.", nameof(endpointName))
             : endpointName;
@@ -157,27 +168,76 @@ public sealed class NamedPipeListener : IBridgeRuntimeComponent, IAsyncDisposabl
             BridgeRequest request = await LengthPrefixedJsonProtocol
                 .ReadAsync<BridgeRequest>(server, cancellationToken)
                 .ConfigureAwait(false);
-            QueuedBridgeRequest queued = _queue.Enqueue(request, cancellationToken);
-            BridgeResponse response;
+            // A modal confirmation can outlive a disconnected client. Observe the
+            // kernel pipe state without consuming bytes (a second ReadAsync would
+            // corrupt the next frame on persistent connections). The bounded token
+            // remains observable by the ExternalEvent after execution starts.
+            using var pending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            if (request.Operation == BridgeOperations.ApplyChangePlan)
+                pending.CancelAfter(_applyDeadline);
+            Task monitor = MonitorConnectionAsync(server, pending);
             try
             {
-                response = await queued.Completion.WaitAsync(cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
-            {
-                response = new BridgeResponse
+                QueuedBridgeRequest queued = _queue.Enqueue(request, pending.Token);
+                BridgeResponse response;
+                try
                 {
-                    RequestId = request.RequestId,
-                    Success = false,
-                    Warnings = [],
-                    Error = new BridgeError(
-                        BridgeErrorCodes.BridgeInternalError,
-                        "The bridge could not complete the request."),
-                    DurationMs = 0
-                };
+                    response = await queued.Completion.WaitAsync(pending.Token).ConfigureAwait(false);
+                }
+                catch (Exception) when (!pending.IsCancellationRequested)
+                {
+                    response = new BridgeResponse
+                    {
+                        RequestId = request.RequestId,
+                        Success = false,
+                        Warnings = [],
+                        Error = new BridgeError(
+                            BridgeErrorCodes.BridgeInternalError,
+                            "The bridge could not complete the request."),
+                        DurationMs = 0
+                    };
+                }
+                await LengthPrefixedJsonProtocol.WriteAsync(server, response, pending.Token).ConfigureAwait(false);
             }
-
-            await LengthPrefixedJsonProtocol.WriteAsync(server, response, cancellationToken).ConfigureAwait(false);
+            catch (OperationCanceledException) when (pending.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                // A timed-out or disconnected client cannot receive a reliable reply.
+                // The running callback keeps its canceled token and must not start a write.
+                return;
+            }
+            finally
+            {
+                pending.Cancel();
+                await monitor.ConfigureAwait(false);
+            }
         }
     }
+
+    private static async Task MonitorConnectionAsync(NamedPipeServerStream server, CancellationTokenSource pending)
+    {
+        while (!pending.IsCancellationRequested)
+        {
+            // A failed peek indicates a broken pipe. No Revit API is touched here.
+            if (!PeekNamedPipe(server.SafePipeHandle, IntPtr.Zero, 0, IntPtr.Zero,
+                    out _, IntPtr.Zero))
+            {
+                pending.Cancel();
+                return;
+            }
+            try
+            {
+                await Task.Delay(50, pending.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (pending.IsCancellationRequested)
+            {
+                return;
+            }
+        }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PeekNamedPipe(Microsoft.Win32.SafeHandles.SafePipeHandle handle,
+        IntPtr buffer, uint bufferSize, IntPtr bytesRead, out uint totalBytesAvailable,
+        IntPtr bytesLeftThisMessage);
 }

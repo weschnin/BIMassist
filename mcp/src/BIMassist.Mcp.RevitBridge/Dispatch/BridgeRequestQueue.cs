@@ -46,6 +46,12 @@ public sealed class BridgeRequestQueue
     public bool ExecuteNext(Func<BridgeRequest, BridgeResponse> processor)
     {
         ArgumentNullException.ThrowIfNull(processor);
+        return ExecuteNextWithContext(queued => processor(queued.Request));
+    }
+
+    public bool ExecuteNextWithContext(Func<QueuedBridgeRequest, BridgeResponse> processor)
+    {
+        ArgumentNullException.ThrowIfNull(processor);
         if (Volatile.Read(ref _shuttingDown) != 0 ||
             Interlocked.CompareExchange(ref _active, 1, 0) != 0)
         {
@@ -65,7 +71,7 @@ public sealed class BridgeRequestQueue
 
                 try
                 {
-                    BridgeResponse response = processor(queued.Request);
+                    BridgeResponse response = processor(queued);
                     ContractValidator.Validate(response);
                     queued.Complete(response);
                 }

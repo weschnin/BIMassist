@@ -65,6 +65,13 @@ internal sealed class ChangePlanRegistry
             {
                 _plans.Remove(planId);
             }
+            // Keep the key reserved, but never present a result from a former
+            // document instance (close/reopen or Save As) as current success.
+            foreach (RecordedAttempt attempt in _attempts.Values.Where(entry =>
+                         string.Equals(entry.DocumentKey, documentKey, StringComparison.Ordinal)))
+            {
+                attempt.Outcome = new ApplyOutcome(WriteOutcome.OutcomeUnknown, null);
+            }
         }
     }
 
@@ -74,7 +81,10 @@ internal sealed class ChangePlanRegistry
         string documentKey,
         string currentRevision,
         DateTimeOffset now,
-        Func<ChangePlan, ApplyOutcome> execute)
+        Func<ChangePlan, ApplyOutcome> execute,
+        Func<ChangePlan, bool>? trustedApproval = null,
+        Func<DateTimeOffset>? clock = null,
+        CancellationToken cancellationToken = default)
     {
         ContractValidator.Validate(request);
         ArgumentNullException.ThrowIfNull(execute);
@@ -89,6 +99,13 @@ internal sealed class ChangePlanRegistry
                     prior.SessionId != sessionId || prior.DocumentKey != documentKey)
                 {
                     throw new ChangePlanFailure(BridgeErrorCodes.IdempotencyConflict);
+                }
+                if (prior.Outcome.State == WriteOutcome.Committed &&
+                    !string.Equals(prior.Outcome.DocumentRevision, currentRevision, StringComparison.Ordinal))
+                {
+                    // A later edit or Undo makes a historical commit unfit to describe
+                    // the current document. Preserve the key to prevent re-execution.
+                    prior.Outcome = new ApplyOutcome(WriteOutcome.OutcomeUnknown, null);
                 }
                 return prior.Outcome;
             }
@@ -131,6 +148,18 @@ internal sealed class ChangePlanRegistry
             {
                 throw new ChangePlanFailure(BridgeErrorCodes.LimitExceeded);
             }
+
+            // Client approval metadata is never authorization. The trusted Revit UI
+            // callback must approve this exact, isolated plan before reserving a key.
+            if (cancellationToken.IsCancellationRequested || trustedApproval is null ||
+                !trustedApproval(ContractJson.Deserialize<ChangePlan>(ContractJson.Serialize(plan))))
+            {
+                throw new ChangePlanFailure(BridgeErrorCodes.InvalidRequest);
+            }
+            if (cancellationToken.IsCancellationRequested)
+                throw new ChangePlanFailure(BridgeErrorCodes.InvalidRequest);
+            if ((clock?.Invoke() ?? DateTimeOffset.UtcNow) >= plan.ExpiresAtUtc)
+                throw new ChangePlanFailure(BridgeErrorCodes.PlanExpired);
 
             // Reserve before invoking Revit. An exception or connection loss does not
             // establish rollback; it must never invite an automatic second attempt.

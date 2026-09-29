@@ -22,6 +22,7 @@ public sealed class QueuedBridgeRequest : IDisposable
     internal QueuedBridgeRequest(BridgeRequest request, CancellationToken cancellationToken)
     {
         Request = request ?? throw new ArgumentNullException(nameof(request));
+        CancellationToken = cancellationToken;
         if (cancellationToken.CanBeCanceled)
         {
             _cancellationRegistration = cancellationToken.Register(
@@ -31,6 +32,7 @@ public sealed class QueuedBridgeRequest : IDisposable
     }
 
     public BridgeRequest Request { get; }
+    public CancellationToken CancellationToken { get; }
 
     public Task<BridgeResponse> Completion => _completion.Task;
 

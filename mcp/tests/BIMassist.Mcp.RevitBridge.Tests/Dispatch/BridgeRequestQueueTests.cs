@@ -7,6 +7,21 @@ namespace BIMassist.Mcp.RevitBridge.Tests.Dispatch;
 public sealed class BridgeRequestQueueTests
 {
     [Fact]
+    public async Task Running_request_observes_abandonment_before_write()
+    {
+        var queue = new BridgeRequestQueue(new RecordingSignal());
+        using var cancellation = new CancellationTokenSource();
+        QueuedBridgeRequest queued = queue.Enqueue(CreateRequest("request-1"), cancellation.Token);
+        Assert.True(queue.ExecuteNextWithContext(item =>
+        {
+            cancellation.Cancel();
+            Assert.True(item.CancellationToken.IsCancellationRequested);
+            return Success(item.Request.RequestId, []);
+        }));
+        Assert.True((await queued.Completion).Success);
+    }
+
+    [Fact]
     public async Task Queue_executes_requests_in_fifo_order_and_coalesces_signal()
     {
         var signal = new RecordingSignal();

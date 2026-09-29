@@ -22,6 +22,7 @@ public sealed class BridgeRequestProcessor
     private readonly IRevitContextSnapshotProvider _context;
     private readonly IReadOperationDispatcher? _reads;
     private readonly IPlanOperationDispatcher? _plans;
+    private readonly IApplyOperationDispatcher? _apply;
 
     public BridgeRequestProcessor(IRevitContextSnapshotProvider context)
         : this(context, null, null)
@@ -37,13 +38,23 @@ public sealed class BridgeRequestProcessor
         IRevitContextSnapshotProvider context,
         IReadOperationDispatcher? reads,
         IPlanOperationDispatcher? plans)
+        : this(context, reads, plans, null)
+    {
+    }
+
+    internal BridgeRequestProcessor(
+        IRevitContextSnapshotProvider context,
+        IReadOperationDispatcher? reads,
+        IPlanOperationDispatcher? plans,
+        IApplyOperationDispatcher? apply)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _reads = reads;
         _plans = plans;
+        _apply = apply;
     }
 
-    public BridgeResponse Process(BridgeRequest request)
+    public BridgeResponse Process(BridgeRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         ContractValidator.Validate(request);
@@ -59,6 +70,7 @@ public sealed class BridgeRequestProcessor
             BridgeOperations.GetDocumentContext => ProcessDocumentContext(request, started),
             _ when BridgeOperations.Reads.Contains(request.Operation) => ProcessRead(request, started),
             BridgeOperations.PlanSetParameterValues => ProcessPlan(request, started),
+            BridgeOperations.ApplyChangePlan => ProcessApply(request, started, cancellationToken),
             _ => Failure(
                 request.RequestId,
                 BridgeErrorCodes.OperationNotSupported,
@@ -146,6 +158,63 @@ public sealed class BridgeRequestProcessor
         {
             return Failure(request.RequestId, error.ErrorCode,
                 "The plan could not be created for the requested document state.", started);
+        }
+    }
+
+    private BridgeResponse ProcessApply(BridgeRequest request, long started, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+            return Failure(request.RequestId, BridgeErrorCodes.InvalidRequest,
+                "The apply request was abandoned before execution.", started);
+        SessionDescriptor session = _context.GetSessionSnapshot();
+        if (!string.Equals(request.SessionId, session.SessionId, StringComparison.Ordinal))
+            return Failure(request.RequestId, BridgeErrorCodes.SessionNotFound,
+                "The requested Revit session is not active.", started);
+        DocumentDescriptor? document = session.Documents.SingleOrDefault(candidate =>
+            string.Equals(candidate.DocumentKey, request.DocumentKey, StringComparison.Ordinal));
+        if (document is null)
+            return Failure(request.RequestId, BridgeErrorCodes.DocumentNotFound,
+                "The requested Revit document is not open in this session.", started);
+        if (document.IsFamilyDocument || document.IsReadOnly)
+            return Failure(request.RequestId, BridgeErrorCodes.DocumentNotWritable,
+                "The requested document is not writable.", started);
+        if (_apply is null)
+            return Failure(request.RequestId, BridgeErrorCodes.OperationNotSupported,
+                "Apply is not available in the current bridge.", started);
+        try
+        {
+            ApplyOutcome outcome = _apply.Apply(request, cancellationToken);
+            if (outcome.State != WriteOutcome.Committed)
+            {
+                string state = outcome.State == WriteOutcome.RolledBack ? "rolledBack" : "outcomeUnknown";
+                return new BridgeResponse
+                {
+                    RequestId = request.RequestId,
+                    Success = false,
+                    Warnings = [],
+                    Error = new BridgeError(BridgeErrorCodes.TransactionFailed,
+                        "The plan was not confirmed as committed; do not retry with a new key.",
+                        new Dictionary<string, string> { ["state"] = state }),
+                    DurationMs = Stopwatch.GetElapsedTime(started).Ticks / TimeSpan.TicksPerMillisecond
+                };
+            }
+            JsonElement result = JsonSerializer.SerializeToElement(new
+            {
+                state = outcome.State switch
+                {
+                    WriteOutcome.Committed => "committed",
+                    WriteOutcome.RolledBack => "rolledBack",
+                    _ => "outcomeUnknown"
+                },
+                documentRevision = outcome.DocumentRevision
+            });
+            return SuccessElement(request.RequestId, result,
+                outcome.DocumentRevision ?? document.Revision, started);
+        }
+        catch (ChangePlanFailure error)
+        {
+            return Failure(request.RequestId, error.Code,
+                "The write was not started for the requested plan.", started);
         }
     }
 

@@ -66,8 +66,9 @@ public sealed class BridgeExternalEventHandler : IExternalEventHandler
             _revisions.GetCurrent);
         var planSource = new RevitSetParameterPlanSource(application, _sessions, _revisions, parameterSource);
         var planDispatcher = new SetParameterPlanDispatcher(planSource, _plans, () => DateTimeOffset.UtcNow);
-        var processor = new BridgeRequestProcessor(context, readDispatcher, planDispatcher);
-        _queue.ExecuteNext(processor.Process);
+        var applyDispatcher = new RevitStringChangePlanApply(application, _sessions, _revisions, _plans);
+        var processor = new BridgeRequestProcessor(context, readDispatcher, planDispatcher, applyDispatcher);
+        _queue.ExecuteNextWithContext(queued => processor.Process(queued.Request, queued.CancellationToken));
     }
 
     public string GetName() => "BIMassist MCP Bridge Request Dispatcher";
