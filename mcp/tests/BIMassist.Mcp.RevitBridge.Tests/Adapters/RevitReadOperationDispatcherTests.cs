@@ -44,6 +44,44 @@ public sealed class RevitReadOperationDispatcherTests
     }
 
     [Fact]
+    public void Element_list_is_materialized_serialized_and_revision_bound()
+    {
+        var elements = new ElementReadSnapshot(
+            "document-1",
+            "revision-9",
+            [new ElementSummary
+            {
+                UniqueId = "element-uid-1",
+                ElementId = 101,
+                Name = "Door 1",
+                CategoryId = "revit-category:-2000014",
+                CategoryName = "Doors",
+                IsElementType = false,
+                TypeUniqueId = "type-uid-1",
+                TypeName = "Single"
+            }]);
+        var familySource = new FakeFamilySource(new FamilyReadSnapshot("document-1", "revision-9", []));
+        var elementSource = new FakeElementSource(elements);
+        var paginator = new StablePaginator(new ReadCursorCodec(SHA256.HashData("element dispatcher test"u8)));
+        var dispatcher = new RevitReadOperationDispatcher(
+            familySource,
+            new FamilyReadService(paginator),
+            elementSource,
+            new ElementReadService(paginator));
+        BridgeRequest request = CreateRequest(
+            BridgeOperations.ListElements,
+            "{\"page\":{\"pageSize\":25},\"includeTypes\":false,\"categoryId\":\"revit-category:-2000014\"}");
+
+        ReadOperationResult result = dispatcher.Process(request);
+        PageResult<ElementSummary> page = ContractJson.Deserialize<PageResult<ElementSummary>>(result.Result.GetRawText());
+
+        Assert.Equal("revision-9", result.DocumentRevision);
+        Assert.Equal("session-1", elementSource.SessionId);
+        Assert.Equal("document-1", elementSource.DocumentKey);
+        Assert.Equal("element-uid-1", Assert.Single(page.Items).UniqueId);
+    }
+
+    [Fact]
     public void Shared_definitions_are_materialized_serialized_and_revision_bound()
     {
         var definition = new SharedDefinitionDescriptor
@@ -364,6 +402,22 @@ public sealed class RevitReadOperationDispatcherTests
         public FamilyReadSnapshot ReadFamilies(string sessionId, string documentKey)
         {
             ReadCount++;
+            SessionId = sessionId;
+            DocumentKey = documentKey;
+            return snapshot;
+        }
+    }
+
+    private sealed class FakeElementSource(ElementReadSnapshot snapshot) : IRevitElementReadSource
+    {
+        public string? SessionId { get; private set; }
+        public string? DocumentKey { get; private set; }
+
+        public ElementReadSnapshot ReadElements(
+            string sessionId,
+            string documentKey,
+            ListElementsRequest request)
+        {
             SessionId = sessionId;
             DocumentKey = documentKey;
             return snapshot;

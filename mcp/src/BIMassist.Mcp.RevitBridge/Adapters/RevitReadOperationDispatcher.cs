@@ -22,6 +22,8 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
     private readonly ParameterValueReadService? _parameterValueService;
     private readonly MetadataSnapshotService? _metadataSnapshotService;
     private readonly Func<string, string>? _currentRevision;
+    private readonly IRevitElementReadSource? _elements;
+    private readonly ElementReadService? _elementService;
 
     internal RevitReadOperationDispatcher(
         IRevitFamilyReadSource families,
@@ -36,6 +38,28 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
         IRevitSharedDefinitionReadSource? sharedDefinitions,
         SharedDefinitionReadService? sharedDefinitionService)
         : this(families, familyService, sharedDefinitions, sharedDefinitionService, null, null, null, null, null)
+    {
+    }
+
+    internal RevitReadOperationDispatcher(
+        IRevitFamilyReadSource families,
+        FamilyReadService familyService,
+        IRevitElementReadSource elements,
+        ElementReadService elementService)
+        : this(
+            families,
+            familyService,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            elements,
+            elementService)
     {
     }
 
@@ -92,7 +116,9 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
         ParameterReadService? parameterService,
         ParameterValueReadService? parameterValueService,
         MetadataSnapshotService? metadataSnapshotService = null,
-        Func<string, string>? currentRevision = null)
+        Func<string, string>? currentRevision = null,
+        IRevitElementReadSource? elements = null,
+        ElementReadService? elementService = null)
     {
         _families = families ?? throw new ArgumentNullException(nameof(families));
         _familyService = familyService ?? throw new ArgumentNullException(nameof(familyService));
@@ -105,6 +131,8 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
         _parameterValueService = parameterValueService;
         _metadataSnapshotService = metadataSnapshotService;
         _currentRevision = currentRevision;
+        _elements = elements;
+        _elementService = elementService;
     }
 
     public ReadOperationResult Process(BridgeRequest request)
@@ -114,6 +142,7 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
         return request.Operation switch
         {
             BridgeOperations.ListFamilies => ListFamilies(request),
+            BridgeOperations.ListElements => ListElements(request),
             BridgeOperations.GetFamilyMetadata => GetFamilyMetadata(request),
             BridgeOperations.ListSharedDefinitions => ListSharedDefinitions(request),
             BridgeOperations.ListProjectBindings => ListProjectBindings(request),
@@ -131,6 +160,24 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
         FamilyReadSnapshot snapshot = ReadSnapshot(request);
         PageResult<FamilySummary> result = _familyService.ListFamilies(
             snapshot.Families,
+            payload,
+            snapshot.DocumentKey,
+            snapshot.DocumentRevision);
+        return Serialize(result, snapshot.DocumentRevision);
+    }
+
+    private ReadOperationResult ListElements(BridgeRequest request)
+    {
+        if (_elements is null || _elementService is null)
+        {
+            throw new ReadCursorException(BridgeErrorCodes.OperationNotSupported);
+        }
+
+        ListElementsRequest payload = ContractJson.Deserialize<ListElementsRequest>(request.Payload.GetRawText());
+        ElementReadSnapshot snapshot =
+            _elements.ReadElements(request.SessionId!, request.DocumentKey!, payload);
+        PageResult<ElementSummary> result = _elementService.ListElements(
+            snapshot.Elements,
             payload,
             snapshot.DocumentKey,
             snapshot.DocumentRevision);

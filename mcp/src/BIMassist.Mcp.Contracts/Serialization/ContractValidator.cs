@@ -67,11 +67,20 @@ public static class ContractValidator
             case PageRequest pageRequest:
                 Validate(pageRequest);
                 break;
+            case PageResult<ElementSummary> elementPage:
+                Validate(elementPage);
+                break;
             case IPageResult pageResult:
                 Validate(pageResult);
                 break;
             case ListFamiliesRequest listFamilies:
                 Validate(listFamilies);
+                break;
+            case ListElementsRequest listElements:
+                Validate(listElements);
+                break;
+            case ElementSummary elementSummary:
+                Validate(elementSummary);
                 break;
             case GetFamilyMetadataRequest getFamily:
                 Validate(getFamily);
@@ -163,6 +172,53 @@ public static class ContractValidator
 
         Validate(request.Page);
         ValidateOptionalText(request.NameContains, nameof(request.NameContains), ContractLimits.MaximumTextLength);
+    }
+
+    private static void Validate(ListElementsRequest request)
+    {
+        if (request.Page is null)
+        {
+            throw new JsonException("Element list requests require pagination.");
+        }
+
+        Validate(request.Page);
+        ValidateOptionalText(
+            request.NameContains,
+            nameof(request.NameContains),
+            ContractLimits.MaximumTextLength,
+            requireNonWhitespace: true);
+        ValidateCategoryId(request.CategoryId, nameof(request.CategoryId));
+        if (request.NameContains is null && request.CategoryId is null)
+        {
+            throw new JsonException("Element list requests require a name or category filter.");
+        }
+    }
+
+    private static void Validate(ElementSummary element)
+    {
+        RequireText(element.UniqueId, nameof(element.UniqueId), ContractLimits.MaximumIdentifierLength);
+        RequireText(element.Name, nameof(element.Name));
+        ValidateCategoryId(element.CategoryId, nameof(element.CategoryId));
+        ValidateOptionalText(element.CategoryName, nameof(element.CategoryName), ContractLimits.MaximumTextLength, requireNonWhitespace: true);
+        ValidateOptionalText(element.TypeUniqueId, nameof(element.TypeUniqueId), ContractLimits.MaximumIdentifierLength, requireNonWhitespace: true);
+        ValidateOptionalText(element.TypeName, nameof(element.TypeName), ContractLimits.MaximumTextLength, requireNonWhitespace: true);
+
+        if (element.ElementId <= 0 || (element.CategoryId is null) != (element.CategoryName is null) ||
+            (element.TypeUniqueId is null) != (element.TypeName is null) ||
+            (element.IsElementType && element.TypeUniqueId is not null))
+        {
+            throw new JsonException("Element identity, category, and type metadata are inconsistent.");
+        }
+    }
+
+    private static void Validate(PageResult<ElementSummary> page)
+    {
+        Validate((IPageResult)page);
+        if (page.Items.Select(element => element.UniqueId).Distinct(StringComparer.Ordinal).Count() != page.Items.Count ||
+            page.Items.Select(element => element.ElementId).Distinct().Count() != page.Items.Count)
+        {
+            throw new JsonException("Element identities must be unique within a page.");
+        }
     }
 
     private static void Validate(GetFamilyMetadataRequest request)
@@ -750,6 +806,9 @@ public static class ContractValidator
         {
             case BridgeOperations.ListFamilies:
                 ValidatePayload<ListFamiliesRequest>(request.Payload);
+                break;
+            case BridgeOperations.ListElements:
+                ValidatePayload<ListElementsRequest>(request.Payload);
                 break;
             case BridgeOperations.GetFamilyMetadata:
                 ValidatePayload<GetFamilyMetadataRequest>(request.Payload);
@@ -1339,6 +1398,31 @@ public static class ContractValidator
         if (value.Length > maximumLength)
         {
             throw new JsonException($"{propertyName} exceeds the maximum length of {maximumLength} characters.");
+        }
+    }
+
+    private static void ValidateCategoryId(string? value, string propertyName)
+    {
+        ValidateOptionalText(value, propertyName, ContractLimits.MaximumIdentifierLength, requireNonWhitespace: true);
+        if (value is null)
+        {
+            return;
+        }
+
+        const string prefix = "revit-category:";
+        if (!value.StartsWith(prefix, StringComparison.Ordinal) ||
+            !long.TryParse(
+                value.AsSpan(prefix.Length),
+                System.Globalization.NumberStyles.AllowLeadingSign,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out long categoryId) ||
+            categoryId == 0 ||
+            !string.Equals(
+                value,
+                prefix + categoryId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                StringComparison.Ordinal))
+        {
+            throw new JsonException($"{propertyName} must be a Revit category identity.");
         }
     }
 

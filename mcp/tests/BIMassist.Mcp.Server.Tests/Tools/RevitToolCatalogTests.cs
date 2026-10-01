@@ -7,7 +7,7 @@ namespace BIMassist.Mcp.Server.Tests.Tools;
 public sealed class RevitToolCatalogTests
 {
     [Fact]
-    public void Exposes_exactly_the_ten_bridge_operations_available_in_the_read_mvp()
+    public void Exposes_the_eleven_bridge_operations_available_in_the_read_mvp()
     {
         string[] names = typeof(RevitTools)
             .GetMethods(BindingFlags.Public | BindingFlags.Static)
@@ -25,6 +25,7 @@ public sealed class RevitToolCatalogTests
             "revit_get_parameter_metadata",
             "revit_get_parameter_values",
             "revit_get_status",
+            "revit_list_elements",
             "revit_list_families",
             "revit_list_parameters",
             "revit_list_project_bindings",

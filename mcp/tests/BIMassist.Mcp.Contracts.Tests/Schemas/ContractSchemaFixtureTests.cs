@@ -43,6 +43,26 @@ public sealed class ContractSchemaFixtureTests
     }
 
     [Fact]
+    public void Element_list_operation_is_accepted_by_schema_and_semantics()
+    {
+        const string json = """
+            {
+              "protocolVersion":"1",
+              "schemaVersion":"1",
+              "requestId":"request-elements-1",
+              "sessionId":"session-1",
+              "documentKey":"document-1",
+              "operation":"element.list",
+              "payload":{"page":{"pageSize":25},"includeTypes":false,"nameContains":"Door"}
+            }
+            """;
+
+        Assert.True(Evaluate("bridge-request.schema.json", json).IsValid);
+        BridgeRequest request = ContractJson.Deserialize<BridgeRequest>(json);
+        Assert.Equal(BridgeOperations.ListElements, request.Operation);
+    }
+
+    [Fact]
     public void Bridge_response_schema_enforces_result_error_invariants()
     {
         const string successWithoutResult = """

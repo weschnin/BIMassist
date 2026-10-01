@@ -49,7 +49,10 @@ public sealed class McpServerStdioArgumentTests
             await SendAsync(process, new { jsonrpc = "2.0", id = 2, method = "tools/list", @params = new { } }, timeout.Token);
             using JsonDocument toolList = await ReadResponseAsync(process, 2, timeout.Token);
             JsonElement tools = toolList.RootElement.GetProperty("result").GetProperty("tools");
-            Assert.Equal(10, tools.GetArrayLength());
+            Assert.Equal(11, tools.GetArrayLength());
+            Assert.Contains(
+                tools.EnumerateArray(),
+                tool => tool.GetProperty("name").GetString() == "revit_list_elements");
             foreach (JsonElement tool in tools.EnumerateArray())
             {
                 string schema = tool.GetProperty("inputSchema").GetRawText();

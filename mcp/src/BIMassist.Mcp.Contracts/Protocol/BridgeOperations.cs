@@ -6,6 +6,7 @@ public static class BridgeOperations
     public const string GetDocumentContext = "document.context.get";
     public const string ListFamilies = "family.list";
     public const string GetFamilyMetadata = "family.metadata.get";
+    public const string ListElements = "element.list";
     public const string ListParameters = "parameter.list";
     public const string GetParameterMetadata = "parameter.metadata.get";
     public const string ListSharedDefinitions = "sharedDefinition.list";
@@ -23,6 +24,7 @@ public static class BridgeOperations
         GetDocumentContext,
         ListFamilies,
         GetFamilyMetadata,
+        ListElements,
         ListParameters,
         GetParameterMetadata,
         ListSharedDefinitions,
@@ -45,6 +47,7 @@ public static class BridgeOperations
     {
         ListFamilies,
         GetFamilyMetadata,
+        ListElements,
         ListParameters,
         GetParameterMetadata,
         ListSharedDefinitions,

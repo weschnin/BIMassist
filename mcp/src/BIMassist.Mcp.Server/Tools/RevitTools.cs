@@ -93,6 +93,18 @@ public static class RevitTools
         CancellationToken cancellationToken = default) =>
         InvokeReadAsync(bridgeClient, revitProcessId, sessionId, documentKey, BridgeOperations.ListFamilies, request, requestContext, cancellationToken);
 
+    [McpServerTool(Name = "revit_list_elements", ReadOnly = true, Destructive = false, Idempotent = true)]
+    [Description("Search document elements by optional name and Revit category filters, with stable revision-bound pagination.")]
+    public static Task<string> ListElements(
+        IBridgeClient bridgeClient,
+        int revitProcessId,
+        string sessionId,
+        string documentKey,
+        ListElementsRequest request,
+        RequestContext<CallToolRequestParams> requestContext,
+        CancellationToken cancellationToken = default) =>
+        InvokeReadAsync(bridgeClient, revitProcessId, sessionId, documentKey, BridgeOperations.ListElements, request, requestContext, cancellationToken);
+
     [McpServerTool(Name = "revit_get_family_metadata", ReadOnly = true, Destructive = false, Idempotent = true)]
     [Description("Read family metadata and paginated family types by stable family identity.")]
     public static Task<string> GetFamilyMetadata(

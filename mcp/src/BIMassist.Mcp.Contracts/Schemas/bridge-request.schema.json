@@ -18,6 +18,7 @@
         "document.context.get",
         "family.list",
         "family.metadata.get",
+        "element.list",
         "parameter.list",
         "parameter.metadata.get",
         "sharedDefinition.list",
