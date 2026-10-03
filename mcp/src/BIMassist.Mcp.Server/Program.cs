@@ -15,10 +15,13 @@ internal static class Program
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
         builder.Services.AddSingleton<IBridgeClient, NamedPipeBridgeClient>();
+        Type[] toolTypes = TestWriteFeatureGate.IsEnabled
+            ? [typeof(RevitTools), typeof(RevitTestWriteTools)]
+            : [typeof(RevitTools)];
         builder.Services
             .AddMcpServer()
             .WithStdioServerTransport()
-            .WithToolsFromAssembly(typeof(RevitTools).Assembly);
+            .WithTools((IEnumerable<Type>)toolTypes);
 
         await builder.Build().RunAsync().ConfigureAwait(false);
     }

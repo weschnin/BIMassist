@@ -14,7 +14,9 @@ internal static class BridgeToolInvoker
         object payload,
         string? sessionId,
         string? documentKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? expectedRevision = null,
+        string? idempotencyKey = null)
     {
         try
         {
@@ -24,7 +26,9 @@ internal static class BridgeToolInvoker
                 payload,
                 sessionId,
                 documentKey,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+                expectedRevision,
+                idempotencyKey,
+                cancellationToken).ConfigureAwait(false);
             return ContractJson.Serialize(response);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
