@@ -11,7 +11,7 @@ internal static class SetParameterPlanSelection
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(requested);
-        if (requested.Kind is not (ParameterIdentityKind.SharedGuid or ParameterIdentityKind.BuiltIn))
+        if (requested.Kind is not (ParameterIdentityKind.SharedGuid or ParameterIdentityKind.BuiltIn or ParameterIdentityKind.ParameterElement))
             throw new ChangePlanFailure(BridgeErrorCodes.TargetNotFound);
 
         ParameterReadRecord? selected = null;
@@ -22,6 +22,12 @@ internal static class SetParameterPlanSelection
             {
                 ParameterIdentityKind.SharedGuid => requested.SharedGuid is not null && actual.SharedGuid == requested.SharedGuid,
                 ParameterIdentityKind.BuiltIn => requested.BuiltInId is not null && actual.BuiltInId == requested.BuiltInId,
+                ParameterIdentityKind.ParameterElement => requested.DefinitionId is not null &&
+                    actual.DefinitionId == requested.DefinitionId &&
+                    actual.StableId.StartsWith("parameter-element:", StringComparison.Ordinal) &&
+                    string.Equals(actual.OwnerContext, $"document:{snapshot.DocumentKey}", StringComparison.Ordinal) &&
+                    string.Equals(actual.OwnerContext, requested.OwnerContext, StringComparison.Ordinal) &&
+                    string.Equals(actual.DataTypeId, requested.DataTypeId, StringComparison.Ordinal),
                 _ => false
             });
             if (!matches) continue;

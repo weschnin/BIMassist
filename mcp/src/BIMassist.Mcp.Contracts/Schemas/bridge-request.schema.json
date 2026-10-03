@@ -98,9 +98,10 @@
         "parameter": {
           "type": "object", "additionalProperties": false, "required": ["kind", "stableId", "name"],
           "properties": {
-            "kind": { "enum": ["sharedGuid", "builtIn"] },
+            "kind": { "enum": ["sharedGuid", "builtIn", "parameterElement"] },
             "sharedGuid": { "type": "string", "format": "uuid", "not": { "const": "00000000-0000-0000-0000-000000000000" } },
             "builtInId": { "type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807, "not": { "const": 0 } },
+            "definitionId": { "type": "integer", "minimum": 1, "maximum": 9223372036854775807 },
             "stableId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
             "name": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "\\S" },
             "ownerContext": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
@@ -108,8 +109,9 @@
             "isInstance": { "type": "boolean" }
           },
           "allOf": [
-            { "if": { "properties": { "kind": { "const": "sharedGuid" } }, "required": ["kind"] }, "then": { "required": ["sharedGuid"], "not": { "required": ["builtInId"] } } },
-            { "if": { "properties": { "kind": { "const": "builtIn" } }, "required": ["kind"] }, "then": { "required": ["builtInId"], "not": { "required": ["sharedGuid"] } } }
+            { "if": { "properties": { "kind": { "const": "sharedGuid" } }, "required": ["kind"] }, "then": { "required": ["sharedGuid"], "not": { "anyOf": [{ "required": ["builtInId"] }, { "required": ["definitionId"] }] } } },
+            { "if": { "properties": { "kind": { "const": "builtIn" } }, "required": ["kind"] }, "then": { "required": ["builtInId"], "not": { "anyOf": [{ "required": ["sharedGuid"] }, { "required": ["definitionId"] }] } } },
+            { "if": { "properties": { "kind": { "const": "parameterElement" } }, "required": ["kind"] }, "then": { "required": ["definitionId", "ownerContext", "dataTypeId"], "not": { "anyOf": [{ "required": ["sharedGuid"] }, { "required": ["builtInId"] }] } } }
           ]
         },
         "after": {

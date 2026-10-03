@@ -31,6 +31,26 @@ public sealed class SetParameterPlanBuilderTests
     }
 
     [Fact]
+    public void Builds_plan_for_resolved_project_parameter_identity()
+    {
+        ParameterIdentity identity = new()
+        {
+            Kind = ParameterIdentityKind.ParameterElement,
+            DefinitionId = 42,
+            OwnerContext = "document:doc-1",
+            DataTypeId = "autodesk.spec.aec:string.text-2.0.0",
+            StableId = "parameter-element:parameter-uid-42",
+            Name = "Project text"
+        };
+
+        ChangePlan plan = SetParameterPlanBuilder.Build(
+            Request() with { Payload = RequestPayload(identity) },
+            ActualTarget(), identity, Before(), "session-1:4", Now);
+
+        Assert.Equal(identity, Assert.Single(plan.Operations).Parameter);
+    }
+
+    [Fact]
     public void Stale_revision_is_rejected_before_plan_creation()
     {
         ChangePlanFailure error = Assert.Throws<ChangePlanFailure>(() =>
@@ -75,6 +95,14 @@ public sealed class SetParameterPlanBuilderTests
         Operation = BridgeOperations.PlanSetParameterValues,
         Payload = JsonDocument.Parse("""{"target":{"kind":"element","uniqueId":"actual-uid","elementId":42},"parameter":{"kind":"builtIn","builtInId":-1001203,"stableId":"built-in:-1001203","name":"Client name"},"after":{"kind":"string","hasValue":true,"isReadOnly":false,"stringValue":"new"}}""").RootElement.Clone()
     };
+
+    private static JsonElement RequestPayload(ParameterIdentity parameter) =>
+        JsonSerializer.SerializeToElement(new PlanSetParameterValueRequest
+        {
+            Target = ActualTarget(),
+            Parameter = parameter,
+            After = new ParameterValue { Kind = ParameterValueKind.String, HasValue = true, IsReadOnly = false, StringValue = "new" }
+        }, ContractJson.Options);
 
     private static ParameterTarget ActualTarget() => new()
     {

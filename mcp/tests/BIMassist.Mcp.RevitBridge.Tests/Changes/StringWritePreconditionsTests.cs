@@ -8,6 +8,24 @@ namespace BIMassist.Mcp.RevitBridge.Tests.Changes;
 public sealed class StringWritePreconditionsTests
 {
     [Fact]
+    public void Project_parameter_identity_is_allowed_for_the_single_string_operation()
+    {
+        ChangeOperation operation = Operation() with
+        {
+            Parameter = new ParameterIdentity
+            {
+                Kind = ParameterIdentityKind.ParameterElement,
+                DefinitionId = 42,
+                OwnerContext = "document:doc-1",
+                StableId = "parameter-element:uid-42",
+                Name = "Project Text"
+            }
+        };
+
+        Assert.Same(operation, StringWritePreconditions.Single([operation]));
+    }
+
+    [Fact]
     public void Changed_before_value_rejects_write_without_display_fallback()
     {
         ChangeOperation operation = Operation();

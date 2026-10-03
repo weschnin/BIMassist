@@ -34,6 +34,12 @@ internal static class SetParameterPlanBuilder
             {
                 ParameterIdentityKind.SharedGuid => actualIdentity.SharedGuid != payload.Parameter.SharedGuid,
                 ParameterIdentityKind.BuiltIn => actualIdentity.BuiltInId != payload.Parameter.BuiltInId,
+                ParameterIdentityKind.ParameterElement =>
+                    !actualIdentity.StableId.StartsWith("parameter-element:", StringComparison.Ordinal) ||
+                    actualIdentity.DefinitionId != payload.Parameter.DefinitionId ||
+                    !string.Equals(actualIdentity.OwnerContext, $"document:{request.DocumentKey}", StringComparison.Ordinal) ||
+                    !string.Equals(actualIdentity.OwnerContext, payload.Parameter.OwnerContext, StringComparison.Ordinal) ||
+                    !string.Equals(actualIdentity.DataTypeId, payload.Parameter.DataTypeId, StringComparison.Ordinal),
                 _ => true
             })
             throw new ChangePlanFailure(BridgeErrorCodes.TargetNotFound);

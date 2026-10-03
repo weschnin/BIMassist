@@ -102,7 +102,7 @@ public static class RevitTestWriteTools
     }
 
     [McpServerTool(Name = "revit_test_apply_change_plan", ReadOnly = false, Destructive = true, Idempotent = true)]
-    [Description("TEST ONLY: apply one previously returned change plan in the allowlisted disposable test RVT. approvedBy, approvedAtUtc, and approvalSource are client-supplied audit metadata only, not authorization; Revit must show and receive explicit confirmation for the exact plan. Never use on production models.")]
+    [Description("TEST ONLY: apply one previously returned change plan in the allowlisted disposable test RVT. approvedBy, approvedAtUtc, and approvalSource are client-supplied audit metadata only, not authorization; Revit must show and receive explicit confirmation for the exact plan. The Revit process also requires BIMASSIST_MCP_ENABLE_TEST_WRITES=1 and BIMASSIST_MCP_TEST_DOCUMENT_PATH set to the exact local disposable RVT. Never use on production models.")]
     public static Task<string> ApplyChangePlan(
         IBridgeClient bridgeClient,
         int revitProcessId,

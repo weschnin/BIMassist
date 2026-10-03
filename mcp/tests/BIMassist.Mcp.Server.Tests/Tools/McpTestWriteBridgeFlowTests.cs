@@ -134,10 +134,12 @@ public sealed class McpTestWriteBridgeFlowTests
                         target = new { kind = "Element", uniqueId = "element-uid-1", elementId = 42 },
                         parameter = new
                         {
-                            kind = "SharedGuid",
-                            sharedGuid = "5d4b3cf0-8ecb-4821-9470-3da7dbb143a0",
-                            stableId = "guid:5d4b3cf0-8ecb-4821-9470-3da7dbb143a0",
-                            name = "Comments"
+                            kind = "ParameterElement",
+                            definitionId = 84,
+                            ownerContext = "document:test-doc-only",
+                            dataTypeId = "autodesk.spec.aec:string.text-2.0.0",
+                            stableId = "parameter-element:project-parameter-uid",
+                            name = "Project Comments"
                         },
                         newValue = "Reviewed by MCP"
                     }
@@ -202,10 +204,12 @@ public sealed class McpTestWriteBridgeFlowTests
         Assert.Equal("element", plan.Payload.GetProperty("target").GetProperty("kind").GetString());
         Assert.Equal("element-uid-1", plan.Payload.GetProperty("target").GetProperty("uniqueId").GetString());
         Assert.Equal(42, plan.Payload.GetProperty("target").GetProperty("elementId").GetInt64());
-        Assert.Equal("sharedGuid", plan.Payload.GetProperty("parameter").GetProperty("kind").GetString());
-        Assert.Equal("5d4b3cf0-8ecb-4821-9470-3da7dbb143a0", plan.Payload.GetProperty("parameter").GetProperty("sharedGuid").GetString());
-        Assert.Equal("guid:5d4b3cf0-8ecb-4821-9470-3da7dbb143a0", plan.Payload.GetProperty("parameter").GetProperty("stableId").GetString());
-        Assert.Equal("Comments", plan.Payload.GetProperty("parameter").GetProperty("name").GetString());
+        Assert.Equal("parameterElement", plan.Payload.GetProperty("parameter").GetProperty("kind").GetString());
+        Assert.Equal(84, plan.Payload.GetProperty("parameter").GetProperty("definitionId").GetInt64());
+        Assert.Equal("document:test-doc-only", plan.Payload.GetProperty("parameter").GetProperty("ownerContext").GetString());
+        Assert.Equal("autodesk.spec.aec:string.text-2.0.0", plan.Payload.GetProperty("parameter").GetProperty("dataTypeId").GetString());
+        Assert.Equal("parameter-element:project-parameter-uid", plan.Payload.GetProperty("parameter").GetProperty("stableId").GetString());
+        Assert.Equal("Project Comments", plan.Payload.GetProperty("parameter").GetProperty("name").GetString());
         Assert.Equal("string", plan.Payload.GetProperty("after").GetProperty("kind").GetString());
         Assert.Equal("Reviewed by MCP", plan.Payload.GetProperty("after").GetProperty("stringValue").GetString());
 

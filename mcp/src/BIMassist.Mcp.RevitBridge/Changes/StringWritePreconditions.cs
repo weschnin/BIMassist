@@ -10,7 +10,7 @@ internal static class StringWritePreconditions
     {
         if (operations.Count != 1 || operations[0].Kind != ChangeOperationKind.SetParameterValue ||
             operations[0].Options.Count != 0 ||
-            operations[0].Parameter.Kind is not (ParameterIdentityKind.SharedGuid or ParameterIdentityKind.BuiltIn) ||
+            operations[0].Parameter.Kind is not (ParameterIdentityKind.SharedGuid or ParameterIdentityKind.BuiltIn or ParameterIdentityKind.ParameterElement) ||
             operations[0].Before?.Kind is not (ParameterValueKind.String or ParameterValueKind.None) ||
             operations[0].After?.Kind != ParameterValueKind.String ||
             operations[0].After?.HasValue != true || operations[0].After?.StringValue is null)

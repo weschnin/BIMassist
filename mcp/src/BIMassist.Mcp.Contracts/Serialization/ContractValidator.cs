@@ -979,7 +979,7 @@ public static class ContractValidator
         }
         RequireOnlyPlanFields(payload, "target", "parameter", "after");
         RequireOnlyPlanFields(target, "kind", "uniqueId", "elementId");
-        RequireOnlyPlanFields(parameter, "kind", "sharedGuid", "builtInId", "stableId", "name",
+        RequireOnlyPlanFields(parameter, "kind", "sharedGuid", "builtInId", "definitionId", "stableId", "name",
             "ownerContext", "dataTypeId", "isInstance");
         RequireOnlyPlanFields(after, "kind", "hasValue", "isReadOnly", "stringValue");
     }
@@ -1007,7 +1007,7 @@ public static class ContractValidator
         Validate(request.Parameter);
         Validate(request.After);
         if (request.Target.Kind is not (ParameterTargetKind.Document or ParameterTargetKind.Element or ParameterTargetKind.ElementType) ||
-            request.Parameter.Kind is not (ParameterIdentityKind.SharedGuid or ParameterIdentityKind.BuiltIn) ||
+            request.Parameter.Kind is not (ParameterIdentityKind.SharedGuid or ParameterIdentityKind.BuiltIn or ParameterIdentityKind.ParameterElement) ||
             request.After.Kind != ParameterValueKind.String || !request.After.HasValue ||
             request.After.IsReadOnly || request.After.DisplayValue is not null ||
             request.After.BlockingReason is not null || request.After.Formula is not null ||

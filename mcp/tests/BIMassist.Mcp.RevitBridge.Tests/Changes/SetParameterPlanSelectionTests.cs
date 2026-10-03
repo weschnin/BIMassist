@@ -35,6 +35,18 @@ public sealed class SetParameterPlanSelectionTests
     }
 
     [Fact]
+    public void Selects_project_parameter_by_definition_id_not_name_or_client_stable_id()
+    {
+        ParameterReadRecord other = Record(ProjectParameter(101, "Shared visible name", "parameter-element:other"));
+        ParameterReadRecord actual = Record(ProjectParameter(202, "Actual project parameter", "parameter-element:actual"));
+
+        ResolvedSetParameterPlan result = SetParameterPlanSelection.Select(Snapshot(other, actual),
+            ProjectParameter(202, "Shared visible name", "client:untrusted"));
+
+        Assert.Same(actual.Summary.Identity, result.Parameter);
+    }
+
+    [Fact]
     public void Missing_or_duplicate_real_identity_fails_closed()
     {
         ParameterIdentity requested = Shared(GuidA, "name", "client");
@@ -96,6 +108,8 @@ public sealed class SetParameterPlanSelectionTests
         new() { Kind = ParameterIdentityKind.SharedGuid, SharedGuid = guid, Name = name, StableId = stableId };
     private static ParameterIdentity BuiltIn(long id, string name, string stableId) =>
         new() { Kind = ParameterIdentityKind.BuiltIn, BuiltInId = id, Name = name, StableId = stableId };
+    private static ParameterIdentity ProjectParameter(long id, string name, string stableId) =>
+        new() { Kind = ParameterIdentityKind.ParameterElement, DefinitionId = id, OwnerContext = "document:doc-1", DataTypeId = "autodesk.spec.aec:string.text-2.0.0", Name = name, StableId = stableId };
 
     private static ParameterReadRecord Record(ParameterIdentity identity, ParameterStorageType storage = ParameterStorageType.String,
         bool readOnly = false, bool editable = true, string? blocked = null, ParameterValue? value = default, bool includeValue = true,

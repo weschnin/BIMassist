@@ -68,7 +68,7 @@ public sealed class PlanSetParameterContractTests
     [InlineData("payload.after", "hasValue", "false")]
     [InlineData("payload.after", "kind", "\"integer\"")]
     [InlineData("payload.target", "kind", "\"family\"")]
-    [InlineData("payload.parameter", "kind", "\"parameterElement\"")]
+    [InlineData("payload.parameter", "kind", "\"familyDefinition\"")]
     [InlineData("payload.parameter", "name", "\"   \"")]
     [InlineData("payload.target", "uniqueId", "\"   \"")]
     [InlineData("payload.parameter", "sharedGuid", "null")]
@@ -88,6 +88,15 @@ public sealed class PlanSetParameterContractTests
         JsonNode node = JsonNode.Parse(ValidRequest)!;
         node["payload"] = new JsonObject();
         AssertParity(node.ToJsonString(), false);
+    }
+
+    [Fact]
+    public void Project_parameter_identity_is_accepted_by_schema_and_semantics()
+    {
+        JsonNode node = JsonNode.Parse(ValidRequest)!;
+        node["payload"]!["parameter"] = JsonNode.Parse(
+            """{"kind":"parameterElement","definitionId":42,"ownerContext":"document:d1","dataTypeId":"autodesk.spec.aec:string.text-2.0.0","stableId":"parameter-element:uid42","name":"Project text"}""");
+        AssertParity(node.ToJsonString(), true);
     }
 
     [Fact]

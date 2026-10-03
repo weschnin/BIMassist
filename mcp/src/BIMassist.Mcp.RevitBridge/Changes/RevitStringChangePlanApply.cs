@@ -36,6 +36,7 @@ internal sealed class RevitStringChangePlanApply : IApplyOperationDispatcher
         if (!_sessions.TryGetSnapshot(sessionId, out _))
             throw new ChangePlanFailure(BridgeErrorCodes.SessionNotFound);
         Document document = ResolveDocument(sessionId, documentKey);
+        RevitTestWriteGate.EnsureAllowed(document);
         if (document.IsFamilyDocument || document.IsReadOnly || document.IsModifiable)
             throw new ChangePlanFailure(BridgeErrorCodes.DocumentNotWritable);
         string currentRevision = _revisions.GetCurrent(documentKey);
@@ -50,10 +51,11 @@ internal sealed class RevitStringChangePlanApply : IApplyOperationDispatcher
 
     private bool Approve(ChangePlan plan, Document document, CancellationToken cancellationToken)
     {
+        RevitTestWriteGate.EnsureAllowed(document);
         ChangeOperation operation = StringWritePreconditions.Single(plan.Operations);
         // Resolve and compare the live target before displaying the dialog. A denied
         // dialog never reserves an idempotency key; a later attempt must ask again.
-        _ = ResolveParameter(document, operation);
+        _ = ResolveParameter(document, plan.DocumentKey, operation);
         if (!string.Equals(_revisions.GetCurrent(plan.DocumentKey), plan.ExpectedRevision, StringComparison.Ordinal))
             throw new ChangePlanFailure(BridgeErrorCodes.DocumentChanged);
         return ApprovalGate.Show(plan, document.Title, _application.MainWindowHandle, cancellationToken);
@@ -70,7 +72,8 @@ internal sealed class RevitStringChangePlanApply : IApplyOperationDispatcher
                 plan.DocumentKey, StringComparison.Ordinal) ||
             !string.Equals(_revisions.GetCurrent(plan.DocumentKey), plan.ExpectedRevision, StringComparison.Ordinal))
             throw new ChangePlanFailure(BridgeErrorCodes.DocumentChanged);
-        Parameter parameter = ResolveParameter(document, operation);
+        RevitTestWriteGate.EnsureAllowed(document);
+        Parameter parameter = ResolveParameter(document, plan.DocumentKey, operation);
         using var transaction = new Transaction(document, "BIMassist MCP: Zeichenparameter setzen");
         bool started = false;
         try
@@ -104,6 +107,22 @@ internal sealed class RevitStringChangePlanApply : IApplyOperationDispatcher
         }
     }
 
+    private static bool IsMatchingProjectParameter(Document document, Parameter candidate, ParameterIdentity requested, string documentKey)
+    {
+        if (requested.DefinitionId is null || candidate.Id.Value != requested.DefinitionId ||
+            !string.Equals(requested.OwnerContext, $"document:{documentKey}", StringComparison.Ordinal) ||
+            candidate.Definition is null)
+            return false;
+
+        if (document.GetElement(candidate.Id) is not ParameterElement parameterElement)
+            return false;
+
+        string expectedStableId = $"parameter-element:{parameterElement.UniqueId}";
+        string actualDataTypeId = candidate.Definition.GetDataType().TypeId;
+        return string.Equals(requested.StableId, expectedStableId, StringComparison.Ordinal) &&
+            string.Equals(requested.DataTypeId, actualDataTypeId, StringComparison.Ordinal);
+    }
+
     private static ApplyOutcome RollBack(Transaction transaction)
     {
         try
@@ -118,7 +137,7 @@ internal sealed class RevitStringChangePlanApply : IApplyOperationDispatcher
         }
     }
 
-    private static Parameter ResolveParameter(Document document, ChangeOperation operation)
+    private static Parameter ResolveParameter(Document document, string documentKey, ChangeOperation operation)
     {
         ParameterTarget target = operation.Target;
         Element element;
@@ -149,6 +168,7 @@ internal sealed class RevitStringChangePlanApply : IApplyOperationDispatcher
                     candidate.GUID == operation.Parameter.SharedGuid,
                 ParameterIdentityKind.BuiltIn => operation.Parameter.BuiltInId is not null &&
                     candidate.Id.Value == operation.Parameter.BuiltInId,
+                ParameterIdentityKind.ParameterElement => IsMatchingProjectParameter(document, candidate, operation.Parameter, documentKey),
                 _ => false
             };
             if (!matches) continue;
