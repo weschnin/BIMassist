@@ -27,6 +27,71 @@ public sealed class ChangePlanRegistryTests
     }
 
     [Fact]
+    public void Approval_prompt_identifies_project_parameter_instead_of_printing_a_null_built_in_id()
+    {
+        ChangePlan plan = CreatePlan();
+        ChangeOperation operation = plan.Operations[0] with
+        {
+            Parameter = new ParameterIdentity
+            {
+                Kind = ParameterIdentityKind.ParameterElement,
+                DefinitionId = 8742,
+                StableId = "parameter-element:project-unique-id",
+                OwnerContext = "document:document-1",
+                Name = "Projekttext",
+                DataTypeId = "autodesk.spec.aec:string.text-2.0.0"
+            }
+        };
+        plan = plan with { Operations = [operation] };
+        plan = plan with { PlanHash = ChangePlanHasher.ComputeHash(plan) };
+        string prompt = ApplyApprovalPrompt.Format(plan, "Testmodell");
+        Assert.Contains("ParameterElement-ID 8742", prompt);
+        Assert.Contains("parameter-element:project-unique-id", prompt);
+        Assert.Contains($"Plan-Hash (SHA-256): {plan.PlanHash}", prompt);
+        Assert.DoesNotContain("Built-in ID ", prompt);
+    }
+
+    [Fact]
+    public void Approval_prompt_escapes_project_parameter_stable_identity()
+    {
+        ChangePlan plan = CreatePlan();
+        ChangeOperation operation = plan.Operations[0] with
+        {
+            Parameter = new ParameterIdentity
+            {
+                Kind = ParameterIdentityKind.ParameterElement,
+                DefinitionId = 8742,
+                StableId = "parameter-element:project\nforged",
+                OwnerContext = "document:document-1",
+                Name = "Projekttext"
+            }
+        };
+        plan = plan with { Operations = [operation] };
+        string prompt = ApplyApprovalPrompt.Format(plan, "Testmodell");
+        Assert.Contains("parameter-element:project\\u000Aforged", prompt);
+        Assert.DoesNotContain("project\nforged", prompt);
+    }
+
+    [Fact]
+    public void Approval_prompt_rejects_an_uninspectably_long_project_parameter_identity()
+    {
+        ChangePlan plan = CreatePlan();
+        ChangeOperation operation = plan.Operations[0] with
+        {
+            Parameter = new ParameterIdentity
+            {
+                Kind = ParameterIdentityKind.ParameterElement,
+                DefinitionId = 8742,
+                StableId = "parameter-element:" + new string('x', 513),
+                OwnerContext = "document:document-1",
+                Name = "Projekttext"
+            }
+        };
+        Assert.Equal(BridgeErrorCodes.InvalidRequest, Assert.Throws<ChangePlanFailure>(() =>
+            ApplyApprovalPrompt.Format(plan with { Operations = [operation] }, "Testmodell")).Code);
+    }
+
+    [Fact]
     public void Approval_prompt_rejects_uninspectably_long_values_instead_of_hiding_them()
     {
         ChangePlan plan = CreatePlan();

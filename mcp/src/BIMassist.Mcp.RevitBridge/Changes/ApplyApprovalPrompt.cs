@@ -12,9 +12,14 @@ internal static class ApplyApprovalPrompt
     internal static string Format(ChangePlan plan, string documentTitle)
     {
         ChangeOperation operation = StringWritePreconditions.Single(plan.Operations);
-        string identity = operation.Parameter.Kind == ParameterIdentityKind.SharedGuid
-            ? $"GUID {operation.Parameter.SharedGuid}"
-            : $"Built-in ID {operation.Parameter.BuiltInId}";
+        string identity = operation.Parameter.Kind switch
+        {
+            ParameterIdentityKind.SharedGuid => $"GUID {operation.Parameter.SharedGuid}",
+            ParameterIdentityKind.BuiltIn => $"Built-in ID {operation.Parameter.BuiltInId}",
+            ParameterIdentityKind.ParameterElement =>
+                $"ParameterElement-ID {operation.Parameter.DefinitionId} ({Safe(operation.Parameter.StableId)})",
+            _ => throw new ChangePlanFailure(BridgeErrorCodes.InvalidRequest)
+        };
         string before = operation.Before!.HasValue ? operation.Before.StringValue ?? "" : "<kein Wert>";
         string prompt = $"Sitzung: {Safe(plan.SessionId)}\n" +
                         $"Dokument: {Safe(documentTitle)}\n" +
