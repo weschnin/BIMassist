@@ -65,7 +65,7 @@ public sealed class ElementReadContractTests
     }
 
     [Fact]
-    public void Element_summary_requires_complete_type_identity_and_positive_element_id()
+    public void Element_summary_allows_zero_element_id_but_rejects_negative_ids()
     {
         var missingTypeName = new ElementSummary
         {
@@ -75,16 +75,22 @@ public sealed class ElementReadContractTests
             IsElementType = false,
             TypeUniqueId = "type-uid-1"
         };
-        var nonPositiveId = new ElementSummary
+        var zeroId = new ElementSummary
         {
             UniqueId = "element-uid-2",
             ElementId = 0,
-            Name = "Door 2",
-            IsElementType = true
+            Name = "Element Zero",
+            IsElementType = false
         };
+        var negativeId = zeroId with { UniqueId = "element-uid-3", ElementId = -1 };
 
-        Assert.Throws<JsonException>(() => ContractValidator.Validate(missingTypeName));
-        Assert.Throws<JsonException>(() => ContractValidator.Validate(nonPositiveId));
+        JsonException typeFailure = Assert.Throws<JsonException>(() => ContractValidator.Validate(missingTypeName));
+        JsonException idFailure = Assert.Throws<JsonException>(() => ContractValidator.Validate(negativeId));
+        ContractValidator.Validate(zeroId);
+
+        Assert.Equal("element-type-metadata-mismatch", typeFailure.Data["BIMassist.ElementValidationCode"]);
+        Assert.Equal("element-id-negative", idFailure.Data["BIMassist.ElementValidationCode"]);
+        Assert.Equal(-1L, idFailure.Data["BIMassist.ElementId"]);
     }
 
     [Fact]

@@ -27,12 +27,16 @@ public sealed class BridgeDiagnosticLogTests
 
         try
         {
-            new BridgeDiagnosticLog(path).Write(request, new InvalidOperationException("do-not-log-this-message"));
+            var failure = new System.Text.Json.JsonException("do-not-log-this-message");
+            failure.Data["BIMassist.ElementValidationCode"] = "category-metadata-mismatch";
+            failure.Data["BIMassist.ElementId"] = 2798L;
+            new BridgeDiagnosticLog(path).Write(request, failure);
 
             string record = File.ReadAllText(path);
             Assert.Contains("request-diagnostic-test", record, StringComparison.Ordinal);
             Assert.Contains(BridgeOperations.ListElements, record, StringComparison.Ordinal);
-            Assert.Contains(nameof(InvalidOperationException), record, StringComparison.Ordinal);
+            Assert.Contains(nameof(System.Text.Json.JsonException), record, StringComparison.Ordinal);
+            Assert.Contains("elementValidation=category-metadata-mismatch elementId=2798", record, StringComparison.Ordinal);
             Assert.DoesNotContain("do-not-log-this-message", record, StringComparison.Ordinal);
         }
         finally

@@ -33,7 +33,11 @@ internal sealed class BridgeDiagnosticLog
 
         string exceptionType = exception.GetType().FullName ?? exception.GetType().Name;
         string stack = exception.StackTrace ?? "<stack unavailable>";
-        string record = $"{DateTimeOffset.UtcNow:O} requestId={request.RequestId} operation={request.Operation} exception={exceptionType}{Environment.NewLine}{stack}{Environment.NewLine}";
+        string validationDetail = exception.Data["BIMassist.ElementValidationCode"] is string validationCode &&
+                                 exception.Data["BIMassist.ElementId"] is long elementId
+            ? $" elementValidation={validationCode} elementId={elementId}"
+            : string.Empty;
+        string record = $"{DateTimeOffset.UtcNow:O} requestId={request.RequestId} operation={request.Operation} exception={exceptionType}{validationDetail}{Environment.NewLine}{stack}{Environment.NewLine}";
         lock (Sync)
         {
             string? directory = Path.GetDirectoryName(_path);

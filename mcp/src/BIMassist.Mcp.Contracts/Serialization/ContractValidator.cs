@@ -203,12 +203,33 @@ public static class ContractValidator
         ValidateOptionalText(element.TypeUniqueId, nameof(element.TypeUniqueId), ContractLimits.MaximumIdentifierLength, requireNonWhitespace: true);
         ValidateOptionalText(element.TypeName, nameof(element.TypeName), ContractLimits.MaximumTextLength, requireNonWhitespace: true);
 
-        if (element.ElementId <= 0 || (element.CategoryId is null) != (element.CategoryName is null) ||
-            (element.TypeUniqueId is null) != (element.TypeName is null) ||
-            (element.IsElementType && element.TypeUniqueId is not null))
+        if (element.ElementId < 0)
         {
-            throw new JsonException("Element identity, category, and type metadata are inconsistent.");
+            throw ElementValidationFailure("element-id-negative", element.ElementId);
         }
+
+        if ((element.CategoryId is null) != (element.CategoryName is null))
+        {
+            throw ElementValidationFailure("category-metadata-mismatch", element.ElementId);
+        }
+
+        if ((element.TypeUniqueId is null) != (element.TypeName is null))
+        {
+            throw ElementValidationFailure("element-type-metadata-mismatch", element.ElementId);
+        }
+
+        if (element.IsElementType && element.TypeUniqueId is not null)
+        {
+            throw ElementValidationFailure("element-type-has-instance-type-reference", element.ElementId);
+        }
+    }
+
+    private static JsonException ElementValidationFailure(string code, long elementId)
+    {
+        var exception = new JsonException("Element identity, category, and type metadata are inconsistent.");
+        exception.Data["BIMassist.ElementValidationCode"] = code;
+        exception.Data["BIMassist.ElementId"] = elementId;
+        return exception;
     }
 
     private static void Validate(PageResult<ElementSummary> page)
