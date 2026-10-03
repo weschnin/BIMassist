@@ -7,6 +7,27 @@ namespace BIMassist.Mcp.RevitBridge.Tests.Dispatch;
 public sealed class BridgeRequestQueueTests
 {
     [Fact]
+    public async Task Processor_failure_is_reported_to_diagnostic_sink_without_completing_request()
+    {
+        BridgeRequest? observedRequest = null;
+        Exception? observedException = null;
+        var queue = new BridgeRequestQueue(new RecordingSignal(), (request, exception) =>
+        {
+            observedRequest = request;
+            observedException = exception;
+        });
+        BridgeRequest request = CreateRequest("request-failed");
+        QueuedBridgeRequest queued = queue.Enqueue(request);
+        var failure = new InvalidOperationException("diagnostic-only detail");
+
+        Assert.True(queue.ExecuteNext(_ => throw failure));
+
+        Assert.Same(request, observedRequest);
+        Assert.Same(failure, observedException);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await queued.Completion);
+    }
+
+    [Fact]
     public async Task Running_request_observes_abandonment_before_write()
     {
         var queue = new BridgeRequestQueue(new RecordingSignal());

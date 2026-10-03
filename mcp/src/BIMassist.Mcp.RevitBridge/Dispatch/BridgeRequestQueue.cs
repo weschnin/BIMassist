@@ -13,13 +13,17 @@ public sealed class BridgeRequestQueue
 {
     private readonly ConcurrentQueue<QueuedBridgeRequest> _queue = new();
     private readonly IExternalEventSignal _signal;
+    private readonly Action<BridgeRequest, Exception>? _diagnosticSink;
     private int _active;
     private int _shuttingDown;
     private int _signalOutstanding;
 
-    public BridgeRequestQueue(IExternalEventSignal signal)
+    public BridgeRequestQueue(
+        IExternalEventSignal signal,
+        Action<BridgeRequest, Exception>? diagnosticSink = null)
     {
         _signal = signal ?? throw new ArgumentNullException(nameof(signal));
+        _diagnosticSink = diagnosticSink;
     }
 
     public QueuedBridgeRequest Enqueue(BridgeRequest request, CancellationToken cancellationToken = default)
@@ -77,6 +81,15 @@ public sealed class BridgeRequestQueue
                 }
                 catch (Exception exception)
                 {
+                    try
+                    {
+                        _diagnosticSink?.Invoke(queued.Request, exception);
+                    }
+                    catch
+                    {
+                        // Diagnostics must never affect request isolation or queue progress.
+                    }
+
                     queued.Fail(exception);
                 }
                 finally

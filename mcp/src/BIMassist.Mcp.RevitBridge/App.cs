@@ -9,6 +9,7 @@ using BIMassist.Mcp.RevitBridge.Adapters;
 using BIMassist.Mcp.RevitBridge.Changes;
 using BIMassist.Mcp.RevitBridge.Dispatch;
 using BIMassist.Mcp.RevitBridge.Documents;
+using BIMassist.Mcp.RevitBridge.Diagnostics;
 using BIMassist.Mcp.RevitBridge.Lifecycle;
 using BIMassist.Mcp.RevitBridge.Sessions;
 using BIMassist.Mcp.RevitBridge.Transport;
@@ -57,7 +58,8 @@ public sealed class App : IExternalApplication
                 _planLifecycle = new ChangePlanLifecycle(_plans, _revisions);
 
                 var deferredSignal = new DeferredExternalEventSignal();
-                var queue = new BridgeRequestQueue(deferredSignal);
+                var diagnosticLog = BridgeDiagnosticLog.CreateDefault();
+                var queue = new BridgeRequestQueue(deferredSignal, diagnosticLog.Write);
                 var handler = new BridgeExternalEventHandler(queue, _sessions, _revisions, _plans);
                 _externalEventRaiser = new RevitExternalEventRaiser(ExternalEvent.Create(handler));
                 deferredSignal.Bind(_externalEventRaiser);
