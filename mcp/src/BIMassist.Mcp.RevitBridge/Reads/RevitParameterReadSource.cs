@@ -323,6 +323,23 @@ internal sealed class RevitParameterReadSource : IRevitParameterReadSource
         };
     }
 
+    // Search reuses the same Revit-derived identity rules without loading bindings or shared files
+    // for every element. Positive non-shared IDs must actually resolve to a ParameterElement.
+    internal static ParameterIdentity? BuildSearchIdentity(
+        Document document,
+        Parameter parameter,
+        Definition definition,
+        ParameterTarget target,
+        string documentKey)
+    {
+        if (parameter.Id.Value >= 0 && !parameter.IsShared &&
+            document.GetElement(parameter.Id) is not ParameterElement)
+            return null;
+        string? dataTypeId = definition.GetDataType()?.TypeId;
+        if (string.IsNullOrWhiteSpace(dataTypeId)) dataTypeId = null;
+        return BuildIdentity(document, parameter, definition, target, documentKey, dataTypeId, null);
+    }
+
     private static ParameterIdentity BuildIdentity(
         Document document,
         Parameter parameter,

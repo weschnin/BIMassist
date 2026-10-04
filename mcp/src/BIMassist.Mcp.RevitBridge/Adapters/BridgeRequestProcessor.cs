@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using BIMassist.Mcp.Contracts.Changes;
 using BIMassist.Mcp.Contracts.Documents;
@@ -54,11 +55,19 @@ public sealed class BridgeRequestProcessor
         _apply = apply;
     }
 
-    public BridgeResponse Process(BridgeRequest request, CancellationToken cancellationToken = default)
+    public BridgeResponse Process(BridgeRequest request, CancellationToken cancellationToken = default) =>
+        Process(request, cancellationToken, Stopwatch.GetTimestamp());
+
+    internal BridgeResponse Process(BridgeRequest request, CancellationToken cancellationToken, long callbackStarted)
     {
         ArgumentNullException.ThrowIfNull(request);
+        long started = request.Operation == BridgeOperations.SearchDocumentParameters
+            ? callbackStarted : Stopwatch.GetTimestamp();
+        DocumentParameterScanBudget? searchBudget = request.Operation == BridgeOperations.SearchDocumentParameters
+            ? new DocumentParameterScanBudget(() => Stopwatch.GetElapsedTime(started),
+                DocumentParameterScanBudget.MaximumElapsed, cancellationToken)
+            : null;
         ContractValidator.Validate(request);
-        long started = Stopwatch.GetTimestamp();
 
         BridgeResponse response = request.Operation switch
         {
@@ -68,7 +77,7 @@ public sealed class BridgeRequestProcessor
                 documentRevision: null,
                 started),
             BridgeOperations.GetDocumentContext => ProcessDocumentContext(request, started),
-            _ when BridgeOperations.Reads.Contains(request.Operation) => ProcessRead(request, started),
+            _ when BridgeOperations.Reads.Contains(request.Operation) => ProcessRead(request, started, cancellationToken, searchBudget),
             BridgeOperations.PlanSetParameterValues => ProcessPlan(request, started),
             BridgeOperations.ApplyChangePlan => ProcessApply(request, started, cancellationToken),
             _ => Failure(
@@ -78,7 +87,21 @@ public sealed class BridgeRequestProcessor
                 started)
         };
 
-        ContractValidator.Validate(response);
+        if (searchBudget is not null)
+        {
+            try
+            {
+                searchBudget.CheckTime();
+                ContractValidator.Validate(response);
+                searchBudget.CheckTime();
+            }
+            catch (ReadCursorException)
+            {
+                return Failure(request.RequestId, BridgeErrorCodes.LimitExceeded,
+                    "The search exceeded its callback budget or was cancelled.", started);
+            }
+        }
+        else ContractValidator.Validate(response);
         return response;
     }
 
@@ -218,9 +241,14 @@ public sealed class BridgeRequestProcessor
         }
     }
 
-    private BridgeResponse ProcessRead(BridgeRequest request, long started)
+    private BridgeResponse ProcessRead(BridgeRequest request, long started, CancellationToken cancellationToken,
+        DocumentParameterScanBudget? searchBudget)
     {
+        try
+        {
+        searchBudget?.CheckTime();
         SessionDescriptor session = _context.GetSessionSnapshot();
+        searchBudget?.CheckTime();
         if (!string.Equals(request.SessionId, session.SessionId, StringComparison.Ordinal))
         {
             return Failure(
@@ -230,8 +258,13 @@ public sealed class BridgeRequestProcessor
                 started);
         }
 
+        searchBudget?.CheckTime();
         DocumentDescriptor? document = session.Documents.SingleOrDefault(candidate =>
-            string.Equals(candidate.DocumentKey, request.DocumentKey, StringComparison.Ordinal));
+        {
+            searchBudget?.CheckTime();
+            return string.Equals(candidate.DocumentKey, request.DocumentKey, StringComparison.Ordinal);
+        });
+        searchBudget?.CheckTime();
         if (document is null)
         {
             return Failure(
@@ -250,18 +283,27 @@ public sealed class BridgeRequestProcessor
                 started);
         }
 
-        try
+        searchBudget?.CheckTime();
+        ReadOperationResult result = searchBudget is not null
+            ? _reads.Process(request, cancellationToken, searchBudget)
+            : _reads.Process(request);
+        searchBudget?.CheckTime();
+        BridgeResponse response = SuccessElement(request.RequestId, result.Result, result.DocumentRevision, started);
+        searchBudget?.CheckTime();
+        if (searchBudget is not null)
         {
-            ReadOperationResult result = _reads.Process(request);
-            return SuccessElement(request.RequestId, result.Result, result.DocumentRevision, started);
+            int bytes = Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(response, ContractJson.Options));
+            searchBudget.CheckTime();
+            if (bytes > ContractLimits.MaximumContractBytes)
+                return Failure(request.RequestId, BridgeErrorCodes.LimitExceeded,
+                    "The search response is too large; use a smaller page size.", started);
+        }
+        return response;
         }
         catch (ReadCursorException error)
         {
-            return Failure(
-                request.RequestId,
-                error.ErrorCode,
-                "The read operation could not be completed for the requested document state.",
-                started);
+            return Failure(request.RequestId, error.ErrorCode,
+                "The read operation could not be completed for the requested document state.", started);
         }
     }
 

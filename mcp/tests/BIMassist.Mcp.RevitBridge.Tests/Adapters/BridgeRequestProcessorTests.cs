@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text.Json;
 using BIMassist.Mcp.Contracts.Documents;
+using BIMassist.Mcp.Contracts.Parameters;
 using BIMassist.Mcp.Contracts.Protocol;
 using BIMassist.Mcp.Contracts.Reads;
 using BIMassist.Mcp.Contracts.Serialization;
@@ -132,6 +134,124 @@ public sealed class BridgeRequestProcessorTests
 
         Assert.False(response.Success);
         Assert.Equal(BridgeErrorCodes.OperationNotSupported, response.Error?.Code);
+    }
+
+    [Fact]
+    public void Search_rejects_cancellation_before_dispatch_with_structured_limit()
+    {
+        SessionDescriptor session = CreateSession();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var reads = new CancellationAwareReadDispatcher();
+        var processor = new BridgeRequestProcessor(new FakeContext(session, session.Documents[0]), reads);
+        BridgeResponse response = processor.Process(SearchRequest(session), cancellation.Token);
+        Assert.False(reads.ObservedCancellation);
+        Assert.Equal(BridgeErrorCodes.LimitExceeded, response.Error?.Code);
+    }
+
+    [Fact]
+    public void Search_budget_includes_callback_setup_before_processor_execution()
+    {
+        SessionDescriptor session = CreateSession();
+        var reads = new FakeReadDispatcher(new ReadOperationResult(JsonDocument.Parse("{}").RootElement.Clone(),
+            session.Documents[0].Revision));
+        var processor = new BridgeRequestProcessor(new FakeContext(session, session.Documents[0]), reads);
+        long callbackStarted = Stopwatch.GetTimestamp() - (long)(Stopwatch.Frequency * 6);
+        BridgeResponse response = processor.Process(SearchRequest(session), CancellationToken.None, callbackStarted);
+        Assert.Equal(BridgeErrorCodes.LimitExceeded, response.Error?.Code);
+        Assert.Null(reads.LastRequest);
+    }
+
+    [Fact]
+    public void Search_cancelled_during_session_resolution_never_dispatches()
+    {
+        SessionDescriptor session = CreateSession();
+        using var cancellation = new CancellationTokenSource();
+        var reads = new FakeReadDispatcher(new ReadOperationResult(JsonDocument.Parse("{}").RootElement.Clone(),
+            session.Documents[0].Revision));
+        var processor = new BridgeRequestProcessor(new CancellingContext(session, cancellation), reads);
+        BridgeResponse response = processor.Process(SearchRequest(session), cancellation.Token);
+        Assert.False(response.Success);
+        Assert.Equal(BridgeErrorCodes.LimitExceeded, response.Error?.Code);
+        Assert.Null(reads.LastRequest);
+    }
+
+    [Fact]
+    public void Search_cancelled_after_dispatch_never_returns_partial_success()
+    {
+        SessionDescriptor session = CreateSession();
+        using var cancellation = new CancellationTokenSource();
+        var reads = new CancellingReadDispatcher(session.Documents[0].Revision, cancellation);
+        var processor = new BridgeRequestProcessor(new FakeContext(session, session.Documents[0]), reads);
+        BridgeResponse response = processor.Process(SearchRequest(session), cancellation.Token);
+        Assert.False(response.Success);
+        Assert.Equal(BridgeErrorCodes.LimitExceeded, response.Error?.Code);
+        Assert.Null(response.Result);
+    }
+
+    [Fact]
+    public void Search_oversized_serialized_success_returns_structured_limit_before_transport()
+    {
+        SessionDescriptor session = CreateSession();
+        var page = new PageResult<DocumentParameterMatch>
+        {
+            TotalCount = 350,
+            Items = Enumerable.Range(1, 350).Select(i => new DocumentParameterMatch
+            {
+                Target = new ParameterTarget { Kind = ParameterTargetKind.Element, UniqueId = $"uid-{i}", ElementId = i },
+                Parameter = new ParameterIdentity
+                {
+                    Kind = ParameterIdentityKind.BuiltIn, BuiltInId = -1,
+                    StableId = "built-in:-1", Name = new string('x', 4096), IsInstance = true
+                },
+                StorageType = ParameterStorageType.String, IsReadOnly = true
+            }).ToArray()
+        };
+        var reads = new FakeReadDispatcher(new ReadOperationResult(
+            JsonSerializer.SerializeToElement(page, ContractJson.Options), session.Documents[0].Revision));
+        var processor = new BridgeRequestProcessor(new FakeContext(session, session.Documents[0]), reads);
+        BridgeResponse response = processor.Process(SearchRequest(session));
+        Assert.Equal(BridgeErrorCodes.LimitExceeded, response.Error?.Code);
+        Assert.Null(response.Result);
+        Assert.True(ContractJson.Serialize(response).Length < ContractLimits.MaximumContractBytes);
+    }
+
+    private static BridgeRequest SearchRequest(SessionDescriptor session) =>
+        CreateRequest(BridgeOperations.SearchDocumentParameters) with
+        {
+            SessionId = session.SessionId, DocumentKey = session.Documents[0].DocumentKey,
+            Payload = JsonDocument.Parse("{\"page\":{\"pageSize\":1000},\"nameContains\":\"x\",\"includeTypes\":false}").RootElement.Clone()
+        };
+
+    private sealed class CancellationAwareReadDispatcher : IReadOperationDispatcher
+    {
+        public bool ObservedCancellation { get; private set; }
+        public ReadOperationResult Process(BridgeRequest request) => throw new NotSupportedException();
+        public ReadOperationResult Process(BridgeRequest request, CancellationToken cancellationToken)
+        {
+            ObservedCancellation = cancellationToken.IsCancellationRequested;
+            throw new ReadCursorException(BridgeErrorCodes.LimitExceeded);
+        }
+    }
+
+    private sealed class CancellingReadDispatcher(string revision, CancellationTokenSource cancellation) : IReadOperationDispatcher
+    {
+        public ReadOperationResult Process(BridgeRequest request)
+        {
+            cancellation.Cancel();
+            return new ReadOperationResult(JsonDocument.Parse("{}").RootElement.Clone(), revision);
+        }
+    }
+
+    private sealed class CancellingContext(SessionDescriptor session, CancellationTokenSource cancellation)
+        : IRevitContextSnapshotProvider
+    {
+        public SessionDescriptor GetSessionSnapshot()
+        {
+            cancellation.Cancel();
+            return session;
+        }
+        public DocumentDescriptor? GetActiveDocument() => null;
     }
 
     private static BridgeRequest CreateRequest(string operation) => new()

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimassist.local/schemas/parameter-search-result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["items"],
+  "properties": {
+    "items": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/$defs/match" } },
+    "nextCursor": { "type": "string", "minLength": 1, "maxLength": 1024, "pattern": "\\S" },
+    "totalCount": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 }
+  },
+  "$defs": {
+    "match": {
+      "type": "object", "additionalProperties": false,
+      "required": ["target", "parameter", "storageType", "isReadOnly"],
+      "properties": {
+        "target": { "$ref": "#/$defs/target" },
+        "parameter": { "$ref": "#/$defs/parameter" },
+        "storageType": { "enum": ["none", "string", "integer", "double", "elementId"] },
+        "isReadOnly": { "type": "boolean" }
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false, "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["document", "element", "elementType", "family", "familyType"] },
+        "uniqueId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
+        "elementId": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
+        "familyName": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "\\S" },
+        "typeName": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "\\S" }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "document" } }, "required": ["kind"] }, "then": { "not": { "anyOf": [{ "required": ["uniqueId"] }, { "required": ["elementId"] }, { "required": ["familyName"] }, { "required": ["typeName"] }] } } },
+        { "if": { "properties": { "kind": { "enum": ["element", "elementType"] } }, "required": ["kind"] }, "then": { "anyOf": [{ "required": ["uniqueId"] }, { "required": ["elementId"], "properties": { "elementId": { "minimum": 1 } } }], "not": { "anyOf": [{ "required": ["familyName"] }, { "required": ["typeName"] }] } } },
+        { "if": { "properties": { "kind": { "const": "family" } }, "required": ["kind"] }, "then": { "required": ["uniqueId", "elementId"], "properties": { "elementId": { "minimum": 1 } }, "not": { "required": ["typeName"] } } },
+        { "if": { "properties": { "kind": { "const": "familyType" } }, "required": ["kind"] }, "then": { "required": ["uniqueId", "elementId"], "properties": { "elementId": { "minimum": 1 } } } }
+      ]
+    },
+    "parameter": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "stableId", "name"],
+      "properties": {
+        "kind": { "enum": ["sharedGuid", "builtIn", "parameterElement", "familyDefinition"] },
+        "sharedGuid": { "type": "string", "format": "uuid", "not": { "const": "00000000-0000-0000-0000-000000000000" } },
+        "builtInId": { "type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807, "not": { "const": 0 } },
+        "stableId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "\\S" },
+        "ownerContext": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
+        "definitionId": { "type": "integer", "minimum": 1, "maximum": 9223372036854775807 },
+        "dataTypeId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
+        "isInstance": { "type": "boolean" }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "sharedGuid" } }, "required": ["kind"] }, "then": { "required": ["sharedGuid"], "not": { "anyOf": [{ "required": ["builtInId"] }, { "required": ["definitionId"] }] } } },
+        { "if": { "properties": { "kind": { "const": "builtIn" } }, "required": ["kind"] }, "then": { "required": ["builtInId"], "not": { "anyOf": [{ "required": ["sharedGuid"] }, { "required": ["definitionId"] }] } } },
+        { "if": { "properties": { "kind": { "enum": ["parameterElement", "familyDefinition"] } }, "required": ["kind"] }, "then": { "required": ["ownerContext", "definitionId", "dataTypeId"], "not": { "anyOf": [{ "required": ["sharedGuid"] }, { "required": ["builtInId"] }] } } }
+      ]
+    }
+  }
+}

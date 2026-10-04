@@ -11,7 +11,8 @@ public static class JsonSchemaCatalog
         "apply-change-plan.schema.json",
         "bridge-request.schema.json",
         "bridge-response.schema.json",
-        "change-plan.schema.json"
+        "change-plan.schema.json",
+        "parameter-search-result.schema.json"
     ];
 
     public static string Get(string name)

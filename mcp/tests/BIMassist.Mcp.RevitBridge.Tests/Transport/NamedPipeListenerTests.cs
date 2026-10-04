@@ -153,6 +153,52 @@ public sealed class NamedPipeListenerTests
         await Assert.ThrowsAnyAsync<Exception>(() => client.ConnectAsync(150));
     }
 
+    [Fact]
+    public async Task Expired_search_wait_cancels_running_scan_and_listener_accepts_next_client()
+    {
+        string endpoint = $"bimassist.test.{Guid.NewGuid():N}";
+        BridgeRequestQueue? queue = null;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var abandoned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var signal = new CallbackSignal(() => _ = Task.Run(() => queue!.ExecuteNextWithContext(item =>
+        {
+            if (item.Request.Operation == BridgeOperations.SearchDocumentParameters)
+            {
+                entered.TrySetResult();
+                if (item.CancellationToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(3)))
+                    abandoned.TrySetResult();
+            }
+            return Success(item.Request.RequestId);
+        })));
+        queue = new BridgeRequestQueue(signal);
+        await using var listener = new NamedPipeListener(endpoint, queue,
+            TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(150));
+        await listener.StartAsync(CancellationToken.None);
+        await using (var first = new NamedPipeClientStream(".", endpoint, PipeDirection.InOut, PipeOptions.Asynchronous))
+        {
+            await first.ConnectAsync(5000);
+            await LengthPrefixedJsonProtocol.WriteAsync(first, CreateSearchRequest(), CancellationToken.None);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await abandoned.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                LengthPrefixedJsonProtocol.ReadAsync<BridgeResponse>(first, CancellationToken.None)
+                    .WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        await using var second = new NamedPipeClientStream(".", endpoint, PipeDirection.InOut, PipeOptions.Asynchronous);
+        await second.ConnectAsync(5000);
+        await LengthPrefixedJsonProtocol.WriteAsync(second, CreateRequest(), CancellationToken.None);
+        Assert.True((await LengthPrefixedJsonProtocol.ReadAsync<BridgeResponse>(second, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5))).Success);
+        await listener.StopAsync(CancellationToken.None);
+    }
+
+    private static BridgeRequest CreateSearchRequest() => CreateRequest() with
+    {
+        Operation = BridgeOperations.SearchDocumentParameters,
+        SessionId = "session-1", DocumentKey = "doc-1",
+        Payload = JsonDocument.Parse("{\"page\":{\"pageSize\":10},\"nameContains\":\"Fire\",\"includeTypes\":false}").RootElement.Clone()
+    };
+
     private static BridgeRequest CreateRequest() => new()
     {
         ProtocolVersion = ProtocolVersions.ProtocolVersion,

@@ -79,6 +79,12 @@ public static class ContractValidator
             case ListElementsRequest listElements:
                 Validate(listElements);
                 break;
+            case SearchDocumentParametersRequest search:
+                Validate(search);
+                break;
+            case DocumentParameterMatch match:
+                Validate(match);
+                break;
             case ElementSummary elementSummary:
                 Validate(elementSummary);
                 break;
@@ -192,6 +198,30 @@ public static class ContractValidator
         {
             throw new JsonException("Element list requests require a name or category filter.");
         }
+    }
+
+    private static void Validate(SearchDocumentParametersRequest request)
+    {
+        if (request.Page is null)
+            throw new JsonException("Parameter searches require pagination.");
+        Validate(request.Page);
+        RequireText(request.NameContains, nameof(request.NameContains));
+        ValidateCategoryId(request.CategoryId, nameof(request.CategoryId));
+    }
+
+    private static void Validate(DocumentParameterMatch match)
+    {
+        if (match.Target is null || match.Parameter is null)
+            throw new JsonException("Parameter search matches require a target and parameter identity.");
+        // ElementId 0 is valid for a Revit read result with a stable UniqueId; retain
+        // the stricter general target validation used by request/Apply paths.
+        Validate(match.Target.ElementId == 0 &&
+                 match.Target.Kind is (ParameterTargetKind.Element or ParameterTargetKind.ElementType) &&
+                 match.Target.UniqueId is not null
+            ? match.Target with { ElementId = null }
+            : match.Target);
+        Validate(match.Parameter);
+        ValidateDefinedEnum(match.StorageType, nameof(match.StorageType));
     }
 
     private static void Validate(ElementSummary element)
@@ -837,6 +867,9 @@ public static class ContractValidator
             case BridgeOperations.ListParameters:
                 ValidatePayload<ListParametersRequest>(request.Payload);
                 break;
+            case BridgeOperations.SearchDocumentParameters:
+                ValidatePayload<SearchDocumentParametersRequest>(request.Payload);
+                break;
             case BridgeOperations.GetParameterMetadata:
                 ValidatePayload<GetParameterMetadataRequest>(request.Payload);
                 break;
@@ -871,8 +904,66 @@ public static class ContractValidator
 
     private static void ValidatePayload<T>(JsonElement payload)
     {
+        if (typeof(T) == typeof(SearchDocumentParametersRequest))
+            ValidateSearchDocumentParametersFields(payload);
         T value = DeserializePayload<T>(payload);
         Validate(value);
+    }
+
+    internal static void ValidateSearchDocumentParametersFields(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object)
+            throw new JsonException("Parameter search payload must be an object.");
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (JsonProperty property in payload.EnumerateObject())
+        {
+            if (!names.Add(property.Name) || property.Value.ValueKind == JsonValueKind.Null)
+                throw new JsonException("Parameter search contains duplicate or null fields.");
+            if (property.Name == "page")
+            {
+                if (property.Value.ValueKind != JsonValueKind.Object)
+                    throw new JsonException("Parameter search page must be an object.");
+                var pageNames = new HashSet<string>(StringComparer.Ordinal);
+                foreach (JsonProperty pageProperty in property.Value.EnumerateObject())
+                {
+                    if (!pageNames.Add(pageProperty.Name) || pageProperty.Value.ValueKind == JsonValueKind.Null)
+                        throw new JsonException("Parameter search page contains duplicate or null fields.");
+                }
+            }
+        }
+    }
+
+    internal static void ValidateDocumentParameterSearchResultFields(JsonElement result)
+    {
+        if (result.ValueKind != JsonValueKind.Object)
+            throw new JsonException("Parameter search page must be an object.");
+
+        ValidateNoNullOrDuplicateSearchMembers(result);
+    }
+
+    private static void ValidateNoNullOrDuplicateSearchMembers(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in value.EnumerateArray())
+                ValidateNoNullOrDuplicateSearchMembers(item);
+            return;
+        }
+
+        if (value.ValueKind == JsonValueKind.Null)
+            throw new JsonException("Parameter search fields cannot be null.");
+
+        if (value.ValueKind != JsonValueKind.Object)
+            return;
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (JsonProperty property in value.EnumerateObject())
+        {
+            if (!names.Add(property.Name))
+                throw new JsonException("Parameter search contains duplicate fields.");
+            ValidateNoNullOrDuplicateSearchMembers(property.Value);
+        }
     }
 
     private static T DeserializePayload<T>(JsonElement payload) =>

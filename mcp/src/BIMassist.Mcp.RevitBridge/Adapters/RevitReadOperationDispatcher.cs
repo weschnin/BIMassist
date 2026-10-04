@@ -24,6 +24,8 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
     private readonly Func<string, string>? _currentRevision;
     private readonly IRevitElementReadSource? _elements;
     private readonly ElementReadService? _elementService;
+    private readonly IRevitDocumentParameterSearchSource? _documentParameterSearch;
+    private readonly DocumentParameterSearchService? _documentParameterSearchService;
 
     internal RevitReadOperationDispatcher(
         IRevitFamilyReadSource families,
@@ -118,7 +120,9 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
         MetadataSnapshotService? metadataSnapshotService = null,
         Func<string, string>? currentRevision = null,
         IRevitElementReadSource? elements = null,
-        ElementReadService? elementService = null)
+        ElementReadService? elementService = null,
+        IRevitDocumentParameterSearchSource? documentParameterSearch = null,
+        DocumentParameterSearchService? documentParameterSearchService = null)
     {
         _families = families ?? throw new ArgumentNullException(nameof(families));
         _familyService = familyService ?? throw new ArgumentNullException(nameof(familyService));
@@ -133,16 +137,27 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
         _currentRevision = currentRevision;
         _elements = elements;
         _elementService = elementService;
+        _documentParameterSearch = documentParameterSearch;
+        _documentParameterSearchService = documentParameterSearchService;
     }
 
-    public ReadOperationResult Process(BridgeRequest request)
+    public ReadOperationResult Process(BridgeRequest request) => Process(request, CancellationToken.None);
+
+    public ReadOperationResult Process(BridgeRequest request, CancellationToken cancellationToken) =>
+        Process(request, cancellationToken, new DocumentParameterScanBudget(cancellationToken));
+
+    public ReadOperationResult Process(BridgeRequest request, CancellationToken cancellationToken,
+        DocumentParameterScanBudget budget)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (request.Operation == BridgeOperations.SearchDocumentParameters) budget.CheckTime();
         ContractValidator.Validate(request);
+        if (request.Operation == BridgeOperations.SearchDocumentParameters) budget.CheckTime();
         return request.Operation switch
         {
             BridgeOperations.ListFamilies => ListFamilies(request),
             BridgeOperations.ListElements => ListElements(request),
+            BridgeOperations.SearchDocumentParameters => SearchDocumentParameters(request, cancellationToken, budget),
             BridgeOperations.GetFamilyMetadata => GetFamilyMetadata(request),
             BridgeOperations.ListSharedDefinitions => ListSharedDefinitions(request),
             BridgeOperations.ListProjectBindings => ListProjectBindings(request),
@@ -182,6 +197,28 @@ internal sealed class RevitReadOperationDispatcher : IReadOperationDispatcher
             snapshot.DocumentKey,
             snapshot.DocumentRevision);
         return Serialize(result, snapshot.DocumentRevision);
+    }
+
+    private ReadOperationResult SearchDocumentParameters(BridgeRequest request, CancellationToken cancellationToken,
+        DocumentParameterScanBudget budget)
+    {
+        budget.CheckTime();
+        if (_documentParameterSearch is null || _documentParameterSearchService is null)
+            throw new ReadCursorException(BridgeErrorCodes.OperationNotSupported);
+        SearchDocumentParametersRequest payload =
+            ContractJson.Deserialize<SearchDocumentParametersRequest>(request.Payload.GetRawText());
+        budget.CheckTime();
+        DocumentParameterSearchSnapshot snapshot = _documentParameterSearch.ReadMatches(
+            request.SessionId!, request.DocumentKey!, payload, budget, cancellationToken);
+        budget.CheckTime();
+        if (!string.Equals(snapshot.DocumentKey, request.DocumentKey, StringComparison.Ordinal))
+            throw new ReadCursorException(BridgeErrorCodes.InvalidRequest);
+        PageResult<DocumentParameterMatch> result = _documentParameterSearchService.Search(
+            snapshot.Matches, payload, snapshot.DocumentKey, snapshot.DocumentRevision, budget);
+        budget.CheckTime();
+        ReadOperationResult response = Serialize(result, snapshot.DocumentRevision);
+        budget.CheckTime();
+        return response;
     }
 
     private ReadOperationResult GetFamilyMetadata(BridgeRequest request)

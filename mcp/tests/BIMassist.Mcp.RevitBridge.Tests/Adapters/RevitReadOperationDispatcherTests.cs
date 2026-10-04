@@ -340,6 +340,59 @@ public sealed class RevitReadOperationDispatcherTests
         Assert.Equal("revision-6", valuesResult.DocumentRevision);
     }
 
+    [Fact]
+    public void Document_parameter_search_dispatches_exact_request_and_revision()
+    {
+        var source = new FakeSearchSource(new DocumentParameterSearchSnapshot("document-1", "revision-12", []));
+        var paginator = new StablePaginator(new ReadCursorCodec(SHA256.HashData("search dispatcher test"u8)));
+        var dispatcher = new RevitReadOperationDispatcher(
+            new FakeFamilySource(new FamilyReadSnapshot("document-1", "revision-12", [])),
+            new FamilyReadService(paginator), null, null, null, null, null, null,
+            null, null, null, null, null, source, new DocumentParameterSearchService(paginator));
+        ReadOperationResult output = dispatcher.Process(CreateRequest(BridgeOperations.SearchDocumentParameters,
+            "{\"page\":{\"pageSize\":10},\"nameContains\":\"Fire\",\"includeTypes\":true}"));
+        PageResult<DocumentParameterMatch> page = ContractJson.Deserialize<PageResult<DocumentParameterMatch>>(output.Result.GetRawText());
+        Assert.Equal("session-1", source.SessionId);
+        Assert.Equal("document-1", source.DocumentKey);
+        Assert.Equal("Fire", source.Request?.NameContains);
+        Assert.True(source.Request?.IncludeTypes);
+        Assert.Equal("revision-12", output.DocumentRevision);
+        Assert.Empty(page.Items);
+        Assert.Equal(0, page.TotalCount);
+    }
+
+    [Fact]
+    public void Document_parameter_search_cancelled_after_source_scan_cannot_page_or_serialize_success()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var source = new FakeSearchSource(new DocumentParameterSearchSnapshot("document-1", "revision-12", []),
+            () => cancellation.Cancel());
+        var paginator = new StablePaginator(new ReadCursorCodec(SHA256.HashData("search cancelled after scan"u8)));
+        var dispatcher = new RevitReadOperationDispatcher(
+            new FakeFamilySource(new FamilyReadSnapshot("document-1", "revision-12", [])),
+            new FamilyReadService(paginator), null, null, null, null, null, null,
+            null, null, null, null, null, source, new DocumentParameterSearchService(paginator));
+        Assert.Equal(BridgeErrorCodes.LimitExceeded, Assert.Throws<ReadCursorException>(() =>
+            dispatcher.Process(CreateRequest(BridgeOperations.SearchDocumentParameters,
+                "{\"page\":{\"pageSize\":10},\"nameContains\":\"Fire\",\"includeTypes\":true}"), cancellation.Token)).ErrorCode);
+    }
+
+    private sealed class FakeSearchSource(DocumentParameterSearchSnapshot snapshot, Action? afterRead = null) : IRevitDocumentParameterSearchSource
+    {
+        public string? SessionId { get; private set; }
+        public string? DocumentKey { get; private set; }
+        public SearchDocumentParametersRequest? Request { get; private set; }
+        public DocumentParameterSearchSnapshot ReadMatches(string sessionId, string documentKey, SearchDocumentParametersRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            SessionId = sessionId;
+            DocumentKey = documentKey;
+            Request = request;
+            afterRead?.Invoke();
+            return snapshot;
+        }
+    }
+
     private static BridgeRequest CreateRequest(string operation, string payload) => new()
     {
         ProtocolVersion = ProtocolVersions.ProtocolVersion,

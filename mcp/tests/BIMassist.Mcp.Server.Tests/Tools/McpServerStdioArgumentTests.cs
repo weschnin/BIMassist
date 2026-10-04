@@ -51,10 +51,13 @@ public sealed class McpServerStdioArgumentTests
             await SendAsync(process, new { jsonrpc = "2.0", id = 2, method = "tools/list", @params = new { } }, timeout.Token);
             using JsonDocument toolList = await ReadResponseAsync(process, 2, timeout.Token);
             JsonElement tools = toolList.RootElement.GetProperty("result").GetProperty("tools");
-            Assert.Equal(11, tools.GetArrayLength());
+            Assert.Equal(12, tools.GetArrayLength());
             Assert.Contains(
                 tools.EnumerateArray(),
                 tool => tool.GetProperty("name").GetString() == "revit_list_elements");
+            JsonElement searchTool = tools.EnumerateArray().Single(tool =>
+                tool.GetProperty("name").GetString() == "revit_search_document_parameters");
+            Assert.Contains("nameContains", searchTool.GetProperty("inputSchema").GetRawText(), StringComparison.Ordinal);
             Assert.DoesNotContain(
                 tools.EnumerateArray(),
                 tool => tool.GetProperty("name").GetString() == "revit_test_plan_set_parameter_string");
@@ -129,6 +132,32 @@ public sealed class McpServerStdioArgumentTests
             JsonElement bridgeResult = unavailableBridge.RootElement.GetProperty("result");
             Assert.False(bridgeResult.TryGetProperty("isError", out JsonElement isError) && isError.GetBoolean(), bridgeResult.GetRawText());
             Assert.Contains("BRIDGE_UNAVAILABLE", bridgeResult.GetProperty("content")[0].GetProperty("text").GetString(), StringComparison.Ordinal);
+
+            await SendAsync(process, new
+            {
+                jsonrpc = "2.0",
+                id = 6,
+                method = "tools/call",
+                @params = new
+                {
+                    name = "revit_search_document_parameters",
+                    arguments = new
+                    {
+                        revitProcessId = int.MaxValue,
+                        sessionId = "not-a-real-session",
+                        documentKey = "not-a-real-document",
+                        request = new
+                        {
+                            nameContains = "Mark",
+                            includeTypes = false,
+                            page = new { pageSize = 1 },
+                            unexpected = true
+                        }
+                    }
+                }
+            }, timeout.Token);
+            using JsonDocument unknownSearch = await ReadResponseAsync(process, 6, timeout.Token);
+            AssertRejectedBeforeBridge(unknownSearch.RootElement.GetProperty("result"));
         }
         finally
         {
@@ -198,7 +227,7 @@ public sealed class McpServerStdioArgumentTests
             string[] toolNames = tools.EnumerateArray()
                 .Select(tool => tool.GetProperty("name").GetString() ?? string.Empty)
                 .ToArray();
-            Assert.True(toolNames.Length == 13, $"Expected 13 tools, got {toolNames.Length}: {string.Join(", ", toolNames)}");
+            Assert.True(toolNames.Length == 14, $"Expected 14 tools, got {toolNames.Length}: {string.Join(", ", toolNames)}");
             foreach (JsonElement tool in tools.EnumerateArray())
             {
                 Assert.DoesNotContain("requestContext", tool.GetProperty("inputSchema").GetRawText(), StringComparison.Ordinal);

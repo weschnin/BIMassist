@@ -8,6 +8,7 @@ public static class BridgeOperations
     public const string GetFamilyMetadata = "family.metadata.get";
     public const string ListElements = "element.list";
     public const string ListParameters = "parameter.list";
+    public const string SearchDocumentParameters = "parameter.search";
     public const string GetParameterMetadata = "parameter.metadata.get";
     public const string ListSharedDefinitions = "sharedDefinition.list";
     public const string ListProjectBindings = "projectBinding.list";
@@ -26,6 +27,7 @@ public static class BridgeOperations
         GetFamilyMetadata,
         ListElements,
         ListParameters,
+        SearchDocumentParameters,
         GetParameterMetadata,
         ListSharedDefinitions,
         ListProjectBindings,
@@ -49,6 +51,7 @@ public static class BridgeOperations
         GetFamilyMetadata,
         ListElements,
         ListParameters,
+        SearchDocumentParameters,
         GetParameterMetadata,
         ListSharedDefinitions,
         ListProjectBindings,

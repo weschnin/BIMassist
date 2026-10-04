@@ -19,7 +19,9 @@ public enum NamedPipeListenerState
 public sealed class NamedPipeListener : IBridgeRuntimeComponent, IAsyncDisposable
 {
     private static readonly TimeSpan DefaultApplyDeadline = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan DefaultSearchDeadline = TimeSpan.FromSeconds(8);
     private readonly TimeSpan _applyDeadline;
+    private readonly TimeSpan _searchDeadline;
     private readonly string _endpointName;
     private readonly BridgeRequestQueue _queue;
     private readonly object _sync = new();
@@ -35,10 +37,19 @@ public sealed class NamedPipeListener : IBridgeRuntimeComponent, IAsyncDisposabl
     }
 
     internal NamedPipeListener(string endpointName, BridgeRequestQueue queue, TimeSpan applyDeadline)
+        : this(endpointName, queue, applyDeadline, DefaultSearchDeadline)
+    {
+    }
+
+    internal NamedPipeListener(string endpointName, BridgeRequestQueue queue, TimeSpan applyDeadline,
+        TimeSpan searchDeadline)
     {
         if (applyDeadline <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(applyDeadline));
+        if (searchDeadline <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(searchDeadline));
         _applyDeadline = applyDeadline;
+        _searchDeadline = searchDeadline;
         _endpointName = string.IsNullOrWhiteSpace(endpointName)
             ? throw new ArgumentException("A pipe endpoint name is required.", nameof(endpointName))
             : endpointName;
@@ -175,6 +186,8 @@ public sealed class NamedPipeListener : IBridgeRuntimeComponent, IAsyncDisposabl
             using var pending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             if (request.Operation == BridgeOperations.ApplyChangePlan)
                 pending.CancelAfter(_applyDeadline);
+            else if (request.Operation == BridgeOperations.SearchDocumentParameters)
+                pending.CancelAfter(_searchDeadline);
             Task monitor = MonitorConnectionAsync(server, pending);
             try
             {

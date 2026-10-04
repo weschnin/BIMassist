@@ -20,6 +20,7 @@
         "family.metadata.get",
         "element.list",
         "parameter.list",
+        "parameter.search",
         "parameter.metadata.get",
         "sharedDefinition.list",
         "projectBinding.list",
@@ -45,6 +46,10 @@
     {
       "if": { "properties": { "operation": { "enum": ["parameterValue.set.plan", "sharedParameter.family.add.plan", "sharedParameter.bind.plan", "changePlan.apply"] } }, "required": ["operation"] },
       "then": { "required": ["expectedRevision", "idempotencyKey"] }
+    },
+    {
+      "if": { "properties": { "operation": { "const": "parameter.search" } }, "required": ["operation"] },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/searchDocumentParameters" } } }
     },
     {
       "if": { "properties": { "operation": { "const": "parameterValue.set.plan" } }, "required": ["operation"] },
@@ -80,6 +85,26 @@
     }
   ],
   "$defs": {
+    "searchDocumentParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "nameContains", "includeTypes"],
+      "properties": {
+        "page": {
+          "type": "object", "additionalProperties": false, "required": ["pageSize"],
+          "properties": {
+            "pageSize": { "type": "integer", "minimum": 1, "maximum": 1000 },
+            "cursor": { "type": "string", "minLength": 1, "maxLength": 1024, "pattern": "\\S" }
+          }
+        },
+        "nameContains": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "\\S" },
+        "categoryId": {
+          "type": "string", "maxLength": 128,
+          "pattern": "^revit-category:(?:-?(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6]|9223372036854775807)|-9223372036854775808)$"
+        },
+        "includeTypes": { "type": "boolean" }
+      }
+    },
     "planSetParameterValue": {
       "type": "object", "additionalProperties": false, "required": ["target", "parameter", "after"],
       "properties": {

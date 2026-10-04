@@ -105,6 +105,18 @@ public static class RevitTools
         CancellationToken cancellationToken = default) =>
         InvokeReadAsync(bridgeClient, revitProcessId, sessionId, documentKey, BridgeOperations.ListElements, request, requestContext, cancellationToken);
 
+    [McpServerTool(Name = "revit_search_document_parameters", ReadOnly = true, Destructive = false, Idempotent = true)]
+    [Description("Find parameters by name across elements in the exact open document. Returns stable element and parameter identities with revision-bound pages; rejects broad searches above the scan limits. This tool never writes values.")]
+    public static Task<string> SearchDocumentParameters(
+        IBridgeClient bridgeClient,
+        int revitProcessId,
+        string sessionId,
+        string documentKey,
+        SearchDocumentParametersRequest request,
+        RequestContext<CallToolRequestParams> requestContext,
+        CancellationToken cancellationToken = default) =>
+        InvokeReadAsync(bridgeClient, revitProcessId, sessionId, documentKey, BridgeOperations.SearchDocumentParameters, request, requestContext, cancellationToken);
+
     [McpServerTool(Name = "revit_get_family_metadata", ReadOnly = true, Destructive = false, Idempotent = true)]
     [Description("Read family metadata and paginated family types by stable family identity.")]
     public static Task<string> GetFamilyMetadata(
