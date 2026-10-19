@@ -12,7 +12,8 @@ public static class JsonSchemaCatalog
         "bridge-request.schema.json",
         "bridge-response.schema.json",
         "change-plan.schema.json",
-        "parameter-search-result.schema.json"
+        "parameter-search-result.schema.json",
+        "plan-set-string-parameters-batch.schema.json"
     ];
 
     public static string Get(string name)

@@ -9,7 +9,12 @@ internal sealed record ResolvedSetParameterPlan(
     ParameterTarget Target,
     ParameterIdentity Parameter,
     ParameterValue Before,
-    string DocumentRevision);
+    string DocumentRevision)
+{
+    // Supplied only by the batch Revit adapter from the resolved owner element, not the request.
+    internal string? CanonicalOwnerUniqueId { get; init; }
+    internal long? CanonicalParameterId { get; init; }
+}
 
 internal interface ISetParameterPlanSource
 {

@@ -26,6 +26,12 @@ public static class ContractValidator
             case PlanSetParameterValueRequest planSet:
                 Validate(planSet);
                 break;
+            case PlanSetStringParametersBatchRequest batch:
+                Validate(batch);
+                break;
+            case StringParameterBatchItem batchItem:
+                Validate(batchItem);
+                break;
             case ApplyChangePlanRequest apply:
                 Validate(apply);
                 break;
@@ -813,7 +819,8 @@ public static class ContractValidator
         RequireText(request.RequestId, nameof(request.RequestId), ContractLimits.MaximumIdentifierLength);
         RequireText(request.Operation, nameof(request.Operation), ContractLimits.MaximumIdentifierLength);
         ValidateOptionalText(request.SessionId, nameof(request.SessionId), ContractLimits.MaximumIdentifierLength, requireNonWhitespace: true);
-        ValidateOptionalText(request.DocumentKey, nameof(request.DocumentKey), ContractLimits.MaximumDocumentKeyLength, requireNonWhitespace: true);
+        ValidateOptionalText(request.DocumentKey, nameof(request.DocumentKey), ContractLimits.MaximumDocumentKeyLength,
+            requireNonWhitespace: true, scalarLength: request.Operation == BridgeOperations.PlanSetStringParametersBatch);
         ValidateOptionalText(request.ExpectedRevision, nameof(request.ExpectedRevision), ContractLimits.MaximumRevisionLength, requireNonWhitespace: true);
         ValidateOptionalText(request.IdempotencyKey, nameof(request.IdempotencyKey), ContractLimits.MaximumRevisionLength, requireNonWhitespace: true);
 
@@ -844,7 +851,8 @@ public static class ContractValidator
 
         if (BridgeOperations.RequiresDocument.Contains(request.Operation))
         {
-            RequireText(request.DocumentKey, nameof(request.DocumentKey), ContractLimits.MaximumDocumentKeyLength);
+            RequireText(request.DocumentKey, nameof(request.DocumentKey), ContractLimits.MaximumDocumentKeyLength,
+                scalarLength: request.Operation == BridgeOperations.PlanSetStringParametersBatch);
         }
 
         if (BridgeOperations.Changes.Contains(request.Operation))
@@ -888,6 +896,13 @@ public static class ContractValidator
             case BridgeOperations.PlanSetParameterValues:
                 ValidatePayload<PlanSetParameterValueRequest>(request.Payload);
                 ValidatePlanSetParameterValueFields(request.Payload);
+                break;
+            case BridgeOperations.PlanSetStringParametersBatch:
+                ValidateBatchFields(request.Payload);
+                PlanSetStringParametersBatchRequest batch = DeserializePayload<PlanSetStringParametersBatchRequest>(request.Payload);
+                Validate(batch);
+                if (!string.Equals(request.DocumentKey, batch.DocumentKey, StringComparison.Ordinal))
+                    throw new JsonException("Batch document key must match its bridge envelope.");
                 break;
             case BridgeOperations.ApplyChangePlan:
                 ApplyChangePlanRequest apply = DeserializePayload<ApplyChangePlanRequest>(request.Payload);
@@ -1108,6 +1123,78 @@ public static class ContractValidator
         }
     }
 
+    internal static void ValidateBatchFields(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("items", out JsonElement items) ||
+            items.ValueKind != JsonValueKind.Array)
+            throw new JsonException("String batch must contain an items array.");
+        RequireOnlyPlanFields(root, "documentKey", "items");
+        foreach (JsonElement item in items.EnumerateArray())
+            ValidateBatchItemFields(item);
+    }
+
+    internal static void ValidateBatchItemFields(JsonElement item)
+    {
+        if (item.ValueKind != JsonValueKind.Object ||
+            !item.TryGetProperty("target", out JsonElement target) ||
+            !item.TryGetProperty("parameter", out JsonElement parameter) ||
+            target.ValueKind != JsonValueKind.Object || parameter.ValueKind != JsonValueKind.Object)
+            throw new JsonException("String batch item requires target and parameter objects.");
+        RequireOnlyPlanFields(item, "target", "parameter", "newString");
+        RequireOnlyPlanFields(target, "kind", "uniqueId", "elementId");
+        RequireOnlyPlanFields(parameter, "kind", "sharedGuid", "builtInId", "definitionId", "stableId", "name",
+            "ownerContext", "dataTypeId", "isInstance");
+        if (!target.TryGetProperty("kind", out JsonElement targetKind) ||
+            targetKind.ValueKind != JsonValueKind.String ||
+            targetKind.GetString() is not ("document" or "element" or "elementType") ||
+            !parameter.TryGetProperty("kind", out JsonElement parameterKind) ||
+            parameterKind.ValueKind != JsonValueKind.String ||
+            parameterKind.GetString() is not ("sharedGuid" or "builtIn" or "parameterElement"))
+            throw new JsonException("String batch discriminators must match the schema spelling exactly.");
+    }
+
+    private static void Validate(PlanSetStringParametersBatchRequest request)
+    {
+        RequireText(request.DocumentKey, nameof(request.DocumentKey), ContractLimits.MaximumDocumentKeyLength, scalarLength: true);
+        if (request.Items is null || request.Items.Count is < 2 or > ContractLimits.MaximumStringBatchItems)
+            throw new JsonException("String batch requires between 2 and 20 items.");
+        var seenUniqueIds = new HashSet<(ParameterTargetKind TargetKind, string? UniqueId, ParameterIdentityKind ParameterKind, string PrimaryId)>();
+        var seenElementIds = new HashSet<(ParameterTargetKind TargetKind, long? ElementId, ParameterIdentityKind ParameterKind, string PrimaryId)>();
+        foreach (StringParameterBatchItem item in request.Items)
+        {
+            if (item is null) throw new JsonException("String batch cannot contain null items.");
+            Validate(item);
+            if (item.Parameter.Kind == ParameterIdentityKind.ParameterElement &&
+                !string.Equals(item.Parameter.OwnerContext, $"document:{request.DocumentKey}", StringComparison.Ordinal))
+                throw new JsonException("Project parameter identity belongs to another document.");
+            string primaryId = item.Parameter.Kind switch
+            {
+                ParameterIdentityKind.SharedGuid => item.Parameter.SharedGuid!.Value.ToString("D"),
+                ParameterIdentityKind.BuiltIn => item.Parameter.BuiltInId!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ParameterIdentityKind.ParameterElement => item.Parameter.DefinitionId!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                _ => throw new JsonException("Unsupported string batch parameter identity.")
+            };
+            // Reject either identity alias for the same parameter; live Revit must still verify
+            // the supplied UniqueId and ElementId resolve to the same element before a write.
+            if (!seenUniqueIds.Add((item.Target.Kind, item.Target.UniqueId, item.Parameter.Kind, primaryId)) ||
+                !seenElementIds.Add((item.Target.Kind, item.Target.ElementId, item.Parameter.Kind, primaryId)))
+                throw new JsonException("String batch contains duplicate canonical target/parameter identities.");
+        }
+    }
+
+    private static void Validate(StringParameterBatchItem item)
+    {
+        if (item.Target is null || item.Parameter is null || item.NewString is null)
+            throw new JsonException("String batch item requires target, parameter and new string.");
+        ValidateTargetInvariant(item.Target, scalarLength: true);
+        ValidateIdentityInvariant(item.Parameter, scalarLength: true);
+        if (item.Target.Kind is not (ParameterTargetKind.Document or ParameterTargetKind.Element or ParameterTargetKind.ElementType) ||
+            (item.Target.Kind != ParameterTargetKind.Document && (item.Target.UniqueId is null || item.Target.ElementId is null)) ||
+            item.Parameter.Kind is not (ParameterIdentityKind.SharedGuid or ParameterIdentityKind.BuiltIn or ParameterIdentityKind.ParameterElement) ||
+            item.NewString.EnumerateRunes().Count() > ContractLimits.MaximumValueTextLength)
+            throw new JsonException("String batch requires precise document/element targets and stable parameter identities.");
+    }
+
     private static void Validate(ApplyChangePlanRequest request)
     {
         RequireText(request.PlanId, nameof(request.PlanId), ContractLimits.MaximumIdentifierLength);
@@ -1137,13 +1224,20 @@ public static class ContractValidator
     {
         RequireText(plan.PlanId, nameof(plan.PlanId), ContractLimits.MaximumIdentifierLength);
         RequireText(plan.SessionId, nameof(plan.SessionId), ContractLimits.MaximumIdentifierLength);
-        RequireText(plan.DocumentKey, nameof(plan.DocumentKey), ContractLimits.MaximumDocumentKeyLength);
         RequireText(plan.ExpectedRevision, nameof(plan.ExpectedRevision), ContractLimits.MaximumRevisionLength);
 
         if (plan.Operations is null || plan.Operations.Count == 0)
         {
             throw new JsonException("A change plan requires at least one operation.");
         }
+
+        // Only a 2–20 operation, all-string set-parameter plan can originate from
+        // the string batch request; other plans keep the legacy UTF-16 limit.
+        bool multiStringPlan = plan.Operations.Count is >= 2 and <= ContractLimits.MaximumStringBatchItems &&
+            plan.Operations.All(operation => operation is
+                { Kind: ChangeOperationKind.SetParameterValue, After: { Kind: ParameterValueKind.String } });
+        RequireText(plan.DocumentKey, nameof(plan.DocumentKey), ContractLimits.MaximumDocumentKeyLength,
+            scalarLength: multiStringPlan);
 
         if (plan.Operations.Count > ContractLimits.MaximumOperationsPerPlan)
         {
@@ -1194,11 +1288,13 @@ public static class ContractValidator
                 throw new JsonException("Operations cannot contain null entries.");
             }
 
-            Validate(operation);
+            ValidateChangeOperation(operation, multiStringPlan);
         }
     }
 
-    private static void Validate(ChangeOperation operation)
+    private static void Validate(ChangeOperation operation) => ValidateChangeOperation(operation, batchStringAfter: false);
+
+    private static void ValidateChangeOperation(ChangeOperation operation, bool batchStringAfter)
     {
         ValidateDefinedEnum(operation.Kind, nameof(operation.Kind));
         RequireText(operation.OperationId, nameof(operation.OperationId), ContractLimits.MaximumIdentifierLength);
@@ -1222,8 +1318,16 @@ public static class ContractValidator
             throw new JsonException("Every operation requires a target and parameter identity.");
         }
 
-        Validate(operation.Target);
-        Validate(operation.Parameter);
+        if (batchStringAfter)
+        {
+            ValidateBatchTarget(operation.Target);
+            ValidateBatchIdentity(operation.Parameter);
+        }
+        else
+        {
+            Validate(operation.Target);
+            Validate(operation.Parameter);
+        }
 
         switch (operation.Kind)
         {
@@ -1238,7 +1342,10 @@ public static class ContractValidator
                     throw new JsonException("Set-parameter operations cannot contain binding or definition states.");
                 }
                 Validate(operation.Before);
-                Validate(operation.After);
+                if (batchStringAfter)
+                    ValidateBatchStringAfterValue(operation.After);
+                else
+                    Validate(operation.After);
                 if (operation.After.IsReadOnly)
                 {
                     throw new JsonException("Set-parameter operations cannot target a read-only after value.");
@@ -1329,13 +1436,29 @@ public static class ContractValidator
         RequireText(definition.GroupName, nameof(definition.GroupName));
     }
 
-    private static void Validate(ParameterIdentity identity)
+    /// <summary>Validate an observed target only in a multi-string batch context.</summary>
+    public static void ValidateBatchTarget(ParameterTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ValidateTargetInvariant(target, scalarLength: true);
+    }
+
+    /// <summary>Validate an observed identity only in a multi-string batch context.</summary>
+    public static void ValidateBatchIdentity(ParameterIdentity identity)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        ValidateIdentityInvariant(identity, scalarLength: true);
+    }
+
+    private static void Validate(ParameterIdentity identity) => ValidateIdentityInvariant(identity, scalarLength: false);
+
+    private static void ValidateIdentityInvariant(ParameterIdentity identity, bool scalarLength)
     {
         ValidateDefinedEnum(identity.Kind, nameof(identity.Kind));
-        RequireText(identity.StableId, nameof(identity.StableId), ContractLimits.MaximumIdentifierLength);
-        RequireText(identity.Name, nameof(identity.Name));
-        ValidateOptionalText(identity.OwnerContext, nameof(identity.OwnerContext), ContractLimits.MaximumIdentifierLength, requireNonWhitespace: true);
-        ValidateOptionalText(identity.DataTypeId, nameof(identity.DataTypeId), ContractLimits.MaximumIdentifierLength, requireNonWhitespace: true);
+        RequireText(identity.StableId, nameof(identity.StableId), ContractLimits.MaximumIdentifierLength, scalarLength);
+        RequireText(identity.Name, nameof(identity.Name), ContractLimits.MaximumTextLength, scalarLength);
+        ValidateOptionalText(identity.OwnerContext, nameof(identity.OwnerContext), ContractLimits.MaximumIdentifierLength, requireNonWhitespace: true, scalarLength: scalarLength);
+        ValidateOptionalText(identity.DataTypeId, nameof(identity.DataTypeId), ContractLimits.MaximumIdentifierLength, requireNonWhitespace: true, scalarLength: scalarLength);
 
         switch (identity.Kind)
         {
@@ -1363,12 +1486,14 @@ public static class ContractValidator
         }
     }
 
-    private static void Validate(ParameterTarget target)
+    private static void Validate(ParameterTarget target) => ValidateTargetInvariant(target, scalarLength: false);
+
+    private static void ValidateTargetInvariant(ParameterTarget target, bool scalarLength)
     {
         ValidateDefinedEnum(target.Kind, nameof(target.Kind));
-        ValidateOptionalText(target.UniqueId, nameof(target.UniqueId), ContractLimits.MaximumIdentifierLength, requireNonWhitespace: true);
-        ValidateOptionalText(target.FamilyName, nameof(target.FamilyName), ContractLimits.MaximumTextLength, requireNonWhitespace: true);
-        ValidateOptionalText(target.TypeName, nameof(target.TypeName), ContractLimits.MaximumTextLength, requireNonWhitespace: true);
+        ValidateOptionalText(target.UniqueId, nameof(target.UniqueId), ContractLimits.MaximumIdentifierLength, requireNonWhitespace: true, scalarLength: scalarLength);
+        ValidateOptionalText(target.FamilyName, nameof(target.FamilyName), ContractLimits.MaximumTextLength, requireNonWhitespace: true, scalarLength: scalarLength);
+        ValidateOptionalText(target.TypeName, nameof(target.TypeName), ContractLimits.MaximumTextLength, requireNonWhitespace: true, scalarLength: scalarLength);
 
         switch (target.Kind)
         {
@@ -1400,10 +1525,22 @@ public static class ContractValidator
             $"{(int)target.Kind}:{uniqueId.Length}:{uniqueId}:{elementId}");
     }
 
-    private static void Validate(ParameterValue value)
+    /// <summary>Use only for an after value in a multi-operation string batch.</summary>
+    public static void ValidateBatchStringAfterValue(ParameterValue value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (value.Kind != ParameterValueKind.String)
+            throw new JsonException("String batch after value must have string kind.");
+        ValidateParameterValue(value, scalarStringLength: true);
+    }
+
+    private static void Validate(ParameterValue value) => ValidateParameterValue(value, scalarStringLength: false);
+
+    private static void ValidateParameterValue(ParameterValue value, bool scalarStringLength)
     {
         ValidateDefinedEnum(value.Kind, nameof(value.Kind));
-        ValidateOptionalText(value.StringValue, nameof(value.StringValue), ContractLimits.MaximumValueTextLength);
+        ValidateOptionalText(value.StringValue, nameof(value.StringValue), ContractLimits.MaximumValueTextLength,
+            scalarLength: scalarStringLength);
         ValidateOptionalText(value.DisplayValue, nameof(value.DisplayValue), ContractLimits.MaximumValueTextLength);
         ValidateOptionalText(value.SpecTypeId, nameof(value.SpecTypeId), ContractLimits.MaximumIdentifierLength, requireNonWhitespace: true);
         ValidateOptionalText(value.InputUnitTypeId, nameof(value.InputUnitTypeId), ContractLimits.MaximumIdentifierLength, requireNonWhitespace: true);
@@ -1495,7 +1632,8 @@ public static class ContractValidator
         string? value,
         string propertyName,
         int maximumLength,
-        bool requireNonWhitespace = false)
+        bool requireNonWhitespace = false,
+        bool scalarLength = false)
     {
         if (value is null)
         {
@@ -1507,7 +1645,7 @@ public static class ContractValidator
             throw new JsonException($"{propertyName} must be a non-empty string when present.");
         }
 
-        if (value.Length > maximumLength)
+        if ((scalarLength ? value.EnumerateRunes().Count() : value.Length) > maximumLength)
         {
             throw new JsonException($"{propertyName} exceeds the maximum length of {maximumLength} characters.");
         }
@@ -1541,14 +1679,15 @@ public static class ContractValidator
     private static void RequireText(
         string? value,
         string propertyName,
-        int maximumLength = ContractLimits.MaximumTextLength)
+        int maximumLength = ContractLimits.MaximumTextLength,
+        bool scalarLength = false)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
             throw new JsonException($"{propertyName} must be a non-empty string.");
         }
 
-        if (value.Length > maximumLength)
+        if ((scalarLength ? value.EnumerateRunes().Count() : value.Length) > maximumLength)
         {
             throw new JsonException($"{propertyName} exceeds the maximum length of {maximumLength} characters.");
         }

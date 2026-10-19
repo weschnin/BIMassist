@@ -23,6 +23,7 @@ public sealed class App : IExternalApplication
     private RevitSessionRegistry? _sessions;
     private DocumentRevisionService? _revisions;
     private ChangePlanRegistry? _plans;
+    private ChangePlanRegistry? _batchPlans;
     private ChangePlanLifecycle? _planLifecycle;
     private RevitExternalEventRaiser? _externalEventRaiser;
     private UIControlledApplication? _controlledApplication;
@@ -55,12 +56,13 @@ public sealed class App : IExternalApplication
                 _sessions = new RevitSessionRegistry(session);
                 _revisions = new DocumentRevisionService(sessionId);
                 _plans = new ChangePlanRegistry();
-                _planLifecycle = new ChangePlanLifecycle(_plans, _revisions);
+                _batchPlans = new ChangePlanRegistry();
+                _planLifecycle = new ChangePlanLifecycle(_plans, _batchPlans, _revisions);
 
                 var deferredSignal = new DeferredExternalEventSignal();
                 var diagnosticLog = BridgeDiagnosticLog.CreateDefault();
                 var queue = new BridgeRequestQueue(deferredSignal, diagnosticLog.Write);
-                var handler = new BridgeExternalEventHandler(queue, _sessions, _revisions, _plans);
+                var handler = new BridgeExternalEventHandler(queue, _sessions, _revisions, _plans, _batchPlans);
                 _externalEventRaiser = new RevitExternalEventRaiser(ExternalEvent.Create(handler));
                 deferredSignal.Bind(_externalEventRaiser);
 
@@ -129,6 +131,7 @@ public sealed class App : IExternalApplication
                 _sessions = null;
                 _revisions = null;
                 _plans = null;
+                _batchPlans = null;
                 _planLifecycle = null;
             }
 
@@ -206,6 +209,7 @@ public sealed class App : IExternalApplication
         _sessions = null;
         _revisions = null;
         _plans = null;
+        _batchPlans = null;
         _planLifecycle = null;
     }
 

@@ -314,6 +314,77 @@ public sealed class ChangePlanRegistryTests
             Start.AddMinutes(1), _ => throw new Exception("must not execute"))).Code);
     }
 
+    [Theory]
+    [InlineData("closing")]
+    [InlineData("opening")]
+    [InlineData("creating")]
+    [InlineData("saving-as-old-key")]
+    [InlineData("saved-as-new-key")]
+    public void Document_lifecycle_invalidates_registered_batch_and_single_plans(string transition)
+    {
+        var single = new ChangePlanRegistry(maximumPlans: 1);
+        var batch = new ChangePlanRegistry(maximumPlans: 1);
+        var revisions = new DocumentRevisionService("session-1");
+        ChangePlan plan = CreatePlan();
+        // Identical IDs in separate registries prove neither plan shares Apply state.
+        single.Register(plan, Start);
+        batch.Register(plan, Start);
+        string before = revisions.GetCurrent(plan.DocumentKey);
+
+        new ChangePlanLifecycle(single, batch, revisions).Invalidate(plan.DocumentKey);
+
+        Assert.NotEqual(before, revisions.GetCurrent(plan.DocumentKey));
+        foreach (ChangePlanRegistry registry in new[] { single, batch })
+        {
+            Assert.Equal(BridgeErrorCodes.PlanNotFound, Assert.Throws<ChangePlanFailure>(() =>
+                ApplyApproved(registry, CreateApply(plan), plan.SessionId, plan.DocumentKey,
+                    plan.ExpectedRevision, Start.AddMinutes(1), _ => throw new Exception("must not execute"))).Code);
+            ChangePlan replacement = plan with { PlanId = $"replacement-{transition}" };
+            replacement = replacement with { PlanHash = ChangePlanHasher.ComputeHash(replacement) };
+            registry.Register(replacement, Start.AddMinutes(1)); // stale batch plans no longer occupy capacity
+        }
+    }
+
+    [Fact]
+    public void Save_as_invalidates_both_document_keys_without_touching_unrelated_plans()
+    {
+        var single = new ChangePlanRegistry();
+        var batch = new ChangePlanRegistry();
+        var revisions = new DocumentRevisionService("session-1");
+        ChangePlan oldPlan = CreatePlan();
+        ChangePlan newPlan = oldPlan with { PlanId = "new-plan", DocumentKey = "new-key" };
+        newPlan = newPlan with { PlanHash = ChangePlanHasher.ComputeHash(newPlan) };
+        ChangePlan unrelated = oldPlan with { PlanId = "other-plan", DocumentKey = "other-key" };
+        unrelated = unrelated with { PlanHash = ChangePlanHasher.ComputeHash(unrelated) };
+        foreach (ChangePlanRegistry registry in new[] { single, batch })
+        {
+            registry.Register(oldPlan, Start);
+            registry.Register(newPlan, Start);
+            registry.Register(unrelated, Start);
+        }
+        string beforeOld = revisions.GetCurrent(oldPlan.DocumentKey);
+        string beforeNew = revisions.GetCurrent(newPlan.DocumentKey);
+        string beforeOther = revisions.GetCurrent(unrelated.DocumentKey);
+        var lifecycle = new ChangePlanLifecycle(single, batch, revisions);
+
+        lifecycle.Invalidate(oldPlan.DocumentKey); // DocumentSavingAs
+        lifecycle.Invalidate(newPlan.DocumentKey); // DocumentSavedAs
+
+        Assert.NotEqual(beforeOld, revisions.GetCurrent(oldPlan.DocumentKey));
+        Assert.NotEqual(beforeNew, revisions.GetCurrent(newPlan.DocumentKey));
+        Assert.Equal(beforeOther, revisions.GetCurrent(unrelated.DocumentKey));
+        foreach (ChangePlanRegistry registry in new[] { single, batch })
+        {
+            foreach (ChangePlan stale in new[] { oldPlan, newPlan })
+                Assert.Equal(BridgeErrorCodes.PlanNotFound, Assert.Throws<ChangePlanFailure>(() =>
+                    ApplyApproved(registry, CreateApply(stale), stale.SessionId, stale.DocumentKey,
+                        stale.ExpectedRevision, Start.AddMinutes(1), _ => throw new Exception("must not execute"))).Code);
+            Assert.Equal(BridgeErrorCodes.DocumentChanged, Assert.Throws<ChangePlanFailure>(() =>
+                ApplyApproved(registry, CreateApply(unrelated), unrelated.SessionId, unrelated.DocumentKey,
+                    "changed-revision", Start.AddMinutes(1), _ => throw new Exception("must not execute"))).Code);
+        }
+    }
+
     [Fact]
     public void Expired_unattempted_plan_does_not_exhaust_registry_capacity()
     {

@@ -23,7 +23,8 @@ public static class ContractJson
     {
         ArgumentNullException.ThrowIfNull(json);
         EnsureWithinContractLimit(Encoding.UTF8.GetByteCount(json));
-        if (typeof(T) == typeof(PlanSetParameterValueRequest) || typeof(T) == typeof(BridgeRequest) ||
+        if (typeof(T) == typeof(PlanSetStringParametersBatchRequest) || typeof(T) == typeof(StringParameterBatchItem) ||
+            typeof(T) == typeof(PlanSetParameterValueRequest) || typeof(T) == typeof(BridgeRequest) ||
             typeof(T) == typeof(BIMassist.Mcp.Contracts.Reads.SearchDocumentParametersRequest) ||
             typeof(T) == typeof(PageResult<BIMassist.Mcp.Contracts.Reads.DocumentParameterMatch>) ||
             typeof(T) == typeof(BIMassist.Mcp.Contracts.Reads.DocumentParameterMatch))
@@ -40,7 +41,8 @@ public static class ContractJson
     public static T Deserialize<T>(ReadOnlySpan<byte> utf8Json)
     {
         EnsureWithinContractLimit(utf8Json.Length);
-        if (typeof(T) == typeof(PlanSetParameterValueRequest) || typeof(T) == typeof(BridgeRequest) ||
+        if (typeof(T) == typeof(PlanSetStringParametersBatchRequest) || typeof(T) == typeof(StringParameterBatchItem) ||
+            typeof(T) == typeof(PlanSetParameterValueRequest) || typeof(T) == typeof(BridgeRequest) ||
             typeof(T) == typeof(BIMassist.Mcp.Contracts.Reads.SearchDocumentParametersRequest) ||
             typeof(T) == typeof(PageResult<BIMassist.Mcp.Contracts.Reads.DocumentParameterMatch>) ||
             typeof(T) == typeof(BIMassist.Mcp.Contracts.Reads.DocumentParameterMatch))
@@ -56,6 +58,16 @@ public static class ContractJson
 
     private static void ValidateInboundShape<T>(JsonElement root)
     {
+        if (typeof(T) == typeof(PlanSetStringParametersBatchRequest))
+        {
+            ContractValidator.ValidateBatchFields(root);
+            return;
+        }
+        if (typeof(T) == typeof(StringParameterBatchItem))
+        {
+            ContractValidator.ValidateBatchItemFields(root);
+            return;
+        }
         if (typeof(T) == typeof(PageResult<BIMassist.Mcp.Contracts.Reads.DocumentParameterMatch>) ||
             typeof(T) == typeof(BIMassist.Mcp.Contracts.Reads.DocumentParameterMatch))
         {

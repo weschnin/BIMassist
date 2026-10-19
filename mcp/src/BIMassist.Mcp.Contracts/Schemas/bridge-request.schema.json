@@ -27,6 +27,7 @@
         "parameterValue.get",
         "metadataSnapshot.export",
         "parameterValue.set.plan",
+        "parameterValue.set.batch.plan",
         "sharedParameter.family.add.plan",
         "sharedParameter.bind.plan",
         "changePlan.apply"
@@ -44,7 +45,7 @@
       "then": { "required": ["documentKey"] }
     },
     {
-      "if": { "properties": { "operation": { "enum": ["parameterValue.set.plan", "sharedParameter.family.add.plan", "sharedParameter.bind.plan", "changePlan.apply"] } }, "required": ["operation"] },
+      "if": { "properties": { "operation": { "enum": ["parameterValue.set.plan", "parameterValue.set.batch.plan", "sharedParameter.family.add.plan", "sharedParameter.bind.plan", "changePlan.apply"] } }, "required": ["operation"] },
       "then": { "required": ["expectedRevision", "idempotencyKey"] }
     },
     {
@@ -54,6 +55,13 @@
     {
       "if": { "properties": { "operation": { "const": "parameterValue.set.plan" } }, "required": ["operation"] },
       "then": { "properties": { "payload": { "$ref": "#/$defs/planSetParameterValue" } } }
+    },
+    {
+      "if": { "properties": { "operation": { "const": "parameterValue.set.batch.plan" } }, "required": ["operation"] },
+      "then": { "properties": {
+        "documentKey": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "\\S" },
+        "payload": { "$ref": "#/$defs/planSetStringParametersBatch" }
+      } }
     },
     {
       "if": { "properties": { "operation": { "const": "changePlan.apply" } }, "required": ["operation"] },
@@ -85,6 +93,53 @@
     }
   ],
   "$defs": {
+    "planSetStringParametersBatch": {
+      "type": "object", "additionalProperties": false, "required": ["documentKey", "items"],
+      "properties": {
+        "documentKey": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "\\S" },
+        "items": { "type": "array", "minItems": 2, "maxItems": 20, "uniqueItems": true,
+          "items": { "type": "object", "additionalProperties": false,
+            "required": ["target", "parameter", "newString"],
+            "properties": {
+              "target": { "$ref": "#/$defs/batchTarget" },
+              "parameter": { "$ref": "#/$defs/batchParameter" },
+              "newString": { "type": "string", "maxLength": 32768 }
+            }
+          }
+        }
+      }
+    },
+    "batchTarget": {
+      "type": "object", "additionalProperties": false, "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["document", "element", "elementType"] },
+        "uniqueId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
+        "elementId": { "type": "integer", "minimum": 1, "maximum": 9223372036854775807 }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "document" } }, "required": ["kind"] }, "then": { "not": { "anyOf": [{ "required": ["uniqueId"] }, { "required": ["elementId"] }] } } },
+        { "if": { "properties": { "kind": { "enum": ["element", "elementType"] } }, "required": ["kind"] }, "then": { "required": ["uniqueId", "elementId"] } }
+      ]
+    },
+    "batchParameter": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "stableId", "name"],
+      "properties": {
+        "kind": { "enum": ["sharedGuid", "builtIn", "parameterElement"] },
+        "sharedGuid": { "type": "string", "format": "uuid", "not": { "const": "00000000-0000-0000-0000-000000000000" } },
+        "builtInId": { "type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807, "not": { "const": 0 } },
+        "definitionId": { "type": "integer", "minimum": 1, "maximum": 9223372036854775807 },
+        "stableId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "\\S" },
+        "ownerContext": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
+        "dataTypeId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" },
+        "isInstance": { "type": "boolean" }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "sharedGuid" } }, "required": ["kind"] }, "then": { "required": ["sharedGuid"], "not": { "anyOf": [{ "required": ["builtInId"] }, { "required": ["definitionId"] }] } } },
+        { "if": { "properties": { "kind": { "const": "builtIn" } }, "required": ["kind"] }, "then": { "required": ["builtInId"], "not": { "anyOf": [{ "required": ["sharedGuid"] }, { "required": ["definitionId"] }] } } },
+        { "if": { "properties": { "kind": { "const": "parameterElement" } }, "required": ["kind"] }, "then": { "required": ["definitionId", "ownerContext", "dataTypeId"], "not": { "anyOf": [{ "required": ["sharedGuid"] }, { "required": ["builtInId"] }] } } }
+      ]
+    },
     "searchDocumentParameters": {
       "type": "object",
       "additionalProperties": false,

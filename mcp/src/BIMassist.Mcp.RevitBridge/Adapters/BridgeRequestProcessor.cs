@@ -23,6 +23,7 @@ public sealed class BridgeRequestProcessor
     private readonly IRevitContextSnapshotProvider _context;
     private readonly IReadOperationDispatcher? _reads;
     private readonly IPlanOperationDispatcher? _plans;
+    private readonly IPlanOperationDispatcher? _batchPlans;
     private readonly IApplyOperationDispatcher? _apply;
 
     public BridgeRequestProcessor(IRevitContextSnapshotProvider context)
@@ -48,11 +49,22 @@ public sealed class BridgeRequestProcessor
         IReadOperationDispatcher? reads,
         IPlanOperationDispatcher? plans,
         IApplyOperationDispatcher? apply)
+        : this(context, reads, plans, apply, null)
+    {
+    }
+
+    internal BridgeRequestProcessor(
+        IRevitContextSnapshotProvider context,
+        IReadOperationDispatcher? reads,
+        IPlanOperationDispatcher? plans,
+        IApplyOperationDispatcher? apply,
+        IPlanOperationDispatcher? batchPlans)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _reads = reads;
         _plans = plans;
         _apply = apply;
+        _batchPlans = batchPlans;
     }
 
     public BridgeResponse Process(BridgeRequest request, CancellationToken cancellationToken = default) =>
@@ -79,6 +91,7 @@ public sealed class BridgeRequestProcessor
             BridgeOperations.GetDocumentContext => ProcessDocumentContext(request, started),
             _ when BridgeOperations.Reads.Contains(request.Operation) => ProcessRead(request, started, cancellationToken, searchBudget),
             BridgeOperations.PlanSetParameterValues => ProcessPlan(request, started),
+            BridgeOperations.PlanSetStringParametersBatch => ProcessPlan(request, started),
             BridgeOperations.ApplyChangePlan => ProcessApply(request, started, cancellationToken),
             _ => Failure(
                 request.RequestId,
@@ -155,14 +168,16 @@ public sealed class BridgeRequestProcessor
             return Failure(request.RequestId, BridgeErrorCodes.DocumentChanged,
                 "The requested document has changed.", started);
         }
-        if (_plans is null)
+        IPlanOperationDispatcher? dispatcher = request.Operation == BridgeOperations.PlanSetStringParametersBatch
+            ? _batchPlans : _plans;
+        if (dispatcher is null)
         {
             return Failure(request.RequestId, BridgeErrorCodes.OperationNotSupported,
                 "The requested plan operation is not available in the current bridge phase.", started);
         }
         try
         {
-            ChangePlan plan = _plans.Plan(request);
+            ChangePlan plan = dispatcher.Plan(request);
             if (!string.Equals(plan.SessionId, session.SessionId, StringComparison.Ordinal) ||
                 !string.Equals(plan.DocumentKey, document.DocumentKey, StringComparison.Ordinal) ||
                 !string.Equals(plan.ExpectedRevision, document.Revision, StringComparison.Ordinal))

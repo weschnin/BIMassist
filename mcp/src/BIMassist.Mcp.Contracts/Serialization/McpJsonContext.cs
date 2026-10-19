@@ -38,6 +38,8 @@ namespace BIMassist.Mcp.Contracts.Serialization;
 [JsonSerializable(typeof(SharedParameterDefinitionState))]
 [JsonSerializable(typeof(ChangePlanHasher.ChangePlanHashPayload))]
 [JsonSerializable(typeof(PlanSetParameterValueRequest))]
+[JsonSerializable(typeof(PlanSetStringParametersBatchRequest))]
+[JsonSerializable(typeof(StringParameterBatchItem))]
 [JsonSerializable(typeof(ApplyChangePlanRequest))]
 [JsonSerializable(typeof(ApprovalMetadata))]
 [JsonSerializable(typeof(PageRequest))]

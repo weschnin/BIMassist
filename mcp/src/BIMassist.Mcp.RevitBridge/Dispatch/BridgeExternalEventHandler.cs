@@ -15,6 +15,8 @@ public sealed class BridgeExternalEventHandler : IExternalEventHandler
     private readonly RevitSessionRegistry _sessions;
     private readonly DocumentRevisionService _revisions;
     private readonly ChangePlanRegistry _plans;
+    // Separate process-lifetime PLAN registry: the existing single-write Apply never sees it.
+    private readonly ChangePlanRegistry _batchPlans;
     private readonly StablePaginator _paginator;
     private readonly MetadataSnapshotService _metadataSnapshotService;
 
@@ -31,11 +33,22 @@ public sealed class BridgeExternalEventHandler : IExternalEventHandler
         RevitSessionRegistry sessions,
         DocumentRevisionService revisions,
         ChangePlanRegistry plans)
+        : this(queue, sessions, revisions, plans, new ChangePlanRegistry())
+    {
+    }
+
+    internal BridgeExternalEventHandler(
+        BridgeRequestQueue queue,
+        RevitSessionRegistry sessions,
+        DocumentRevisionService revisions,
+        ChangePlanRegistry plans,
+        ChangePlanRegistry batchPlans)
     {
         _queue = queue ?? throw new ArgumentNullException(nameof(queue));
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _revisions = revisions ?? throw new ArgumentNullException(nameof(revisions));
         _plans = plans ?? throw new ArgumentNullException(nameof(plans));
+        _batchPlans = batchPlans ?? throw new ArgumentNullException(nameof(batchPlans));
         var cursorCodec = new ReadCursorCodec(RandomNumberGenerator.GetBytes(32));
         _paginator = new StablePaginator(cursorCodec);
         _metadataSnapshotService = new MetadataSnapshotService(cursorCodec);
@@ -76,8 +89,12 @@ public sealed class BridgeExternalEventHandler : IExternalEventHandler
             documentParameterSearchService);
         var planSource = new RevitSetParameterPlanSource(application, _sessions, _revisions, parameterSource);
         var planDispatcher = new SetParameterPlanDispatcher(planSource, _plans, () => DateTimeOffset.UtcNow);
+        var batchDispatcher = new BatchSetParameterPlanDispatcher(
+            (payload, sessionId, documentKey, expectedRevision, now) =>
+                planSource.BuildBatchPlan(payload, sessionId, documentKey, expectedRevision, now),
+            _batchPlans, () => DateTimeOffset.UtcNow);
         var applyDispatcher = new RevitStringChangePlanApply(application, _sessions, _revisions, _plans);
-        var processor = new BridgeRequestProcessor(context, readDispatcher, planDispatcher, applyDispatcher);
+        var processor = new BridgeRequestProcessor(context, readDispatcher, planDispatcher, applyDispatcher, batchDispatcher);
         _queue.ExecuteNextWithContext(queued => processor.Process(queued.Request, queued.CancellationToken, callbackStarted));
     }
 

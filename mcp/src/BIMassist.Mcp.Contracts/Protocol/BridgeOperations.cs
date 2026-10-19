@@ -15,6 +15,7 @@ public static class BridgeOperations
     public const string GetParameterValues = "parameterValue.get";
     public const string ExportMetadataSnapshot = "metadataSnapshot.export";
     public const string PlanSetParameterValues = "parameterValue.set.plan";
+    public const string PlanSetStringParametersBatch = "parameterValue.set.batch.plan";
     public const string PlanAddSharedParameterToFamily = "sharedParameter.family.add.plan";
     public const string PlanBindSharedParameter = "sharedParameter.bind.plan";
     public const string ApplyChangePlan = "changePlan.apply";
@@ -34,6 +35,7 @@ public static class BridgeOperations
         GetParameterValues,
         ExportMetadataSnapshot,
         PlanSetParameterValues,
+        PlanSetStringParametersBatch,
         PlanAddSharedParameterToFamily,
         PlanBindSharedParameter,
         ApplyChangePlan
@@ -62,6 +64,7 @@ public static class BridgeOperations
     public static IReadOnlySet<string> Changes { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         PlanSetParameterValues,
+        PlanSetStringParametersBatch,
         PlanAddSharedParameterToFamily,
         PlanBindSharedParameter,
         ApplyChangePlan

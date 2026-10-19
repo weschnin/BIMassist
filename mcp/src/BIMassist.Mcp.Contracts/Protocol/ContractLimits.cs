@@ -13,6 +13,7 @@ public static class ContractLimits
     public const int MaximumTextLength = 4_096;
     public const int MaximumValueTextLength = 32_768;
     public const int MaximumOperationsPerPlan = 1_000;
+    public const int MaximumStringBatchItems = 20;
     public const int MaximumWarnings = 1_000;
     public const int MaximumSessionDocuments = 1_000;
     public const int MaximumBindingCategories = 1_000;
