@@ -238,5 +238,21 @@ namespace BIMassist.Properties {
                 this["FavoritenMaterialienJson"] = value;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("100")]
+        public string Bgk3DTextHeightMm {
+            get { return ((string)(this["Bgk3DTextHeightMm"])); }
+            set { this["Bgk3DTextHeightMm"] = value; }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("5")]
+        public string Bgk3DTextDepthMm {
+            get { return ((string)(this["Bgk3DTextDepthMm"])); }
+            set { this["Bgk3DTextDepthMm"] = value; }
+        }
     }
 }

@@ -53,6 +53,20 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+        <Style x:Key="SelectedTypTransferStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource ItemButtonSendValuesStyle}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectedItem, ElementName=Typmarkierung}" Value="{x:Null}">
+                    <Setter Property="IsEnabled" Value="False"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="SelectedTypTextStyle" TargetType="{x:Type Button}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectedItem, ElementName=Typmarkierung}" Value="{x:Null}">
+                    <Setter Property="IsEnabled" Value="False"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
         <Style x:Key="SearchTextResult" TargetType="{x:Type TextBlock}">
             <Setter Property="Background" Value="Transparent"/>
         </Style>
@@ -288,10 +302,14 @@
                     CommandParameter="{Binding SelectedItem, ElementName=Typmarkierung, UpdateSourceTrigger=PropertyChanged}">
                 <Image Source="/BIMassist;component/Resources/del_32px.png"/>
             </Button>
-            <Button Style="{StaticResource ItemButtonSendValuesStyle}" Command="{Binding SendValues}" ToolTip="Werte in die Projektparameter eintragen" Margin="10,0,0,0"
+            <Button Style="{StaticResource SelectedTypTransferStyle}" Command="{Binding SendValues}" ToolTip="Werte in die Projektparameter eintragen" Margin="10,0,0,0"
                     CommandParameter="{Binding SelectedItem, ElementName=Typmarkierung, UpdateSourceTrigger=PropertyChanged}">
                 <Image Source="/BIMassist;component/Resources/writeIntoFamily_32px.png"/>
             </Button>
+            <Button Content="3DText generieren" Style="{StaticResource SelectedTypTextStyle}" Command="{Binding Generate3DText}"
+                    CommandParameter="{Binding SelectedItem, ElementName=Typmarkierung}"
+                    ToolTip="BGK und Typmarkierung als 3D-Geometrie in einer neuen Familie erzeugen"
+                    Margin="8,0,0,0" Padding="8,2" Height="23"/>
             <TextBlock Width="10" />
         </StackPanel>
 

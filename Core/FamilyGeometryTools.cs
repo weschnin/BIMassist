@@ -994,7 +994,7 @@ namespace BIMassist.Core
             {
                 foreach (var geometryObject in geoElem)
                 {
-                    if (geometryObject is Solid solid && solid.Volume > 0)
+                    if (geometryObject is Solid solid && solid.Faces.Size > 0)
                     {
                         geometryObjects.Add(solid);
                     }

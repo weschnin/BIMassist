@@ -319,6 +319,13 @@ namespace BIMassist
             }
             catch { }
 
+            try
+            {
+                if (BGKManagerPaneProvider.BGKManagerCtrlInstance?.DataContext is MainViewModel bgkVm)
+                    bgkVm.DisposeEvents();
+            }
+            catch { }
+
             return Result.Succeeded;
         }
 
