@@ -1,6 +1,8 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Events;
 using BIMassist.Core;
+using BIMassist.Commands;
 using BIMassist.Models;
 using BIMassist.ViewModels;
 using System;
@@ -13,6 +15,7 @@ using System.Windows;
 using System.Windows.Forms;
 using System.Xml.Serialization;
 using System.Collections.Specialized;
+using System.Collections;
 using System.Windows.Input;
 using BIMassist.Helpers;
 using System.ComponentModel;
@@ -77,6 +80,25 @@ namespace BIMassist
 
         private ExternalEvent _assignEvent;
         private BgkAssignExternalEventHandler _assignHandler;
+        private UIApplication _selectionApp;
+        private readonly BgkSelectionSnapshot<Document, ElementId> _projectSelection = new();
+        private ExternalEvent _textEvent;
+        private Bgk3DTextExternalEventHandler _textHandler;
+        private int _selectedTypCount;
+        public int SelectedTypCount
+        {
+            get => _selectedTypCount;
+            set
+            {
+                if (Set(ref _selectedTypCount, value))
+                {
+                    OnPropertyChanged(nameof(CanTransferSelectedTypes));
+                    OnPropertyChanged(nameof(CanGenerateSelectedTypes));
+                }
+            }
+        }
+        public bool CanTransferSelectedTypes => BgkTypeSelectionRules.CanTransfer(SelectedTypCount);
+        public bool CanGenerateSelectedTypes => BgkTypeSelectionRules.CanGenerate(SelectedTypCount);
 
         private ObservableCollection<Baugruppe> _labels;
         public ObservableCollection<Baugruppe> Baugruppen
@@ -275,6 +297,20 @@ namespace BIMassist
             set => Set(ref _bestaetigungBGKZUweisung, value);
         }
 
+        private string _bgk3DTextHeightMm = "100";
+        public string Bgk3DTextHeightMm
+        {
+            get => _bgk3DTextHeightMm;
+            set => Set(ref _bgk3DTextHeightMm, value);
+        }
+
+        private string _bgk3DTextDepthMm = "5";
+        public string Bgk3DTextDepthMm
+        {
+            get => _bgk3DTextDepthMm;
+            set => Set(ref _bgk3DTextDepthMm, value);
+        }
+
         Document doc;
         UIDocument uidoc;
         UIApplication uiapp;
@@ -336,6 +372,7 @@ namespace BIMassist
         public ICommand AllSubNudesProtectionCmd { get; }
 
         public ICommand SendValues { get; }
+        public ICommand Generate3DText { get; }
 
         public ICommand LoadOwnDataFromConfiguredPathCommand { get; }
         public ICommand CloseSettingsWindow { get; }
@@ -361,7 +398,14 @@ namespace BIMassist
 
             // ExternalEvent + Handler initialisieren
             _assignHandler = new BgkAssignExternalEventHandler();
+            _assignHandler.Report = message => ShowStatus(message, 30000);
             _assignEvent = ExternalEvent.Create(_assignHandler);
+            _selectionApp = uiapp;
+            _selectionApp.SelectionChanged += OnRevitSelectionChanged;
+            if (doc != null && !doc.IsFamilyDocument)
+                _projectSelection.Update(doc, uidoc.Selection.GetElementIds(), false);
+            _textHandler = new Bgk3DTextExternalEventHandler { Report = message => ShowStatus(message, 30000) };
+            _textEvent = ExternalEvent.Create(_textHandler);
 
             Baugruppen = new ObservableCollection<Baugruppe>();
             // Observe collection changes so we can track edits in nodes/typen
@@ -410,6 +454,124 @@ namespace BIMassist
             AllSubNudesProtectionCmd = new RelayCommands<Baugruppe>(AllSubNodesProtectionExecute);
 
             SendValues = new RelayCommands<Typmarkierung>(SendValuesExecute);
+            Generate3DText = new RelayCommands<IList>(Generate3DTextExecute);
+        }
+
+        public void DisposeEvents()
+        {
+            if (_selectionApp != null)
+            {
+                _selectionApp.SelectionChanged -= OnRevitSelectionChanged;
+                _selectionApp = null;
+            }
+            _projectSelection.Clear();
+            _assignHandler.Report = null;
+            _textHandler.Request = null;
+            _textHandler.TargetDocument = null;
+            _textHandler.Report = null;
+            _textEvent?.Dispose();
+            _assignEvent?.Dispose();
+        }
+
+        private void OnRevitSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            Document selectedDocument = e.GetDocument();
+            if (selectedDocument == null || selectedDocument.IsFamilyDocument)
+            {
+                _projectSelection.Clear();
+                return;
+            }
+            ElementId[] selectedIds = e.GetSelectedElements().ToArray();
+            if (selectedIds.Length > 0)
+            {
+                _projectSelection.Update(selectedDocument, selectedIds, false);
+                return;
+            }
+            // Fokus kann beim SelectionChanged-Ereignis noch auf Revit stehen. Erst nach
+            // Verarbeitung des Mausklicks entscheiden, ob es eine echte Modell-Abwahl war.
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (!selectedDocument.IsValidObject || !selectedDocument.Equals(uiapp?.ActiveUIDocument?.Document))
+                {
+                    _projectSelection.Clear();
+                    return;
+                }
+                _projectSelection.Update(selectedDocument, selectedIds,
+                    BGKManagerPaneProvider.BGKManagerCtrlInstance?.IsKeyboardFocusWithin == true);
+            }), System.Windows.Threading.DispatcherPriority.Background);
+        }
+
+        private void Generate3DTextExecute(IList selectedItems)
+        {
+            Typmarkierung[] selectedTypes = selectedItems?.Cast<Typmarkierung>().ToArray() ?? Array.Empty<Typmarkierung>();
+            if (!BgkTypeSelectionRules.CanGenerate(selectedTypes.Length))
+            {
+                ShowStatus("Bitte BGK und Typmarkierung in der Typenliste auswählen.");
+                return;
+            }
+            List<Bgk3DTextSpec> specs = new();
+            foreach (Typmarkierung selectedTyp in selectedTypes)
+            {
+                Baugruppe? node = FindNodeContainingTyp(selectedTyp);
+                if (node == null)
+                {
+                    ShowStatus("Die gewählte Typmarkierung gehört zu keiner BGK-Klasse.");
+                    return;
+                }
+                if (!Bgk3DTextSpec.TryCreate(node.Key, node.Description, selectedTyp.Typnummer.ToString(),
+                    selectedTyp.Typbezeichnung, out Bgk3DTextSpec? spec, out string invalid))
+                {
+                    ShowStatus(invalid);
+                    return;
+                }
+                specs.Add(spec!);
+            }
+            if (!Bgk3DTextBatch.TryCreate(specs, out Bgk3DTextBatch? batch, out string error))
+            {
+                ShowStatus(error);
+                return;
+            }
+            if (!Bgk3DTextSpec.TrySize(Bgk3DTextHeightMm, Bgk3DTextDepthMm,
+                out double height, out double depth, out error))
+            {
+                ShowStatus(error + " Bitte Einstellungen prüfen.");
+                return;
+            }
+            if (_textHandler.Request != null)
+            {
+                ShowStatus("Die vorherige 3DText-Anfrage wird noch verarbeitet.");
+                return;
+            }
+
+            Document? currentDocument = uiapp?.ActiveUIDocument?.Document;
+            if (currentDocument == null)
+            {
+                ShowStatus("Kein aktuelles Revit-Projekt. Bitte BGK-Manager im Projekt erneut öffnen.");
+                return;
+            }
+            _textHandler.TargetDocument = currentDocument;
+            _textHandler.Request = batch;
+            _textHandler.HeightMm = height;
+            _textHandler.DepthMm = depth;
+            try
+            {
+                ExternalEventRequest result = _textEvent.Raise();
+                if (result != ExternalEventRequest.Accepted)
+                {
+                    _textHandler.Request = null;
+                    _textHandler.TargetDocument = null;
+                    ShowStatus("3DText-Anfrage wurde von Revit nicht angenommen: " + result);
+                    return;
+                }
+                ShowStatus($"3DText wird für {selectedTypes.Length} ausgewählte(n) Typ(en) erstellt: "
+                    + string.Join(", ", batch.Types.Select(type => type.TypeName)));
+            }
+            catch (Exception ex)
+            {
+                _textHandler.Request = null;
+                _textHandler.TargetDocument = null;
+                ShowStatus("3DText konnte nicht gestartet werden: " + ex.Message);
+            }
         }
 
         public void RefreshDocumentContext(UIApplication currentApp)
@@ -417,9 +579,21 @@ namespace BIMassist
             if (currentApp == null)
                 return;
 
+            if (!ReferenceEquals(_selectionApp, currentApp))
+            {
+                if (_selectionApp != null)
+                    _selectionApp.SelectionChanged -= OnRevitSelectionChanged;
+                _selectionApp = currentApp;
+                _selectionApp.SelectionChanged += OnRevitSelectionChanged;
+            }
             uiapp = currentApp;
             uidoc = uiapp.ActiveUIDocument;
             doc = uidoc?.Document;
+            if (doc == null || doc.IsFamilyDocument)
+                _projectSelection.Clear();
+            else
+                _projectSelection.Update(doc, uidoc.Selection.GetElementIds(),
+                    BGKManagerPaneProvider.BGKManagerCtrlInstance?.IsKeyboardFocusWithin == true);
             _suspendChangeTracking = true;
             try
             {
@@ -433,8 +607,17 @@ namespace BIMassist
 
         private void ApplySettingsAndCloseWindows()
         {
+            bool closeSettings = true;
             try
             {
+                if (!Bgk3DTextSpec.TrySize(Bgk3DTextHeightMm, Bgk3DTextDepthMm,
+                    out _, out _, out string sizeError))
+                {
+                    closeSettings = false;
+                    System.Windows.MessageBox.Show(sizeError, "3DText-Einstellungen",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
                 var configuredPath = string.IsNullOrWhiteSpace(EigeneDaten)
                     ? string.Empty
                     : EigeneDaten.Trim();
@@ -444,6 +627,8 @@ namespace BIMassist
                 var settings = Properties.Settings.Default;
                 settings.PfadBGKDatei = configuredPath;
                 settings.EigeneDaten = configuredPath;
+                settings.Bgk3DTextHeightMm = Bgk3DTextHeightMm;
+                settings.Bgk3DTextDepthMm = Bgk3DTextDepthMm;
                 SaveSettings();
 
                 if (!string.IsNullOrWhiteSpace(configuredPath) && File.Exists(configuredPath))
@@ -462,6 +647,7 @@ namespace BIMassist
             }
             catch (Exception ex)
             {
+                closeSettings = false;
                 TaskDialog.Show("Fehler", "Einstellungen konnten nicht übernommen werden: " + ex.Message);
             }
             finally
@@ -469,7 +655,7 @@ namespace BIMassist
                 try
                 {
                     var app = System.Windows.Application.Current;
-                    if (app != null)
+                    if (closeSettings && app != null)
                     {
                         foreach (var wnd in app.Windows.OfType<Window>().Where(w => w is Einstellungen).ToList())
                             wnd.Close();
@@ -485,7 +671,7 @@ namespace BIMassist
         {
             try
             {
-                if (selectedTyp == null) return;
+                if (!CanTransferSelectedTypes || selectedTyp == null) return;
                 var node = FindNodeContainingTyp(selectedTyp);
                 if (node == null) return;
 
@@ -498,54 +684,16 @@ namespace BIMassist
                     return;
                 }
 
-                // If we are editing a family, write into the currently active family type.
-                if (currentDoc.IsFamilyDocument)
+                // Eine vorhandene Projektauswahl hat Vorrang. Revit kann sie beim
+                // Fokuswechsel in den BGK-Manager aus der aktiven Auswahl entfernen.
+                List<ElementId> ids = currentDoc.IsFamilyDocument
+                    ? new List<ElementId>()
+                    : _projectSelection.Resolve(currentDoc, currentUiDoc.Selection.GetElementIds()).ToList();
+
+                var request = new BgkAssignRequest
                 {
-                    _assignHandler.SetRequest(new BgkAssignRequest
-                    {
-                        Mode = AssignMode.ActiveFamilyDoc,
-                        ElementIds = null,
-                        BgkKey = node.Key,
-                        BgkDescription = node.Description,
-                        TypNummer = selectedTyp.Typnummer.ToString(),
-                        Typbeschreibung = selectedTyp.Typbezeichnung,
-                        BestaetigungBGKZUweisung = BestaetigungBGKZUweisung,
-                        FamilyAutoSave = FamilyAutoSave
-                    });
-
-                    _assignEvent.Raise();
-                    // Übertragen ändert keine BGK-Daten
-                    changed = false;
-                    ShowStatus("Daten in aktive Familie übertragen.");
-                    return;
-                }
-
-                var ids = currentUiDoc?.Selection?.GetElementIds()?.ToList() ?? new List<ElementId>();
-                if (ids.Count == 0)
-                {
-                    try
-                    {
-                        ShowStatus("Bitte Elemente auswählen und mit ENTER bestätigen...");
-                        var picked = currentUiDoc.Selection.PickObjects(Autodesk.Revit.UI.Selection.ObjectType.Element,
-                            "Bitte Elemente auswählen und mit ENTER bestätigen");
-                        ids = picked?.Select(r => r.ElementId).Distinct().ToList() ?? new List<ElementId>();
-                    }
-                    catch (Autodesk.Revit.Exceptions.OperationCanceledException)
-                    {
-                        ShowStatus("Auswahl abgebrochen – Werte nicht übertragen.");
-                        return;
-                    }
-
-                    if (ids.Count == 0)
-                    {
-                        ShowStatus("Keine Elemente ausgewählt – Werte nicht übertragen.");
-                        return;
-                    }
-                }
-
-                _assignHandler.SetRequest(new BgkAssignRequest
-                {
-                    Mode = AssignMode.ProjectSelection,
+                    Mode = currentDoc.IsFamilyDocument ? AssignMode.ActiveFamilyDoc : AssignMode.ProjectSelection,
+                    TargetDocument = currentDoc,
                     ElementIds = ids,
                     BgkKey = node.Key,
                     BgkDescription = node.Description,
@@ -553,12 +701,30 @@ namespace BIMassist
                     Typbeschreibung = selectedTyp.Typbezeichnung,
                     BestaetigungBGKZUweisung = BestaetigungBGKZUweisung,
                     FamilyAutoSave = FamilyAutoSave
-                });
-
-                _assignEvent.Raise();
+                };
+                if (!_assignHandler.TrySetRequest(request))
+                {
+                    ShowStatus("Die vorige BGK-Übertragung wird noch verarbeitet.");
+                    return;
+                }
+                ExternalEventRequest result;
+                try { result = _assignEvent.Raise(); }
+                catch
+                {
+                    _assignHandler.CancelRequest(request);
+                    throw;
+                }
+                if (result != ExternalEventRequest.Accepted)
+                {
+                    _assignHandler.CancelRequest(request);
+                    ShowStatus("BGK-Übertragung wurde von Revit nicht angenommen: " + result);
+                    return;
+                }
                 // Übertragen ändert keine BGK-Daten
                 changed = false;
-                ShowStatus("Daten übertragen.");
+                ShowStatus(currentDoc.IsFamilyDocument ? "Übertragung in die aktive Familie läuft …"
+                    : ids.Count == 0 ? "Bitte Elemente im Modell auswählen und mit ENTER bestätigen …"
+                    : $"BGK-Daten werden auf {ids.Count} vorab gewählte Element(e) übertragen …");
             }
             catch (Exception ex)
             {
@@ -983,6 +1149,8 @@ namespace BIMassist
             SharedParamFileName = GetSetting<string>(settings, "SharedParamFileName", string.Empty);
             BestaetigungBGKZUweisung = GetSetting<bool>(settings, "BGKZuweisungenBestätigung", false);
             FamilyAutoSave = GetSetting<bool>(settings, "FamilyAutoSave", false);
+            Bgk3DTextHeightMm = GetSetting<string>(settings, "Bgk3DTextHeightMm", "100");
+            Bgk3DTextDepthMm = GetSetting<string>(settings, "Bgk3DTextDepthMm", "5");
         }
 
         public void SaveSettings()
@@ -1011,8 +1179,10 @@ namespace BIMassist
             SetSetting(settings, "BGKZuweisungenBestätigung", BestaetigungBGKZUweisung);
             SetSetting(settings, "FamilyAutoSave", FamilyAutoSave);
             SetSetting(settings, "PfadBGKDatei", EigeneDaten);
+            SetSetting(settings, "Bgk3DTextHeightMm", Bgk3DTextHeightMm);
+            SetSetting(settings, "Bgk3DTextDepthMm", Bgk3DTextDepthMm);
 
-            try { settings.Save(); } catch { }
+            settings.Save();
         }
 
         public void SaveData(string dlg = "false")

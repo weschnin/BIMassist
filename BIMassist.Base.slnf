@@ -1,0 +1,8 @@
+{
+  "solution": {
+    "path": "BIMassist.sln",
+    "projects": [
+      "BIMassist.csproj"
+    ]
+  }
+}

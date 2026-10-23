@@ -4,6 +4,7 @@ using BIMassist.Core;
 using System.Windows.Controls;
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 
 namespace BIMassist
 {
@@ -12,6 +13,38 @@ namespace BIMassist
         public Hauptfenster()
         {
             InitializeComponent();
+            DataContextChanged += (_, _) => UpdateSelectedTypeCount();
+        }
+
+        private void Typmarkierung_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateSelectedTypeCount();
+
+        private void SelectBgkType_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            ToggleTypeSelection(sender);
+            e.Handled = true;
+        }
+
+        private void SelectBgkType_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (e.Key != Key.Space) return;
+            ToggleTypeSelection(sender);
+            e.Handled = true;
+        }
+
+        private void ToggleTypeSelection(object sender)
+        {
+            if (sender is not System.Windows.Controls.CheckBox box || box.DataContext is not Typmarkierung selectedType) return;
+            if (Typmarkierung.SelectedItems.Contains(selectedType))
+                Typmarkierung.SelectedItems.Remove(selectedType);
+            else
+                Typmarkierung.SelectedItems.Add(selectedType);
+            UpdateSelectedTypeCount();
+        }
+
+        private void UpdateSelectedTypeCount()
+        {
+            if (DataContext is MainViewModel vm)
+                vm.SelectedTypCount = Typmarkierung.SelectedItems.Count;
         }
 
         public void SaveData()
