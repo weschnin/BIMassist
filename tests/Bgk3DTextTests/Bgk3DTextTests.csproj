@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\Core\Bgk3DTextSpec.cs" Link="Bgk3DTextSpec.cs" />
+    <Compile Include="..\..\Core\Bgk3DTextBatch.cs" Link="Bgk3DTextBatch.cs" />
     <Compile Include="..\..\Core\BgkSelectionSnapshot.cs" Link="BgkSelectionSnapshot.cs" />
   </ItemGroup>
 </Project>

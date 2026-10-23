@@ -54,16 +54,18 @@
             </Style.Triggers>
         </Style>
         <Style x:Key="SelectedTypTransferStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource ItemButtonSendValuesStyle}">
+            <Setter Property="IsEnabled" Value="False"/>
             <Style.Triggers>
-                <DataTrigger Binding="{Binding SelectedItem, ElementName=Typmarkierung}" Value="{x:Null}">
-                    <Setter Property="IsEnabled" Value="False"/>
+                <DataTrigger Binding="{Binding CanTransferSelectedTypes}" Value="True">
+                    <Setter Property="IsEnabled" Value="True"/>
                 </DataTrigger>
             </Style.Triggers>
         </Style>
         <Style x:Key="SelectedTypTextStyle" TargetType="{x:Type Button}">
+            <Setter Property="IsEnabled" Value="False"/>
             <Style.Triggers>
-                <DataTrigger Binding="{Binding SelectedItem, ElementName=Typmarkierung}" Value="{x:Null}">
-                    <Setter Property="IsEnabled" Value="False"/>
+                <DataTrigger Binding="{Binding CanGenerateSelectedTypes}" Value="True">
+                    <Setter Property="IsEnabled" Value="True"/>
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -259,13 +261,30 @@
 
         </DockPanel>
 
-        <TextBlock x:Name="textBlock1" Grid.Column="2" HorizontalAlignment="Left" Margin="5,6,5,2" Grid.Row="6" TextWrapping="Wrap" Text="Typenliste" VerticalAlignment="Center" Width="74" Height="16"/>
+        <StackPanel Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="6" Orientation="Horizontal" Margin="5,6,5,2" VerticalAlignment="Center">
+            <TextBlock Text="Typenliste"/>
+            <TextBlock Margin="10,0,0,0" Text="Ausgewählt: "/>
+            <TextBlock Text="{Binding SelectedTypCount}"/>
+            <TextBlock Margin="8,0,0,0" Text="(Kästchen anklicken)"/>
+        </StackPanel>
 
         <!-- BGK-Kommentar wurde entfernt -->
         <DataGrid x:Name="Typmarkierung" CanUserResizeRows="False" HorizontalScrollBarVisibility="Visible"  VerticalScrollBarVisibility="Auto" Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="7" Margin="5,0,5,3"
-                      AutoGenerateColumns="False" CanUserDeleteRows="False" CanUserAddRows="False" CanUserResizeColumns="True" CanUserSortColumns="True" SelectionMode="Single"
+                      AutoGenerateColumns="False" CanUserDeleteRows="False" CanUserAddRows="False" CanUserResizeColumns="True" CanUserSortColumns="True" SelectionMode="Extended" SelectionUnit="FullRow"
+                      SelectionChanged="Typmarkierung_SelectionChanged"
                       ItemsSource="{Binding SelectedNode.Typmarkierungen, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
             <DataGrid.Columns>
+                <DataGridTemplateColumn Width="32" CanUserSort="False" IsReadOnly="True">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <CheckBox x:Name="SelectBgkType" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      ToolTip="Diesen Typ zur Auswahl hinzufügen oder entfernen"
+                                      IsChecked="{Binding IsSelected, RelativeSource={RelativeSource AncestorType={x:Type DataGridRow}}, Mode=OneWay}"
+                                      PreviewMouseLeftButtonDown="SelectBgkType_PreviewMouseLeftButtonDown"
+                                      PreviewKeyDown="SelectBgkType_PreviewKeyDown"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Typnummer" MinWidth="75" Binding="{Binding Typnummer, UpdateSourceTrigger=LostFocus, Mode=TwoWay}"/>
                 <DataGridTextColumn Header="Typbezeichnung" MinWidth="250" Width="*" Binding="{Binding Typbezeichnung, UpdateSourceTrigger=LostFocus, Mode=TwoWay}"/>
             </DataGrid.Columns>
@@ -307,8 +326,8 @@
                 <Image Source="/BIMassist;component/Resources/writeIntoFamily_32px.png"/>
             </Button>
             <Button Content="3DText generieren" Style="{StaticResource SelectedTypTextStyle}" Command="{Binding Generate3DText}"
-                    CommandParameter="{Binding SelectedItem, ElementName=Typmarkierung}"
-                    ToolTip="BGK und Typmarkierung als 3D-Geometrie in einer neuen Familie erzeugen"
+                    CommandParameter="{Binding SelectedItems, ElementName=Typmarkierung}"
+                    ToolTip="Markierte BGK-Typen als 3D-Geometrie in einer Familie erzeugen oder ergänzen; der erste ausgewählte Typ wird platziert"
                     Margin="8,0,0,0" Padding="8,2" Height="23"/>
             <TextBlock Width="10" />
         </StackPanel>

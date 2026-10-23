@@ -15,6 +15,7 @@ using System.Windows;
 using System.Windows.Forms;
 using System.Xml.Serialization;
 using System.Collections.Specialized;
+using System.Collections;
 using System.Windows.Input;
 using BIMassist.Helpers;
 using System.ComponentModel;
@@ -83,6 +84,21 @@ namespace BIMassist
         private readonly BgkSelectionSnapshot<Document, ElementId> _projectSelection = new();
         private ExternalEvent _textEvent;
         private Bgk3DTextExternalEventHandler _textHandler;
+        private int _selectedTypCount;
+        public int SelectedTypCount
+        {
+            get => _selectedTypCount;
+            set
+            {
+                if (Set(ref _selectedTypCount, value))
+                {
+                    OnPropertyChanged(nameof(CanTransferSelectedTypes));
+                    OnPropertyChanged(nameof(CanGenerateSelectedTypes));
+                }
+            }
+        }
+        public bool CanTransferSelectedTypes => BgkTypeSelectionRules.CanTransfer(SelectedTypCount);
+        public bool CanGenerateSelectedTypes => BgkTypeSelectionRules.CanGenerate(SelectedTypCount);
 
         private ObservableCollection<Baugruppe> _labels;
         public ObservableCollection<Baugruppe> Baugruppen
@@ -438,7 +454,7 @@ namespace BIMassist
             AllSubNudesProtectionCmd = new RelayCommands<Baugruppe>(AllSubNodesProtectionExecute);
 
             SendValues = new RelayCommands<Typmarkierung>(SendValuesExecute);
-            Generate3DText = new RelayCommands<Typmarkierung>(Generate3DTextExecute);
+            Generate3DText = new RelayCommands<IList>(Generate3DTextExecute);
         }
 
         public void DisposeEvents()
@@ -485,21 +501,36 @@ namespace BIMassist
             }), System.Windows.Threading.DispatcherPriority.Background);
         }
 
-        private void Generate3DTextExecute(Typmarkierung selectedTyp)
+        private void Generate3DTextExecute(IList selectedItems)
         {
-            Baugruppe? node = selectedTyp == null ? null : FindNodeContainingTyp(selectedTyp);
-            if (node == null || selectedTyp == null)
+            Typmarkierung[] selectedTypes = selectedItems?.Cast<Typmarkierung>().ToArray() ?? Array.Empty<Typmarkierung>();
+            if (!BgkTypeSelectionRules.CanGenerate(selectedTypes.Length))
             {
                 ShowStatus("Bitte BGK und Typmarkierung in der Typenliste auswählen.");
                 return;
             }
-            if (!Bgk3DTextSpec.TryCreate(node.Key, node.Description, selectedTyp.Typnummer.ToString(),
-                selectedTyp.Typbezeichnung, out Bgk3DTextSpec? spec, out string error))
+            List<Bgk3DTextSpec> specs = new();
+            foreach (Typmarkierung selectedTyp in selectedTypes)
+            {
+                Baugruppe? node = FindNodeContainingTyp(selectedTyp);
+                if (node == null)
+                {
+                    ShowStatus("Die gewählte Typmarkierung gehört zu keiner BGK-Klasse.");
+                    return;
+                }
+                if (!Bgk3DTextSpec.TryCreate(node.Key, node.Description, selectedTyp.Typnummer.ToString(),
+                    selectedTyp.Typbezeichnung, out Bgk3DTextSpec? spec, out string invalid))
+                {
+                    ShowStatus(invalid);
+                    return;
+                }
+                specs.Add(spec!);
+            }
+            if (!Bgk3DTextBatch.TryCreate(specs, out Bgk3DTextBatch? batch, out string error))
             {
                 ShowStatus(error);
                 return;
             }
-            if (spec == null) return;
             if (!Bgk3DTextSpec.TrySize(Bgk3DTextHeightMm, Bgk3DTextDepthMm,
                 out double height, out double depth, out error))
             {
@@ -519,7 +550,7 @@ namespace BIMassist
                 return;
             }
             _textHandler.TargetDocument = currentDocument;
-            _textHandler.Request = spec;
+            _textHandler.Request = batch;
             _textHandler.HeightMm = height;
             _textHandler.DepthMm = depth;
             try
@@ -532,7 +563,8 @@ namespace BIMassist
                     ShowStatus("3DText-Anfrage wurde von Revit nicht angenommen: " + result);
                     return;
                 }
-                ShowStatus("3DText wird erstellt …");
+                ShowStatus($"3DText wird für {selectedTypes.Length} ausgewählte(n) Typ(en) erstellt: "
+                    + string.Join(", ", batch.Types.Select(type => type.TypeName)));
             }
             catch (Exception ex)
             {
@@ -639,7 +671,7 @@ namespace BIMassist
         {
             try
             {
-                if (selectedTyp == null) return;
+                if (!CanTransferSelectedTypes || selectedTyp == null) return;
                 var node = FindNodeContainingTyp(selectedTyp);
                 if (node == null) return;
 
