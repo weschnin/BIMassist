@@ -113,6 +113,13 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                btnData = new PushButtonData("Einen Abzugskörper aus gewählter Geometrie erstellen", "Abzugskörper aus\ngewählter Geometrie", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.SolidsToVoidFamilyCommand")
+                {
+                    ToolTip = "Neue Familie mit Abzugskörpern aus gewählten Geometrien erstellen",
+                    LongDescription = "Erzeugt aus den ausgewählten Volumenkörpern eine neue Familie mit Abzugskörpern und aktiviert 'Mit Abzugskörpern schneiden, wenn geladen'. Meshes ohne Volumen können nicht als Abzugskörper übernommen werden."
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 btnData = new PushButtonData("Neue Familie als Schnittmenge", "Neue Familie\nals Schnittmenge", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.SolidsIntersectionToNewFamilyCommand")
                 {
                     ToolTip = "Neue Familie aus Schnittmengen gewählter Geometrien erstellen",
