@@ -162,6 +162,13 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                btnData = new PushButtonData("Geometrie auf umschlossenen Flächen erstellen", "Geometrie aus\nFlächen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.SurfaceEnclosureFamilyCommand")
+                {
+                    ToolTip = "Aus umschließenden Flächen eine ladbare Familie erstellen",
+                    LongDescription = "Wählt planare oder gekrümmte Flächen aus. Eine vollständig ausgewählte, bestehende Körperhülle wird mit Öffnungen übernommen; sonst werden nur tatsächlich geschlossene ausgewählte Flächen zusammengesetzt oder geeignete konvexe Flächen beschnitten. Offene oder mehrdeutige Hüllen werden nicht gespeichert."
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 // Leitungs-Funktionen
 
                 PanelgroupData = new PulldownButtonData("Leitungen", "Leitungen")
