@@ -102,13 +102,20 @@ if (!builder.Contains("loadObservations", StringComparison.Ordinal)
 if (!builder.Contains("Sichtbarkeitsmatrix weicht ab: Familientyp", StringComparison.Ordinal))
     throw new Exception("Family visibility failure must identify the exact type, flag and actual value rather than alleging a manual edit.");
 if (!builder.Contains("AvaName = \"AVA_Anzahl\"", StringComparison.Ordinal)
-    || !builder.Contains("new ExternalDefinitionCreationOptions(AvaName, SpecTypeId.Number)", StringComparison.Ordinal)
-    || !builder.Contains("manager.AddParameter(definition, GroupTypeId.Data, true)", StringComparison.Ordinal)
+    || !builder.Contains("manager.AddParameter(AvaName, GroupTypeId.Data, SpecTypeId.Number, true)", StringComparison.Ordinal)
     || !builder.Contains("missing.Count == 0 && !avaMissing", StringComparison.Ordinal)
-    || !builder.Contains("EnsureAvaParameter(app, manager)", StringComparison.Ordinal))
-    throw new Exception("Every generated BGK family must contain AVA_Anzahl as a shared, unitless instance number, including existing families without new types.");
-if (!builder.Contains("OfClass(typeof(ParameterElement))", StringComparison.Ordinal))
-    throw new Exception("Non-shared project parameters named AVA_Anzahl must be detected before family reload.");
+    || !builder.Contains("EnsureAvaParameter(manager)", StringComparison.Ordinal)
+    || builder.Contains("SharedParametersFilename", StringComparison.Ordinal)
+    || builder.Contains("ExternalDefinitionCreationOptions(AvaName", StringComparison.Ordinal))
+    throw new Exception("New BGK families must create AVA_Anzahl as a local instance Number without an external shared-parameter file.");
+if (builder[..builder.IndexOf("HashSet<long> originalIds", StringComparison.Ordinal)]
+        .Contains("VerifyProjectAvaDefinition(project);", StringComparison.Ordinal)
+    || !builder.Contains("if (existing != null && legacySharedAva) VerifyProjectAvaDefinition(project);", StringComparison.Ordinal)
+    || !builder.Contains("ValidateAvaParameter(avaParameter, legacySharedAva)", StringComparison.Ordinal)
+    || !builder.Contains("bool legacySharedAva = existing != null && avaParameter?.IsShared == true;", StringComparison.Ordinal))
+    throw new Exception("A foreign project AVA_Anzahl must not block new local BGK families; existing shared families remain guarded and local families are not silently converted.");
+if (!builder.Contains("FindUniqueParameter(prior, AvaName)", StringComparison.Ordinal))
+    throw new Exception("On reload, existing local AVA_Anzahl instances must be checked without a shared GUID.");
 Equal(true, Bgk3DTextBatch.ShouldInitializeAvaDefault(true, true));
 Equal(true, Bgk3DTextBatch.ShouldInitializeAvaDefault(false, false));
 Equal(false, Bgk3DTextBatch.ShouldInitializeAvaDefault(false, true));

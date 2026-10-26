@@ -18,7 +18,7 @@ namespace BIMassist.Services
         private const string MarkerName = "BIMassist BGK-3DText";
         private const string MarkerValue = "BIMassist BGK-3DText v2";
         private const string AvaName = "AVA_Anzahl";
-        // Gleicher gemeinsam genutzter Parameter in allen künftig erzeugten BGK-Familien.
+        // Nur zur sicheren Erkennung bereits vorhandener BGK-Familien mit altem Shared-Parameter.
         private static readonly Guid AvaGuid = new("07aa7e7a-5dca-4367-a572-641a87ef7670");
         private static readonly Guid GeometryOwnerSchemaId = new("7ff5b775-81fa-49ce-b573-e2d83f4bb95f");
         private const string GeometryOwnerField = "BGKTypeName";
@@ -42,7 +42,6 @@ namespace BIMassist.Services
             // Der alte Family-Wrapper kann beim Reload ungültig werden; dessen ID
             // muss vor dem LoadFamily-Aufruf als Wert gesichert sein.
             long? existingFamilyId = existing?.Id.Value;
-            VerifyProjectAvaDefinition(project);
             HashSet<long> originalIds = families.Select(f => f.Id.Value).ToHashSet();
             List<ExistingInstanceSnapshot> priorInstances = existing == null ? new() :
                 new FilteredElementCollector(project).OfClass(typeof(FamilyInstance)).Cast<FamilyInstance>()
@@ -68,7 +67,9 @@ namespace BIMassist.Services
 
                 FamilyManager manager = familyDoc.FamilyManager;
                 FamilyParameter? avaParameter = FindParameter(manager, AvaName);
-                bool avaMissing = !ValidateAvaParameter(avaParameter);
+                bool legacySharedAva = existing != null && avaParameter?.IsShared == true;
+                bool avaMissing = !ValidateAvaParameter(avaParameter, legacySharedAva);
+                if (existing != null && legacySharedAva) VerifyProjectAvaDefinition(project);
                 List<FamilyType> originalTypes = manager.Types.Cast<FamilyType>().ToList();
                 FamilyParameter? marker = FindParameter(manager, MarkerName);
                 bool legacy = existing != null && marker == null;
@@ -191,7 +192,7 @@ namespace BIMassist.Services
                         manager.DeleteCurrentType();
                     }
                     List<FamilyType> allTypes = manager.Types.Cast<FamilyType>().ToList();
-                    if (avaMissing) EnsureAvaParameter(app, manager);
+                    if (avaMissing) EnsureAvaParameter(manager);
                     avaParameter = FindParameter(manager, AvaName)
                         ?? throw new InvalidOperationException("AVA_Anzahl fehlt nach dem Anlegen.");
                     foreach (FamilyType type in allTypes)
@@ -343,7 +344,7 @@ namespace BIMassist.Services
                 if (textIds.Values.Any(id => familyDoc.GetElement(id) != null)
                     || familyDoc.OwnerFamily.FamilyPlacementType != FamilyPlacementType.WorkPlaneBased)
                     throw new InvalidOperationException("Modelltext oder Platzierungsart konnten nicht verifiziert werden.");
-                if (!ValidateAvaParameter(FindParameter(manager, AvaName)))
+                if (!ValidateAvaParameter(FindParameter(manager, AvaName), legacySharedAva))
                     throw new InvalidOperationException("AVA_Anzahl fehlt nach der Familientransaktion.");
                 VerifyAvaDefaults(manager, avaDefaultedTypes);
                 // Die Vorwärtsabfrage liefert in Revit 2026 für korrekt funktionierende
@@ -402,14 +403,14 @@ namespace BIMassist.Services
                     List<FamilyType> reopenedTypes = manager.Types.Cast<FamilyType>().ToList();
                     VerifyAssociations(familyDoc, manager, reopenedTypes, batch.FamilyName);
                     VerifyVisibilityValues(manager, reopenedTypes);
-                    if (!ValidateAvaParameter(FindParameter(manager, AvaName)))
+                    if (!ValidateAvaParameter(FindParameter(manager, AvaName), legacySharedAva))
                         throw new InvalidOperationException("AVA_Anzahl fehlt nach erneutem Öffnen der BGK-Familie.");
                     VerifyAvaDefaults(manager, avaDefaultedTypes);
                 }
                 else
                 {
                     VerifyVisibilityValues(manager, manager.Types.Cast<FamilyType>().ToList());
-                    if (!ValidateAvaParameter(FindParameter(manager, AvaName)))
+                    if (!ValidateAvaParameter(FindParameter(manager, AvaName), legacySharedAva))
                         throw new InvalidOperationException("AVA_Anzahl fehlt vor dem Projekt-Load.");
                     VerifyAvaDefaults(manager, avaDefaultedTypes);
                 }
@@ -467,10 +468,11 @@ namespace BIMassist.Services
                             () => DescribeFamilyVisibility(manager, loadedTypes));
                         VerifyAssociations(familyDoc, manager, loadedTypes, batch.FamilyName);
                         VerifyVisibilityValues(manager, loadedTypes);
-                        if (!ValidateAvaParameter(FindParameter(manager, AvaName)))
+                        if (!ValidateAvaParameter(FindParameter(manager, AvaName), legacySharedAva))
                             throw new InvalidOperationException("AVA_Anzahl fehlt in der erneut geöffneten BGK-Familie.");
                         VerifyAvaDefaults(manager, avaDefaultedTypes);
-                        VerifyProjectAvaDefinition(project, priorInstances.Count > 0);
+                        if (legacySharedAva)
+                            VerifyProjectAvaDefinition(project, priorInstances.Count > 0);
                         reloadPhase = "Projekttypen und vorhandene Exemplare prüfen";
                         using (Transaction transaction = new Transaction(project, "BGK-3DText-Typen prüfen"))
                         {
@@ -531,7 +533,10 @@ namespace BIMassist.Services
                             {
                                 if (project.GetElement(before.Id) is not FamilyInstance prior
                                     || prior.Symbol?.Family.Id != loaded.Id
-                                    || prior.get_Parameter(AvaGuid)?.StorageType != StorageType.Double
+                                    || (legacySharedAva ? prior.get_Parameter(AvaGuid)
+                                        : FindUniqueParameter(prior, AvaName)) is not Parameter actualAva
+                                    || actualAva.StorageType != StorageType.Double
+                                    || !actualAva.Definition.GetDataType().Equals(SpecTypeId.Number)
                                     || !SameInstance(before, SnapshotInstance(prior), avaMissing))
                                     throw new InvalidOperationException("Position, Host, Typ oder Parameter einer vorhandenen BGK-Instanz wurden durch das Neuladen verändert; Änderung zurückgenommen.");
                             }
@@ -643,13 +648,14 @@ namespace BIMassist.Services
                 + (differences.Count == 0 ? "keine Abweichung" : string.Join("; ", differences));
         }
 
-        private static bool ValidateAvaParameter(FamilyParameter? parameter)
+        private static bool ValidateAvaParameter(FamilyParameter? parameter, bool legacySharedAva)
         {
             if (parameter == null) return false;
-            if (!parameter.IsShared || parameter.GUID != AvaGuid || !parameter.IsInstance
+            if (parameter.IsShared != legacySharedAva || (legacySharedAva && parameter.GUID != AvaGuid)
+                || !parameter.IsInstance
                 || parameter.StorageType != StorageType.Double
                 || !parameter.Definition.GetDataType().Equals(SpecTypeId.Number))
-                throw new InvalidOperationException($"Der vorhandene Parameter '{AvaName}' hat eine andere GUID, Einheit oder Typ-/Exemplarzuordnung. Er wurde nicht ersetzt.");
+                throw new InvalidOperationException($"Der vorhandene Parameter '{AvaName}' hat eine andere Herkunft, GUID, Einheit oder Typ-/Exemplarzuordnung. Er wurde nicht ersetzt.");
             return true;
         }
 
@@ -679,44 +685,11 @@ namespace BIMassist.Services
                 throw new InvalidOperationException($"Im Projekt ist '{AvaName}' nicht mit der BGK-GUID und dem Datentyp Zahl eindeutig vorhanden. Keine fremden Parameter werden überschrieben.");
         }
 
-        private static void EnsureAvaParameter(UIApplication app, FamilyManager manager)
+        private static void EnsureAvaParameter(FamilyManager manager)
         {
-            string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "BIMassist", "SharedParameters");
-            Directory.CreateDirectory(folder);
-            string path = Path.Combine(folder, "BIMassist-BGK.txt");
-            if (!File.Exists(path)) File.WriteAllText(path, string.Empty);
-            string previous = app.Application.SharedParametersFilename;
-            try
-            {
-                app.Application.SharedParametersFilename = path;
-                DefinitionFile file = app.Application.OpenSharedParameterFile()
-                    ?? throw new InvalidOperationException($"BGK-Parameterdatei '{path}' kann nicht geöffnet werden.");
-                List<ExternalDefinition> definitions = file.Groups.Cast<DefinitionGroup>()
-                    .SelectMany(group => group.Definitions.Cast<Definition>())
-                    .OfType<ExternalDefinition>().ToList();
-                ExternalDefinition? definition = definitions.FirstOrDefault(d =>
-                    string.Equals(d.Name, AvaName, StringComparison.OrdinalIgnoreCase));
-                if (definitions.Any(d => d.GUID == AvaGuid && d.Name != AvaName)
-                    || (definition != null && (definition.GUID != AvaGuid
-                        || !definition.GetDataType().Equals(SpecTypeId.Number))))
-                    throw new InvalidOperationException($"BGK-Parameterdatei enthält einen widersprüchlichen '{AvaName}'-Eintrag. Sie wurde nicht überschrieben.");
-                if (definition == null)
-                {
-                    DefinitionGroup group = file.Groups.Cast<DefinitionGroup>()
-                        .FirstOrDefault(g => g.Name == "BIMassist") ?? file.Groups.Create("BIMassist");
-                    definition = group.Definitions.Create(
-                        new ExternalDefinitionCreationOptions(AvaName, SpecTypeId.Number) { GUID = AvaGuid }) as ExternalDefinition
-                        ?? throw new InvalidOperationException($"Gemeinsam genutzter Parameter '{AvaName}' konnte nicht definiert werden.");
-                }
-                FamilyParameter added = manager.AddParameter(definition, GroupTypeId.Data, true);
-                if (!ValidateAvaParameter(added))
-                    throw new InvalidOperationException($"Gemeinsam genutzter Parameter '{AvaName}' konnte nicht in der BGK-Familie gespeichert werden.");
-            }
-            finally
-            {
-                app.Application.SharedParametersFilename = previous;
-            }
+            FamilyParameter added = manager.AddParameter(AvaName, GroupTypeId.Data, SpecTypeId.Number, true);
+            if (!ValidateAvaParameter(added, false))
+                throw new InvalidOperationException($"Exemplar-Familienparameter '{AvaName}' konnte nicht in der BGK-Familie gespeichert werden.");
         }
 
         private static string ResolveTemplate(UIApplication app)

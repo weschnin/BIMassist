@@ -14,6 +14,17 @@ Beide Add-ins können unabhängig voneinander in derselben Revit-Installation
 registriert sein. Das ist eine Trennung der Projekte, Assemblies und
 Registrierungen, keine Trennung in verschiedene Revit-Prozesse.
 
+## BGK-3D-Text (ab 2026.1.36)
+
+Neue BGK-3D-Text-Familien erhalten `AVA_Anzahl` als lokalen
+Exemplar-Familienparameter vom Typ Zahl mit Standardwert 1. Dafür wird weder
+eine gemeinsame Parameterdatei noch eine projektweite BGK-GUID benötigt.
+Bereits vorhandene Familien mit dem früheren gemeinsam genutzten Parameter
+werden beim Ergänzen nicht stillschweigend konvertiert; deren Identität und
+vorhandene Exemplarwerte bleiben geschützt. Ein Projektparameter mit demselben
+Namen kann für neue lokale BGK-Familien bestehen bleiben; bei mehrdeutigen
+Parametern vorhandener Exemplare wird das Neuladen sicher abgebrochen.
+
 ## Geometrie auf umschlossenen Flächen (Entwicklungsstand 2026.1.35)
 
 Im Menü **Geometrien** lassen sich einzelne begrenzte Revit-Flächen auswählen.
