@@ -212,6 +212,25 @@ namespace BIMassist
                 };
                 pulldownGroup.AddPushButton(btnData);
 
+                // Pläne-Funktionen
+                PanelgroupData = new PulldownButtonData("Pläne", "Pläne")
+                {
+                    Image = GetImageSource("doc_16px.png"),
+                    LargeImage = GetImageSource("doc_24px.png"),
+                    ToolTip = "Planwerkzeuge",
+                };
+                pulldownGroup = panel.AddItem(PanelgroupData) as PulldownButton;
+
+                btnData = new PushButtonData("Schnitte bereinigen", "Schnitte\nbereinigen",
+                    Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.CleanSectionsOnSheetsCommand")
+                {
+                    ToolTip = "Schnittmarker planbezogen ein- oder ausblenden",
+                    LongDescription = "Bearbeitet die Ansichten des aktiven Plans oder aller Pläne. Schnittmarker zu Schnitten auf demselben Plan werden eingeblendet, Marker zu anderen Plänen ausgeblendet.",
+                    Image = GetImageSource("doc_16px.png"),
+                    LargeImage = GetImageSource("doc_24px.png"),
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 // Materialien-Funktionen
 
 

@@ -72,3 +72,16 @@ Der interaktive BIMassist-Befehl wurde mit dieser Auswahl vom Anwender in
 Revit 2026 geprüft: Die Familie wurde erzeugt, die Öffnung blieb erhalten
 und die Familie ließ sich platzieren. Andere Geometrien sind dadurch nicht
 pauschal abgenommen.
+
+## Schnittmarker auf Plänen (2026.1.39)
+
+Unter **Pläne → Schnitte bereinigen** kann der aktuelle Plan oder das gesamte
+Projekt ausgewählt werden. In den platzierten Grundriss-, Decken-, Ingenieur-,
+Schnitt- und Ansichts-Views werden Schnittmarker ausgeblendet, wenn die zugehörige
+Schnittansicht nicht auf demselben Plan liegt; bereits ausgeblendete Marker zu
+einem Schnitt auf demselben Plan werden eingeblendet. Die Zuordnung übernimmt
+den Schnittansichtsnamen aus dem ursprünglichen Dynamo-Skript. Unbekannte oder
+mehrdeutige Namen bleiben unangetastet. Ein bereits aktiver temporärer
+Sichtbarkeitsmodus wird nicht vom Befehl beendet; bei einem Fehler wird die
+gesamte Transaktion zurückgerollt. Build und Policy-Tests ersetzen keinen
+interaktiven Revit-Test mit einem geeigneten Planmodell.
