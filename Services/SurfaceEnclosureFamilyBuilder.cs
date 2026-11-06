@@ -163,7 +163,7 @@ namespace BIMassist.Services
                 || Math.Abs(candidate.SurfaceArea - expectedArea) > Math.Max(expectedArea * 1e-5, 1e-8)
                 || !candidate.Faces.Cast<Face>().Select(face => face.GetEdgesAsCurveLoops().Count)
                     .OrderBy(count => count).SequenceEqual(expectedLoopCounts))
-                throw new InvalidOperationException("Die gespeicherte Familie hat eine geänderte oder nicht geschlossene Oberfläche; die Öffnung wurde nicht sicher erhalten.");
+                throw new InvalidOperationException("Die gespeicherte Familie hat eine geänderte oder nicht geschlossene Oberfläche; der geprüfte Volumenkörper wurde nicht sicher erhalten.");
         }
 
         private sealed class RefuseExistingFamilyLoad : IFamilyLoadOptions

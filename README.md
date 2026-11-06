@@ -25,7 +25,7 @@ vorhandene Exemplarwerte bleiben geschützt. Ein Projektparameter mit demselben
 Namen kann für neue lokale BGK-Familien bestehen bleiben; bei mehrdeutigen
 Parametern vorhandener Exemplare wird das Neuladen sicher abgebrochen.
 
-## Geometrie auf umschlossenen Flächen (Entwicklungsstand 2026.1.35)
+## Geometrie aus gewählten Flächen (2026.1.37)
 
 Im Menü **Geometrien** lassen sich einzelne begrenzte Revit-Flächen auswählen.
 Eine Familie wird nur für einen geprüften, geschlossenen Volumenkörper geladen
@@ -36,10 +36,24 @@ Gekrümmte Flächen werden facettiert; 1 mm ist die maximal zugelassene
 Abweichung **der geprüften Stützpunkte**, keine mathematisch garantierte
 maximale Flächenabweichung.
 
+Ein neuer Pfad rekonstruiert aus einer **durchgehend rotationssymmetrischen**
+Außenkontur einen gefüllten Volumenkörper: konische und zylindrische Mäntel,
+auch von verschiedenen Elementen, sowie passende waagerechte Ringabsätze.
+Zwei ebene Stirnflächen werden an den eindeutig bestimmten Enden ergänzt;
+Innenwände und innere Öffnungen werden dabei **nicht** übernommen. Die
+ausgewählten Mantelflächen müssen gemeinsam über ihre gesamte Höhe den
+vollständigen Umfang abdecken. Achse, Radialprofil, umlaufende Kreisränder und
+auswärts gerichtete Flächennormalen werden geprüft; unklare Lücken und von der
+Außenkontur abweichende Flächen werden abgelehnt. Das ist **kein** allgemeiner
+Algorithmus für beliebige gekrümmte Freiformflächen oder mehrere Achsen.
+Der neue Pfad ist bislang nur gebaut und statisch getestet, **nicht** für den
+konkreten Schacht in Revit abgenommen.
+
 Sind alle Flächen eines einzelnen, bereits geschlossenen Volumenkörpers gewählt,
 werden sie exakt mit dessen Flächen verglichen und der vorhandene Körper
-einschließlich seiner Öffnungen und Innenwände übernommen. Bei anderen
-Mehrfach-Randflächen wird nur eine bereits durch die ausgewählten Flächen
+einschließlich seiner Öffnungen und Innenwände übernommen. Außerhalb des
+neuen rotationssymmetrischen Pfads wird bei anderen Mehrfach-Randflächen nur
+eine bereits durch die ausgewählten Flächen
 vollständig geschlossene, facettierte Hülle versucht; offene Kanten oder
 fehlende Innenwände werden abgewiesen, nicht ergänzt. Die ursprüngliche
 Halbraum-Rekonstruktion bleibt auf geeignete konvexe Flächen ohne innere

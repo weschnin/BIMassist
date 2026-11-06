@@ -4,9 +4,9 @@ using BIMassist.Core;
 namespace BIMassist.Services
 {
     /// <summary>
-    /// Reconstructs a convex enclosure from bounded planar or faceted faces. Never accepts a
-    /// positive volume alone: every output patch must still belong to a selected bounded face.
-    /// Concave or ambiguous arrangements are deliberately rejected rather than capped.
+    /// Reconstructs verified solids from bounded faces. A complete analytic axial outer
+    /// envelope may receive two inferred end discs; other paths require every output patch
+    /// to belong to selected bounded faces. Ambiguous arrangements are rejected.
     /// </summary>
     internal static class SurfaceEnclosureBuilder
     {
@@ -104,18 +104,31 @@ namespace BIMassist.Services
         {
             solid = null;
             diagnostic = "Die Flächen konnten nicht zu einer geschlossenen Hülle verbunden werden.";
-            if (faces == null || faces.Count < 2 || tolerance <= 0 || shortCurveTolerance <= 0)
+            if (faces == null || faces.Count == 0 || tolerance <= 0 || shortCurveTolerance <= 0)
                 return false;
 
             try
             {
+                // A continuous outer mantle can define a filled rotational solid even
+                // without picked end caps. This is deliberately guarded by analytic axis,
+                // complete circumference and bounded-source checks.
+                if (AxialSurfaceEnvelope.TryBuild(faces, tolerance, shortCurveTolerance,
+                    out solid, out diagnostic))
+                    return true;
+                string axialDiagnostic = diagnostic;
                 // A face with an internal boundary cannot be represented by the convex
                 // half-space path: it would fill the opening. Assemble only the actual
                 // selected, trimmed face triangles when they already form a closed shell.
                 if (faces.Any(face => face.GetEdgesAsCurveLoops().Count > 1
                     && (face is not CylindricalFace || face.GetEdgesAsCurveLoops().Count != 2)))
-                    return TryBuildClosedSelectedShell(faces, tolerance, shortCurveTolerance,
-                        out solid, out diagnostic);
+                {
+                    if (TryBuildClosedSelectedShell(faces, tolerance, shortCurveTolerance,
+                        out solid, out diagnostic))
+                        return true;
+                    if (faces.Any(face => face is CylindricalFace or ConicalFace))
+                        diagnostic = axialDiagnostic + "\n" + diagnostic;
+                    return false;
+                }
 
                 List<List<SourceTriangle>> meshes = new();
                 List<XYZ> points = new();

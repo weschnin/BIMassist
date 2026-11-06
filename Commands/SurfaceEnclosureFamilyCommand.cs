@@ -42,8 +42,8 @@ namespace BIMassist.Commands
                     faces.Add(face);
                     selectedReferences.Add(reference);
                 }
-                if (faces.Count < 2)
-                    throw new InvalidOperationException("Mindestens zwei unterschiedliche umschließende Flächen auswählen.");
+                if (faces.Count == 0)
+                    throw new InvalidOperationException("Mindestens eine äußere Fläche auswählen.");
 
                 double tolerance = UnitUtils.ConvertToInternalUnits(1.0, UnitTypeId.Millimeters);
                 bool reused = SurfaceEnclosureBuilder.TryReuseCompleteSourceSolid(doc, selectedReferences, faces,

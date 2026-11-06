@@ -18,6 +18,14 @@ if (code.Contains("TryBuildPrimaryCylinderCutBySelectedCylinders", StringCompari
     throw new Exception("Der alte heuristische Volumenkörperpfad darf keine Flächen außerhalb der Auswahl erfinden.");
 if (!code.Contains("faces[sourceIndex] is PlanarFace", StringComparison.Ordinal))
     throw new Exception("Pro planarer Fläche genügt eine Ebene; unnötige Boolean-Schnitte sind zu vermeiden.");
+if (!code.Contains("AxialSurfaceEnvelope.TryBuild(faces", StringComparison.Ordinal))
+    throw new Exception("Ein offener konischer oder zylindrischer Außenmantel muss vor der geschlossenen Hülle rekonstruiert werden.");
+string axialCode = File.ReadAllText(Path.Combine(root, "Services", "AxialSurfaceEnvelope.cs"));
+if (!axialCode.Contains("VerifySelectedShelfCoverage(", StringComparison.Ordinal))
+    throw new Exception("Ein nur teilweise gewählter Ringabsatz darf nicht zu einem vollständigen Umfang erweitert werden.");
+if (!axialCode.Contains("TryFullCircularLoops(face, origin, axis, radial, tangent", StringComparison.Ordinal)
+    || !axialCode.Contains("CheckMantleNormal(source,", StringComparison.Ordinal))
+    throw new Exception("Außenmantel braucht vollständig gekrümmte Randkreise und nach außen zeigende Normale.");
 if (!code.Contains("meshes.Count + 1", StringComparison.Ordinal)
     || !code.Contains("face.GetType().Name", StringComparison.Ordinal)
     || !code.Contains("boundaryLoops", StringComparison.Ordinal))
