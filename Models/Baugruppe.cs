@@ -1,4 +1,5 @@
 ﻿using System.Collections.ObjectModel;
+using System.Collections.Generic;
 using System.Linq;
 using System.Xml.Serialization;
 using BIMassist.ViewModels;
@@ -35,8 +36,15 @@ namespace BIMassist
         public bool NodeProtection
         {
             get => _NodeProtection;
-            set => Set(ref _NodeProtection, value);
+            set
+            {
+                if (Set(ref _NodeProtection, value))
+                    OnPropertyChanged(nameof(IsEffectivelyProtected));
+            }
         }
+
+        [XmlIgnore]
+        public bool IsEffectivelyProtected => NodeProtection || ParentNode?.IsEffectivelyProtected == true;
 
         private bool _rootNode;
         public bool RootNode
@@ -79,7 +87,24 @@ namespace BIMassist
         public Baugruppe ParentNode
         {
             get => _ParentNode;
-            set => Set(ref _ParentNode, value);
+            set
+            {
+                if (Set(ref _ParentNode, value))
+                    NotifyEffectiveProtectionChangedForSubtree();
+            }
+        }
+
+        internal void NotifyEffectiveProtectionChangedForSubtree()
+        {
+            var pending = new Stack<Baugruppe>();
+            pending.Push(this);
+            while (pending.Count > 0)
+            {
+                var node = pending.Pop();
+                node.OnPropertyChanged(nameof(IsEffectivelyProtected));
+                foreach (var child in node.Baugruppen)
+                    pending.Push(child);
+            }
         }
 
         private ObservableCollection<Typmarkierung> _Typenmarkierungen;

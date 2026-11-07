@@ -369,7 +369,7 @@ namespace BIMassist
         public ICommand MoveDownTypenmarkierung { get; }
         public ICommand DelTypenmarkierung { get; }
 
-        public ICommand AllSubNudesProtectionCmd { get; }
+        public ICommand AllSubNodesProtectionCmd { get; }
 
         public ICommand SendValues { get; }
         public ICommand Generate3DText { get; }
@@ -451,7 +451,8 @@ namespace BIMassist
             MoveDownTypenmarkierung = new RelayCommands<Typmarkierung>(MoveDownTypenmarkierungExecute);
             DelTypenmarkierung = new RelayCommands<Typmarkierung>(DelTypenmarkierungExecute);
 
-            AllSubNudesProtectionCmd = new RelayCommands<Baugruppe>(AllSubNodesProtectionExecute);
+            AllSubNodesProtectionCmd = new RelayCommands<Baugruppe>(AllSubNodesProtectionExecute,
+                BgkNodeProtection.CanChangeProtection);
 
             SendValues = new RelayCommands<Typmarkierung>(SendValuesExecute);
             Generate3DText = new RelayCommands<IList>(Generate3DTextExecute);
@@ -749,8 +750,7 @@ namespace BIMassist
 
         private void AddLabelExecute(Baugruppe selected)
         {
-            if (selected == null) return;
-            if (selected.NodeProtection) return;
+            if (!BgkNodeProtection.CanEdit(selected)) return;
 
             selected.Baugruppen ??= new ObservableCollection<Baugruppe>();
 
@@ -771,8 +771,7 @@ namespace BIMassist
 
         private void ItemDeleteExecute(Baugruppe selected)
         {
-            if (selected == null) return;
-            if (selected.NodeProtection) return;
+            if (!BgkNodeProtection.CanMoveOrDelete(selected)) return;
             if (selected.ParentNode == null) return; // don't delete root
 
             var siblings = GetSiblings(selected);
@@ -781,22 +780,24 @@ namespace BIMassist
 
         private void ItemUpExecute(Baugruppe selected)
         {
-            if (selected == null) return;
+            if (!BgkNodeProtection.CanMoveOrDelete(selected)) return;
             var siblings = GetSiblings(selected);
             if (siblings == null) return;
             int idx = siblings.IndexOf(selected);
             if (idx <= 0) return;
+            if (!BgkNodeProtection.CanMoveOrDelete(siblings[idx - 1])) return;
             siblings.Move(idx, idx - 1);
             ShowStatus("Datensatz verschoben.");
         }
 
         private void ItemDownExecute(Baugruppe selected)
         {
-            if (selected == null) return;
+            if (!BgkNodeProtection.CanMoveOrDelete(selected)) return;
             var siblings = GetSiblings(selected);
             if (siblings == null) return;
             int idx = siblings.IndexOf(selected);
             if (idx < 0 || idx >= siblings.Count - 1) return;
+            if (!BgkNodeProtection.CanMoveOrDelete(siblings[idx + 1])) return;
             siblings.Move(idx, idx + 1);
             ShowStatus("Datensatz verschoben.");
         }
@@ -820,7 +821,7 @@ namespace BIMassist
 
         private void ItemCopyExecute(Baugruppe selected)
         {
-            if (selected == null) return;
+            if (!BgkNodeProtection.CanEdit(selected)) return;
             var siblings = GetSiblings(selected);
             if (siblings == null) return;
 
@@ -833,12 +834,13 @@ namespace BIMassist
 
         private void ItemToParentExecute(Baugruppe selected)
         {
-            if (selected == null) return;
+            if (!BgkNodeProtection.CanMoveOrDelete(selected)) return;
             if (selected.ParentNode == null) return;
             var parent = selected.ParentNode;
             if (parent.ParentNode == null) return;
 
             var grandParent = parent.ParentNode;
+            if (!BgkNodeProtection.CanEdit(grandParent)) return;
             parent.Baugruppen.Remove(selected);
             selected.ParentNode = grandParent;
             selected.Level = Math.Max(0, selected.Level - 1);
@@ -849,14 +851,14 @@ namespace BIMassist
 
         private void ItemToSubExecute(Baugruppe selected)
         {
-            if (selected == null) return;
+            if (!BgkNodeProtection.CanMoveOrDelete(selected)) return;
             var siblings = GetSiblings(selected);
             if (siblings == null) return;
             int idx = siblings.IndexOf(selected);
             if (idx <= 0) return;
 
             var newParent = siblings[idx - 1];
-            if (newParent == null) return;
+            if (!BgkNodeProtection.CanEdit(newParent)) return;
             siblings.RemoveAt(idx);
             newParent.Baugruppen ??= new ObservableCollection<Baugruppe>();
             selected.ParentNode = newParent;
@@ -883,8 +885,7 @@ namespace BIMassist
 
         private void AddTypenmarkierungExecute(Baugruppe selected)
         {
-            if (selected == null) return;
-            if (selected.NodeProtection) return;
+            if (!BgkNodeProtection.CanEdit(selected)) return;
             selected.Typmarkierungen ??= new ObservableCollection<Typmarkierung>();
             selected.Typmarkierungen.Add(new Typmarkierung { Typnummer = 0, Typbezeichnung = string.Empty });
         }
@@ -910,7 +911,7 @@ namespace BIMassist
         {
             if (selected == null) return;
             var node = FindNodeContainingTyp(selected);
-            if (node == null || node.NodeProtection) return;
+            if (!BgkNodeProtection.CanEdit(node)) return;
             var list = node.Typmarkierungen;
             int idx = list.IndexOf(selected);
             list.Insert(idx + 1, new Typmarkierung { Typnummer = selected.Typnummer, Typbezeichnung = selected.Typbezeichnung });
@@ -921,6 +922,7 @@ namespace BIMassist
         {
             if (selected == null) return;
             var node = FindNodeContainingTyp(selected);
+            if (!BgkNodeProtection.CanEdit(node)) return;
             var list = node?.Typmarkierungen;
             if (list == null) return;
             int idx = list.IndexOf(selected);
@@ -933,6 +935,7 @@ namespace BIMassist
         {
             if (selected == null) return;
             var node = FindNodeContainingTyp(selected);
+            if (!BgkNodeProtection.CanEdit(node)) return;
             var list = node?.Typmarkierungen;
             if (list == null) return;
             int idx = list.IndexOf(selected);
@@ -945,24 +948,15 @@ namespace BIMassist
         {
             if (selected == null) return;
             var node = FindNodeContainingTyp(selected);
-            if (node == null || node.NodeProtection) return;
+            if (!BgkNodeProtection.CanEdit(node)) return;
             node.Typmarkierungen?.Remove(selected);
         }
 
         private void AllSubNodesProtectionExecute(Baugruppe selected)
         {
-            if (selected == null) return;
+            if (!BgkNodeProtection.CanChangeProtection(selected)) return;
             bool newState = !selected.NodeProtection;
-
-            void Apply(Baugruppe n)
-            {
-                if (n == null) return;
-                n.NodeProtection = newState;
-                if (n.Baugruppen == null) return;
-                foreach (var c in n.Baugruppen) Apply(c);
-            }
-
-            Apply(selected);
+            BgkNodeProtection.ApplyToSubtree(selected, newState);
             ShowStatus(newState ? "Schutz aktiviert." : "Schutz deaktiviert.");
         }
 

@@ -25,6 +25,18 @@ vorhandene Exemplarwerte bleiben geschützt. Ein Projektparameter mit demselben
 Namen kann für neue lokale BGK-Familien bestehen bleiben; bei mehrdeutigen
 Parametern vorhandener Exemplare wird das Neuladen sicher abgebrochen.
 
+## BGK-Schreibschutz (2026.1.40)
+
+Das Schloss im BGK-Manager schaltet den Schreibschutz für das gewählte Element
+**und sämtliche Unterelemente** um. Der Zustand wird mit der BGK-XML-Datei
+gespeichert; nach dem Umschalten die Datei speichern. Geschützte Einträge
+können nicht umbenannt, bearbeitet, verschoben, kopiert oder gelöscht werden.
+Auch ein ungeschützter übergeordneter Eintrag kann nicht mitsamt geschützten
+Unterelementen entfernt oder verschoben werden. Das Schloss kann den Schutz
+für den gewählten Teilbaum wieder aufheben. Bei geschütztem Vorfahren muss
+zuerst dessen Schloss geöffnet werden; darunterliegende Elemente bleiben
+sonst weiterhin schreibgeschützt.
+
 ## Geometrie aus gewählten Flächen (2026.1.37)
 
 Im Menü **Geometrien** lassen sich einzelne begrenzte Revit-Flächen auswählen.
