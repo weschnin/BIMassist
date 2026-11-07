@@ -8,10 +8,10 @@
     <Nullable>enable</Nullable>
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
-    <Version>2026.1.40</Version>
-    <AssemblyVersion>2026.1.40.0</AssemblyVersion>
-    <FileVersion>2026.1.40.0</FileVersion>
-    <InformationalVersion>2026.1.40</InformationalVersion>
+    <Version>2026.1.41</Version>
+    <AssemblyVersion>2026.1.41.0</AssemblyVersion>
+    <FileVersion>2026.1.41.0</FileVersion>
+    <InformationalVersion>2026.1.41</InformationalVersion>
     <DeployToRevit Condition="'$(DeployToRevit)' == ''">false</DeployToRevit>
     <Authors>Alexander Weschnin</Authors>
     <Product>BIMassist für Revit 2026</Product>

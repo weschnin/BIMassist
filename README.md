@@ -37,6 +37,13 @@ für den gewählten Teilbaum wieder aufheben. Bei geschütztem Vorfahren muss
 zuerst dessen Schloss geöffnet werden; darunterliegende Elemente bleiben
 sonst weiterhin schreibgeschützt.
 
+## Typmarkierungen gesammelt auswählen (2026.1.41)
+
+Über **Alle markieren** und **Auswahl aufheben** oberhalb der Typenliste werden
+alle Typmarkierungen der gerade gewählten Baugruppe gemeinsam ausgewählt bzw.
+abgewählt. Andere Baugruppen bleiben unberührt; die Auswahl ist keine Änderung
+an der gespeicherten BGK-Datei.
+
 ## Geometrie aus gewählten Flächen (2026.1.37)
 
 Im Menü **Geometrien** lassen sich einzelne begrenzte Revit-Flächen auswählen.

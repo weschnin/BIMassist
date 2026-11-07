@@ -267,7 +267,12 @@
             <TextBlock Text="Typenliste"/>
             <TextBlock Margin="10,0,0,0" Text="Ausgewählt: "/>
             <TextBlock Text="{Binding SelectedTypCount}"/>
-            <TextBlock Margin="8,0,0,0" Text="(Kästchen anklicken)"/>
+            <Button x:Name="SelectAllBgkTypes" Style="{StaticResource ItemButtonStyle}" Margin="14,0,0,0"
+                    Content="Alle markieren" ToolTip="Alle Typmarkierungen der aktuellen Baugruppe auswählen"
+                    Click="SelectAllBgkTypes_Click" Padding="6,0"/>
+            <Button x:Name="ClearBgkTypes" Style="{StaticResource ItemButtonStyle}" Margin="6,0,0,0"
+                    Content="Auswahl aufheben" ToolTip="Alle Typmarkierungen der aktuellen Baugruppe abwählen"
+                    Click="ClearBgkTypes_Click" Padding="6,0"/>
         </StackPanel>
 
         <!-- BGK-Kommentar wurde entfernt -->

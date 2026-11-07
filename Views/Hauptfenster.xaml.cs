@@ -18,6 +18,18 @@ namespace BIMassist
 
         private void Typmarkierung_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateSelectedTypeCount();
 
+        private void SelectAllBgkTypes_Click(object sender, RoutedEventArgs e)
+        {
+            BgkTypeBulkSelection.SelectAll(Typmarkierung);
+            UpdateSelectedTypeCount();
+        }
+
+        private void ClearBgkTypes_Click(object sender, RoutedEventArgs e)
+        {
+            BgkTypeBulkSelection.Clear(Typmarkierung);
+            UpdateSelectedTypeCount();
+        }
+
         private void SelectBgkType_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             ToggleTypeSelection(sender);
