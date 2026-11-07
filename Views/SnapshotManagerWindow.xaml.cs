@@ -5,8 +5,11 @@ using BIMassist.Core;
 using BIMassist.Views;
 using System;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Data;
 
 namespace BIMassist.Views
 {
@@ -19,6 +22,7 @@ namespace BIMassist.Views
 
         private readonly ExternalEvent _exEvent;
         private readonly SectionBoxExternalEventHandler _handler;
+        private readonly ICollectionView _itemsView;
 
         public ObservableCollection<SectionBoxSnapshot> Items { get; private set; }
 
@@ -39,9 +43,22 @@ namespace BIMassist.Views
             _exEvent = ExternalEvent.Create(_handler);
 
             Items = new ObservableCollection<SectionBoxSnapshot>();
-            List.ItemsSource = Items;
+            _itemsView = CollectionViewSource.GetDefaultView(Items);
+            List.ItemsSource = _itemsView;
+            SortOrder.SelectedIndex = 0;
 
             LoadItems();
+        }
+
+        private void SortOrder_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_itemsView == null || SortOrder.SelectedIndex < 0)
+                return;
+
+            var direction = SortOrder.SelectedIndex == 1
+                ? ListSortDirection.Descending
+                : ListSortDirection.Ascending;
+            SnapshotListSorting.Apply(_itemsView, direction);
         }
 
         private void SetStatus(string message)

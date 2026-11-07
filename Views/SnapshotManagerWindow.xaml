@@ -13,7 +13,16 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Text="Gespeicherte SectionBoxes:" FontWeight="SemiBold"/>
+        <DockPanel Grid.Row="0" LastChildFill="True">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Sortieren:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <ComboBox x:Name="SortOrder" MinWidth="110" SelectionChanged="SortOrder_SelectionChanged">
+                    <ComboBoxItem Content="Name A–Z"/>
+                    <ComboBoxItem Content="Name Z–A"/>
+                </ComboBox>
+            </StackPanel>
+            <TextBlock Text="Gespeicherte SectionBoxes:" FontWeight="SemiBold" VerticalAlignment="Center"/>
+        </DockPanel>
 
         <ListBox x:Name="List" Grid.Row="2" DisplayMemberPath="Name"
                  MouseDoubleClick="List_MouseDoubleClick" />

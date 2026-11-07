@@ -44,6 +44,13 @@ alle Typmarkierungen der gerade gewählten Baugruppe gemeinsam ausgewählt bzw.
 abgewählt. Andere Baugruppen bleiben unberührt; die Auswahl ist keine Änderung
 an der gespeicherten BGK-Datei.
 
+## Gespeicherte 3D-Ansichten sortieren (2026.1.42)
+
+Im Fenster für gespeicherte SectionBox-Snapshots lässt sich die Liste nach
+Namen **A–Z** oder **Z–A** sortieren. Die Sortierung ändert nur die Anzeige,
+nicht die gespeicherten Ansichten; der ausgewählte Eintrag bleibt beim
+Umschalten erhalten.
+
 ## Geometrie aus gewählten Flächen (2026.1.37)
 
 Im Menü **Geometrien** lassen sich einzelne begrenzte Revit-Flächen auswählen.
