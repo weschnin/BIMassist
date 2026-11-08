@@ -71,7 +71,7 @@ prüfen und die Vorlage speichern. Für andere Stamm-LVs separate Vorlagen anleg
 **JSON importieren** übernimmt eine portable Vorlage als ungespeicherte Kopie
 mit derselben Profil-ID; **Neu** erzeugt eine neue Profil-ID.
 
-Schema 1 enthält Katalogsnapshots, Dateinamen und SHA-256-Quellnachweise,
+Das Vorlagenschema enthält Katalogsnapshots, Dateinamen und SHA-256-Quellnachweise,
 jedoch keine absoluten Quellpfade. Kataloge werden in dieser ersten Version
 vollständig eingebettet; Weitergabe nur mit entsprechenden Nutzungsrechten.
 Die Prüfliste wird nach Änderungen und beim Öffnen aus den gespeicherten
@@ -106,6 +106,20 @@ Optional kann dem ersten Testprojekt der Ordner mit den drei Referenzdateien
 als Argument übergeben werden. Es prüft deren Import und einen technischen
 JSON-Roundtrip; die Testzuordnung ist keine fachlich freigegebene LV-Zuordnung.
 Die Tests ersetzen nicht den interaktiven Test des Befehls in Revit.
+
+## Feste AVA-Mengen (2026.1.44)
+
+Unter **Zuordnung bearbeiten → Mengenquelle** kann statt eines Parameters eine
+**feste Zahl je passendem Element** eingegeben werden, beispielsweise **1 St**.
+Die Bedingungen (etwa DN) werden weiterhin benötigt, aber kein Mengenparameter.
+Konstanten müssen positiv, für Stückmengen außerdem ganzzahlig sein.
+Die Prüfliste beschreibt die feste Menge ausdrücklich als Konstante.
+
+Neue Dateien verwenden **Schema 2**. Vorhandene Schema-1-Vorlagen werden beim
+Laden verlustfrei in die neue Struktur übernommen; die Quelldatei wird erst
+beim Speichern geändert. Schema 2 benötigt BIMassist **2026.1.44 oder neuer**
+und kann nicht mit 2026.1.43 geöffnet werden. Modellprüfung und Berechnung
+sind weiterhin nicht Bestandteil dieses Editors.
 
 ## Geometrie aus gewählten Flächen (2026.1.37)
 

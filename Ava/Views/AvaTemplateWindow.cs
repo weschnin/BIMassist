@@ -189,7 +189,7 @@ public sealed class AvaTemplateWindow : Window
             bgkSource.Text = "BGK: " + editor.Document.BgkIdentification; typeSource.Text = "Typnummer: " + editor.Document.TypeIdentification;
             string Describe<T>(string label, Catalog<T> c) => $"{label}: {c.Entries.Count} Einträge | {c.Source.FileName} | {c.Source.Format}\nSHA-256: {c.Source.Sha256}";
             sources.Text = Describe("BGK", editor.Document.BgkCatalog) + "\n" + Describe("LV", editor.Document.LvCatalog) + "\n" + Describe("Parameter", editor.Document.ParameterCatalog);
-            mappings.ItemsSource = editor.Document.Mappings.Select(m => { var l = editor.Document.LvCatalog.Entries.FirstOrDefault(l => l.Id == m.LvItemId); return new MappingRow(m, l?.Ordinal ?? m.LvItemId, l?.Text ?? "", m.Quantity == null ? "nicht definiert" : m.Quantity.Source + " | " + m.Quantity.Unit); }).ToList();
+            mappings.ItemsSource = editor.Document.Mappings.Select(m => { var l = editor.Document.LvCatalog.Entries.FirstOrDefault(l => l.Id == m.LvItemId); return new MappingRow(m, l?.Ordinal ?? m.LvItemId, l?.Text ?? "", m.Quantity?.ToString() ?? "nicht definiert"); }).ToList();
             RefreshCatalog(); RefreshDerived();
             Title = "AVA-Vorlage / Prüfliste – " + editor.Document.Name + (editor.IsDirty ? " *" : "");
         }

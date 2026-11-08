@@ -26,7 +26,7 @@ internal static class Program
             Test("JSON rejects null unsupported schema and unknown properties", () => {
                 Reject(() => TemplateJson.Deserialize("null")); Reject(() => TemplateJson.Deserialize("{}"));
                 var json = TemplateJson.Serialize(new AvaTemplate());
-                Reject(() => TemplateJson.Deserialize(json.Replace("\"SchemaVersion\": 1", "\"SchemaVersion\": 2")));
+                Reject(() => TemplateJson.Deserialize(json.Replace("\"SchemaVersion\": 2", "\"SchemaVersion\": 3")));
                 var node = JsonNode.Parse(json)!; node["Mappings"] = null; Reject(() => TemplateJson.Deserialize(node.ToJsonString()));
                 node = JsonNode.Parse(json)!; node["Mystery"] = 1; Reject(() => TemplateJson.Deserialize(node.ToJsonString()));
                 node = JsonNode.Parse(json)!; node["BgkIdentification"]!["Name"] = null; Reject(() => TemplateJson.Deserialize(node.ToJsonString()));

@@ -6,6 +6,7 @@ public enum ParameterKind { SharedGuid, LocalFamily, BuiltIn }
 public enum ParameterScope { Instance, Type }
 public enum ConditionOperator { Equal, NotEqual, Greater, GreaterOrEqual, Less, LessOrEqual }
 public enum OperandKind { Numeric, Boolean, Text }
+public enum QuantityKind { Parameter, Constant }
 
 public sealed class ParameterSource
 {
@@ -30,8 +31,13 @@ public sealed class RuleCondition
 }
 public sealed class QuantitySource
 {
-    [JsonRequired] public ParameterSource Source { get; set; } = new();
+    [JsonRequired] public QuantityKind Kind { get; set; } = QuantityKind.Parameter;
+    [JsonRequired] public ParameterSource? Source { get; set; } = new();
+    [JsonRequired] public decimal? ConstantValue { get; set; } = null;
     [JsonRequired] public string Unit { get; set; } = "";
+    public override string ToString() => Kind == QuantityKind.Constant
+        ? $"Konstante {ConstantValue?.ToString(System.Globalization.CultureInfo.GetCultureInfo("de-DE")) ?? "nicht definiert"} {Unit} je passendem Element"
+        : Source?.ToString() ?? "nicht definiert";
 }
 public sealed class MappingRule
 {
@@ -41,11 +47,11 @@ public sealed class MappingRule
     [JsonRequired] public string LvItemId { get; set; } = "";
     [JsonRequired] public List<RuleCondition> Conditions { get; set; } = [];
     [JsonRequired] public QuantitySource? Quantity { get; set; }
-    public override string ToString() => $"{BgkKey} / {TypeNumber} → {LvItemId} | UND: {Conditions.Count} | Menge: {Quantity?.Source.Name ?? "nicht definiert"}";
+    public override string ToString() => $"{BgkKey} / {TypeNumber} → {LvItemId} | UND: {Conditions?.Count ?? 0} | Menge: {Quantity?.ToString() ?? "nicht definiert"}";
 }
 public sealed class AvaTemplate
 {
-    [JsonRequired] public int SchemaVersion { get; set; } = 1;
+    [JsonRequired] public int SchemaVersion { get; set; } = 2;
     [JsonRequired] public Guid ProfileId { get; set; } = Guid.NewGuid();
     [JsonRequired] public string Name { get; set; } = "Neue AVA-Vorlage";
     [JsonRequired] public string Version { get; set; } = "1.0";

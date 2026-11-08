@@ -72,7 +72,7 @@ public static class TemplateValidator
                 else if (source.BuiltInId.Length > 0) Error("PARAMETER_SOURCE", path, "Lokale Quelle darf keine BuiltIn-ID enthalten.");
             }
         }
-        if (template.SchemaVersion != 1 || template.ProfileId == Guid.Empty) Error("IDENTITY", "Profil", "Schema oder Profil-ID ungültig.");
+        if (template.SchemaVersion != 2 || template.ProfileId == Guid.Empty) Error("IDENTITY", "Profil", "Schema oder Profil-ID ungültig.");
         if (string.IsNullOrWhiteSpace(template.Name) || string.IsNullOrWhiteSpace(template.Version)) Error("PROFILE_NAME", "Profil", "Name und Version sind erforderlich.");
         if (string.IsNullOrWhiteSpace(template.ReviewScope)) Warn("REVIEW_SCOPE", "Profil", "Unabhängigen Prüfumfang / Kategorien festlegen. BGK-Filter allein finden keine unmarkierten Elemente.");
         Source(template.BgkIdentification, "BGK-Identifikation"); Source(template.TypeIdentification, "Typ-Identifikation");
@@ -114,8 +114,24 @@ public static class TemplateValidator
             }
             if (rule.Quantity is { } quantity)
             {
-                Source(quantity.Source, path + " / Menge");
-                if (!UnitCatalog.Allows(quantity.Source.Spec, quantity.Unit)) Error("QUANTITY_UNIT", path, "Mengeneinheit passt nicht zur Parameterspezifikation.");
+                if (quantity.Kind == QuantityKind.Parameter)
+                {
+                    if (quantity.Source is not { } source || quantity.ConstantValue != null)
+                        Error("QUANTITY_MODE", path, "Parametermenge benötigt eine Quelle und darf keinen konstanten Wert enthalten.");
+                    else
+                    {
+                        Source(source, path + " / Menge");
+                        if (!UnitCatalog.Allows(source.Spec, quantity.Unit)) Error("QUANTITY_UNIT", path, "Mengeneinheit passt nicht zur Parameterspezifikation.");
+                    }
+                }
+                else if (quantity.Kind == QuantityKind.Constant)
+                {
+                    if (quantity.Source != null) Error("QUANTITY_MODE", path, "Konstante Menge darf keine Parameterquelle enthalten.");
+                    if (quantity.ConstantValue is not { } value || value <= 0 || (quantity.Unit == "St" && decimal.Truncate(value) != value))
+                        Error("QUANTITY_VALUE", path, "Konstante Menge muss positiv und für St ganzzahlig sein.");
+                    if (!UnitCatalog.Compatible(quantity.Unit, quantity.Unit)) Error("QUANTITY_UNIT", path, "Konstante Menge benötigt eine unterstützte Einheit.");
+                }
+                else Error("QUANTITY_MODE", path, "Unbekannte Mengenart.");
                 if (lv != null && !UnitCatalog.Compatible(quantity.Unit, lv.Unit)) Error("LV_UNIT", path, "Mengeneinheit " + quantity.Unit + " passt nicht zur unterstützten LV-Einheit " + lv.Unit + ". Keine stille Umrechnung.");
             }
             else Warn("QUANTITY_MISSING", path, "Keine Mengenquelle definiert; Zuordnung ist ein Entwurf.");
@@ -148,7 +164,9 @@ public static class ChecklistBuilder
             foreach (var condition in rule.Conditions)
                 checks.Add(new("Bedingung", context, "UND: " + condition + ". Quelle: " + condition.Source + ". Fehlender / ungültiger Eingang = nicht auswertbar / Fehler, nicht false; kein Fallback."));
             if (rule.Quantity is { } quantity)
-                checks.Add(new("Menge", context + " — nur bei erfüllten UND-Bedingungen", "Lesen: " + quantity.Source + "; deklarierte Einheit " + quantity.Unit + " → LV " + lv?.Unit + ". Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen. Umrechnung, Rundung und Aggregation sind noch nicht implementiert."));
+                checks.Add(new("Menge", context + " — nur bei erfüllten UND-Bedingungen", quantity.Kind == QuantityKind.Constant
+                    ? quantity + "; fester Wert, kein Mengenparameter erforderlich. Deklarierte Einheit " + quantity.Unit + " → LV " + lv?.Unit + ". Bedingungen benötigen weiterhin ihre Parameterquellen. Modellauswertung, Umrechnung, Rundung und Aggregation sind noch nicht implementiert."
+                    : "Lesen: " + quantity.Source + "; deklarierte Einheit " + quantity.Unit + " → LV " + lv?.Unit + ". Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen. Umrechnung, Rundung und Aggregation sind noch nicht implementiert."));
         }
         return checks;
     }

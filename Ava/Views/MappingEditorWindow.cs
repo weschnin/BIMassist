@@ -14,8 +14,10 @@ internal sealed class MappingEditorWindow : Window
     private readonly W.ListBox types = new();
     private readonly W.ListBox lv = new();
     private readonly W.ListBox conditions = new();
-    private readonly W.CheckBox hasQuantity = new() { Content = "Mengenquelle ausdrücklich definieren", Margin = new Thickness(0, 8, 0, 12) };
+    private readonly W.CheckBox hasQuantity = new() { Content = "Menge ausdrücklich definieren", Margin = new Thickness(0, 8, 0, 12) };
     private readonly ParameterSourceEditor quantity;
+    private readonly W.ComboBox quantityKind;
+    private readonly W.TextBox constantValue;
     private readonly W.ComboBox quantityUnit = new() { MinHeight = 30, Width = 220, HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
     private readonly W.TextBox bgkSearch = EditorUi.Input();
     private readonly W.TextBox typeSearch = EditorUi.Input();
@@ -91,18 +93,29 @@ internal sealed class MappingEditorWindow : Window
         tabs.Items.Add(new W.TabItem { Header = "Bedingungen (UND)", Content = conditionPanel });
 
         var quantityPanel = new W.StackPanel { Margin = new Thickness(12) };
-        quantityPanel.Children.Add(EditorUi.Text("Mengenparameter wird nur für erfüllte Bedingungen benötigt. Hier werden Quelle und Einheit deklariert, keine Modellwerte gelesen. Umrechnung / Rundung / Aggregation folgen erst in einem späteren Modul."));
+        quantityPanel.Children.Add(EditorUi.Text("Die Menge gilt je passendem Element und nur bei erfüllten Bedingungen. Eine Konstante benötigt keinen Mengenparameter, z. B. 1 St. Hier wird die Vorschrift definiert, noch keine Modellmenge berechnet."));
         quantityPanel.Children.Add(hasQuantity); hasQuantity.IsChecked = draft.Quantity != null;
+        quantityKind = EditorUi.Choice(new[] { (QuantityKind.Parameter, "Parameterwert lesen"), (QuantityKind.Constant, "Feste Zahl je passendem Element") }, draft.Quantity?.Kind ?? QuantityKind.Parameter);
+        EditorUi.Field(quantityPanel, "Mengenquelle", quantityKind);
+        constantValue = EditorUi.Input((draft.Quantity?.ConstantValue ?? 1m).ToString(CultureInfo.InvariantCulture));
+        EditorUi.Field(quantityPanel, "Feste Zahl (positiv; bei St ganzzahlig)", constantValue);
         quantity = new ParameterSourceEditor(template.ParameterCatalog.Entries, draft.Quantity?.Source ?? new()); quantityPanel.Children.Add(quantity);
-        EditorUi.Field(quantityPanel, "Einheit des gelesenen Werts (muss zur LV-Einheit passen)", quantityUnit);
+        EditorUi.Field(quantityPanel, "Mengeneinheit (muss zur LV-Einheit passen)", quantityUnit);
         void RefreshQuantity()
         {
-            quantity.IsEnabled = hasQuantity.IsChecked == true; quantityUnit.IsEnabled = quantity.IsEnabled;
+            bool enabled = hasQuantity.IsChecked == true;
+            bool constant = EditorUi.Selected<QuantityKind>(quantityKind) == QuantityKind.Constant;
+            quantityKind.IsEnabled = enabled; constantValue.IsEnabled = enabled && constant;
+            quantity.IsEnabled = enabled && !constant; quantity.Visibility = constant ? Visibility.Collapsed : Visibility.Visible;
+            quantityUnit.IsEnabled = enabled;
             var prior = quantityUnit.SelectedItem as string ?? draft.Quantity?.Unit;
-            try { quantityUnit.ItemsSource = UnitCatalog.ForSpec(quantity.ReadSource().Spec); }
+            try { quantityUnit.ItemsSource = constant
+                ? new[] { "NUMBER", "LENGTH", "AREA", "VOLUME", "ANGLE", "MASS_DENSITY" }.SelectMany(UnitCatalog.ForSpec).Distinct().ToArray()
+                : UnitCatalog.ForSpec(quantity.ReadSource().Spec); }
             catch (InvalidDataException) { quantityUnit.ItemsSource = Array.Empty<string>(); }
-            quantityUnit.SelectedItem = prior;
+            quantityUnit.SelectedItem = prior ?? (constant ? "St" : null);
         }
+        quantityKind.SelectionChanged += (_, _) => RefreshQuantity();
         quantity.SourceChanged += RefreshQuantity; hasQuantity.Checked += (_, _) => RefreshQuantity(); hasQuantity.Unchecked += (_, _) => RefreshQuantity(); RefreshQuantity();
         quantityPanel.Children.Add(EditorUi.Text("Unterstützte Mengen: NUMBER / INTEGER, LENGTH, AREA, VOLUME, ANGLE, MASS_DENSITY mit expliziten Einheiten. Zeit, Masse und freie LV-Einheiten sind noch nicht unterstützt. 'Menge nicht definiert' bleibt als Entwurf zulässig."));
         tabs.Items.Add(new W.TabItem { Header = "Mengenquelle", Content = EditorUi.Scroll(quantityPanel) });
@@ -112,7 +125,19 @@ internal sealed class MappingEditorWindow : Window
     {
         if (bgk.SelectedItem is not BgkEntry b || types.SelectedItem is not BgkType t || lv.SelectedItem is not LvEntry l) throw new InvalidDataException("BGK, zugehörigen Typ und LV-Position auswählen.");
         var result = TemplateJson.Copy(draft); result.BgkKey = b.Key; result.TypeNumber = t.Number; result.LvItemId = l.Id;
-        result.Quantity = hasQuantity.IsChecked == true ? new() { Source = quantity.ReadSource(), Unit = quantityUnit.SelectedItem as string ?? "" } : null;
+        result.Quantity = null;
+        if (hasQuantity.IsChecked == true)
+        {
+            var kind = EditorUi.Selected<QuantityKind>(quantityKind);
+            var unit = quantityUnit.SelectedItem as string ?? "";
+            if (kind == QuantityKind.Constant)
+            {
+                if (!decimal.TryParse(constantValue.Text.Replace(',', '.'), NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var value))
+                    throw new InvalidDataException("Eine feste Zahl ohne Tausendertrennzeichen eingeben.");
+                result.Quantity = new() { Kind = kind, Source = null, ConstantValue = value, Unit = unit };
+            }
+            else result.Quantity = new() { Kind = kind, Source = quantity.ReadSource(), ConstantValue = null, Unit = unit };
+        }
         return result;
     }
 }
