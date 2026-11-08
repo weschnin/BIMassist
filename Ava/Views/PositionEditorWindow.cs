@@ -95,6 +95,8 @@ internal sealed class PositionEditorWindow : Window
             var value = EvaluatePreview(inputs); preview.Text = $"Testrechnung: {value.ToString(CultureInfo.GetCultureInfo("de-DE"))} {quantityUnit.SelectedItem} je Element – kein Modellwert";
         })));
         formulaPanel.Children.Add(preview); panel.Children.Add(formulaPanel); RefreshBindings();
+        bool preserveUnit = draft.Quantity != null;
+        bool updatingUnits = false;
         void RefreshQuantity()
         {
             bool enabled = hasQuantity.IsChecked == true;
@@ -104,15 +106,25 @@ internal sealed class PositionEditorWindow : Window
             formulaPanel.Visibility = kind == QuantityKind.Formula ? Visibility.Visible : Visibility.Collapsed; formulaPanel.IsEnabled = enabled;
             quantityUnit.IsEnabled = enabled;
             var prior = quantityUnit.SelectedItem as string ?? draft.Quantity?.Unit;
-            try { quantityUnit.ItemsSource = kind == QuantityKind.Parameter ? UnitCatalog.ForSpec(quantity.ReadSource().Spec)
-                : new[] { "NUMBER", "LENGTH", "AREA", "VOLUME", "ANGLE", "MASS_DENSITY" }.SelectMany(UnitCatalog.ForSpec).Concat(new[] { "m²", "m³" }).Distinct().ToArray(); }
-            catch (InvalidDataException) { quantityUnit.ItemsSource = Array.Empty<string>(); }
-            quantityUnit.SelectedItem = prior ?? (lv.SelectedItem as LvEntry)?.Unit ?? "St"; preview.Text = "";
+            // Only an untouched default follows LV selection; never relabel a saved or edited quantity.
+            var selectedUnit = preserveUnit ? prior : (lv.SelectedItem as LvEntry)?.Unit ?? prior;
+            updatingUnits = true;
+            try
+            {
+                try { quantityUnit.ItemsSource = kind == QuantityKind.Parameter ? UnitCatalog.ForSpec(quantity.ReadSource().Spec)
+                    : new[] { "NUMBER", "LENGTH", "AREA", "VOLUME", "ANGLE", "MASS_DENSITY" }.SelectMany(UnitCatalog.ForSpec).Concat(new[] { "m²", "m³" }).Distinct().ToArray(); }
+                catch (InvalidDataException) { quantityUnit.ItemsSource = Array.Empty<string>(); }
+                quantityUnit.SelectedItem = selectedUnit;
+            }
+            finally { updatingUnits = false; }
+            preview.Text = "";
         }
         quantityKind.SelectionChanged += (_, _) => RefreshQuantity(); quantity.SourceChanged += RefreshQuantity;
         hasQuantity.Checked += (_, _) => RefreshQuantity(); hasQuantity.Unchecked += (_, _) => RefreshQuantity();
-        expression.TextChanged += (_, _) => preview.Text = ""; constantValue.TextChanged += (_, _) => preview.Text = "";
-        quantityUnit.SelectionChanged += (_, _) => preview.Text = "";
+        void QuantityEdited() { if (quantityUnit.SelectedItem != null) preserveUnit = true; preview.Text = ""; }
+        expression.TextChanged += (_, _) => QuantityEdited(); constantValue.TextChanged += (_, _) => QuantityEdited();
+        quantityUnit.SelectionChanged += (_, _) => { if (!updatingUnits) QuantityEdited(); };
+        lv.SelectionChanged += (_, _) => RefreshQuantity();
         RefreshQuantity(); tabs.Items.Add(new W.TabItem { Header = "2  Eigene Menge / Formel", Content = EditorUi.Scroll(panel) }); Content = root;
     }
     private void RefreshBindings()

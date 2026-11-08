@@ -155,6 +155,15 @@ Die Prüfliste leitet für jede Position die eigene Menge und alle benötigten
 Formelparameter ab. Modellprüfung, automatische Modellmengenermittlung und
 X31 sind weiterhin nicht Bestandteil dieses Editors.
 
+## Mengeneinheit neuer AVA-Positionen (2026.1.46)
+
+Neue Leistungspositionen übernehmen die unterstützte LV-Einheit als Vorschlag,
+beispielsweise **psch** statt einer pauschalen Vorbelegung mit **St**.
+Solange die Menge unberührt ist, folgt der Vorschlag der LV-Auswahl.
+Gespeicherte Mengen sowie ausdrücklich gewählte Einheiten oder eingegebene
+Zahlen/Formeln werden beim Wechsel der LV-Position nicht still umetikettiert.
+Widersprüchliche Einheiten bleiben ein Fehler; keine automatische Umrechnung.
+
 ## Geometrie aus gewählten Flächen (2026.1.37)
 
 Im Menü **Geometrien** lassen sich einzelne begrenzte Revit-Flächen auswählen.

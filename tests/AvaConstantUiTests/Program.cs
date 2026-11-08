@@ -31,6 +31,45 @@ internal static class Program
             Check(parameter.Quantity!.Source!.Name == "Count" && parameter.Quantity.ConstantValue == null, "Mode switch lost parameter or retained constant"); window.Close();
             var reopened = new PositionEditorWindow(template, result);
             Check(TemplateJson.Copy(reopened.BuildPosition()).Quantity is { Source: null, ConstantValue: 1 }, "Constant edit roundtrip failed"); reopened.Close();
+            var lump = new LvEntry("lump-id", "test-boq", ["01", "10", "0120"], "01.10.0120", "Baustelleneinrichtung abbauen", "", "psch");
+            template.LvCatalog.Entries.Add(lump);
+            var added = new PositionEditorWindow(template, null);
+            Field<ListBox>(added, "lv").SelectedItem = lump;
+            Field<CheckBox>(added, "hasQuantity").IsChecked = true;
+            var lumpPosition = added.BuildPosition();
+            Check(lumpPosition.Quantity is { Kind: QuantityKind.Constant, ConstantValue: 1, Unit: "psch" }, "New psch LV position incorrectly keeps the initial St quantity unit");
+            var multiple = TemplateJson.Copy(template); multiple.Mappings[0].Positions.Add(lumpPosition);
+            TemplateEditor.EnsureValid(multiple);
+            Check(multiple.Mappings[0].Positions[0].Quantity!.Unit == "St", "Adding psch position changed sibling quantity");
+            Field<ListBox>(added, "lv").SelectedItem = template.LvCatalog.Entries[0];
+            Check(added.BuildPosition().Quantity!.Unit == "St", "Untouched default unit does not follow the newly selected LV");
+            Field<ComboBox>(added, "quantityUnit").SelectedItem = "m";
+            Field<ListBox>(added, "lv").SelectedItem = lump;
+            var explicitUnit = added.BuildPosition();
+            Check(explicitUnit.Quantity!.Unit == "m", "LV selection silently relabels an explicitly chosen quantity unit");
+            multiple.Mappings[0].Positions[1] = explicitUnit;
+            Check(TemplateValidator.Validate(multiple).Any(d => d.Code == "LV_UNIT" && d.Severity == DiagnosticSeverity.Error), "Explicit mismatched units are no longer rejected"); added.Close();
+            var saved = new PositionEditorWindow(template, result);
+            Field<ListBox>(saved, "lv").SelectedItem = lump;
+            Check(saved.BuildPosition().Quantity!.Unit == "St", "Saved unit silently changed when selecting another LV"); saved.Close();
+            var entered = new PositionEditorWindow(template, null);
+            Field<ListBox>(entered, "lv").SelectedItem = lump; Field<CheckBox>(entered, "hasQuantity").IsChecked = true;
+            Field<TextBox>(entered, "constantValue").Text = "2";
+            Field<ListBox>(entered, "lv").SelectedItem = template.LvCatalog.Entries[0];
+            Check(entered.BuildPosition().Quantity is { ConstantValue: 2, Unit: "psch" }, "Entered amount was silently relabelled after LV change"); entered.Close();
+            foreach (var expectedUnit in new[] { "St", "psch", "m", "m²", "m³" })
+            {
+                var unitTemplate = TemplateJson.Copy(template);
+                var selectedLv = new LvEntry("unit-lv", "test-boq", ["99", "01"], "99.01", "Test", "", expectedUnit);
+                unitTemplate.LvCatalog.Entries.Add(selectedLv);
+                var fresh = new PositionEditorWindow(unitTemplate, null);
+                Check(Field<ComboBox>(fresh, "quantityUnit").SelectedItem == null, "New position assumes a unit before LV selection");
+                Field<ListBox>(fresh, "lv").SelectedItem = selectedLv;
+                Field<CheckBox>(fresh, "hasQuantity").IsChecked = true;
+                Check(fresh.BuildPosition().Quantity!.Unit == expectedUnit, "New position does not propose LV unit " + expectedUnit);
+                unitTemplate.Mappings[0].Positions.Add(fresh.BuildPosition()); TemplateEditor.EnsureValid(unitTemplate); fresh.Close();
+            }
+            Console.WriteLine("PASS LV unit defaults, psch child addition, browsing, explicit/saved/entered-unit preservation and mismatch validation");
             foreach (var unit in new[] { "m²", "m³" })
             {
                 var aliasTemplate = TemplateJson.Copy(template);
