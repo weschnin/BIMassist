@@ -293,6 +293,23 @@ namespace BIMassist
 
                 panel.AddSeparator();
 
+                // AVA: portable templates and derived checklists; no model writes or X31 export.
+                PanelgroupData = new PulldownButtonData("AVA", "AVA")
+                {
+                    ToolTip = "AVA-Vorlagen und Prüfvorschriften",
+                    Image = GetImageSource("doc_16px.png"),
+                    LargeImage = GetImageSource("doc_24px.png"),
+                };
+                pulldownGroup = panel.AddItem(PanelgroupData) as PulldownButton
+                    ?? throw new InvalidOperationException("Die AVA-Gruppe konnte nicht angelegt werden.");
+                btnData = new PushButtonData("AVA Vorlagen", "Vorlagen verwalten",
+                    Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaTemplateCommand")
+                {
+                    ToolTip = "BGK und Typmarkierungen mit LV-Positionen verknüpfen",
+                    LongDescription = "Lädt Stamm-LV, BGK-Struktur und Parameterkatalog. Bearbeitet portable AVA-Vorlagen und erzeugt daraus Prüfvorschriften. Verändert keine Revit-Elemente und führt noch keine Modellprüfung oder X31-Ausgabe aus.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
                 btnData = new PushButtonData("BIMassist Info", "Info", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AboutBimassistCommand")
                 {
                     ToolTip = "Info über BIMassist anzeigen",

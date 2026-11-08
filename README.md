@@ -51,6 +51,62 @@ Namen **A–Z** oder **Z–A** sortieren. Die Sortierung ändert nur die Anzeige
 nicht die gespeicherten Ansichten; der ausgewählte Eintrag bleibt beim
 Umschalten erhalten.
 
+## AVA-Vorlagen und abgeleitete Prüfliste (2026.1.43)
+
+Direkt links von **Info** befindet sich **AVA → Vorlagen verwalten**.
+Der dateibasierte Editor benötigt keine Modelländerungen. Er bietet:
+
+- neue, öffnungsfähige und als JSON importierbare/exportierbare Vorlagen;
+- read-only Import von BGK-XML, GAEB DA82/3.3 (`.x82`) und Revit-Parameter-TXT;
+- durchsuchbare BGK-/Typ- und LV-Kataloge, manuelle Zuordnungen und deren Bearbeitung;
+- typisierte UND-Bedingungen mit Vergleichsoperator, Wert und expliziter Einheit;
+- Mengenquellen mit GUID oder ausdrücklich lokalem Familienparameter,
+  Spezifikation und Instanz-/Typ-Geltung;
+- automatisch abgeleitete Prüfvorschriften sowie Validierung der Vorlage.
+
+**Ablauf:** Profil benennen und unabhängigen Prüfumfang beschreiben, die drei
+Quellkataloge importieren, Zuordnungen hinzufügen, Bedingungen und Mengenquelle
+festlegen, anschließend die Tabs **Abgeleitete Prüfliste** und **Validierung**
+prüfen und die Vorlage speichern. Für andere Stamm-LVs separate Vorlagen anlegen.
+**JSON importieren** übernimmt eine portable Vorlage als ungespeicherte Kopie
+mit derselben Profil-ID; **Neu** erzeugt eine neue Profil-ID.
+
+Schema 1 enthält Katalogsnapshots, Dateinamen und SHA-256-Quellnachweise,
+jedoch keine absoluten Quellpfade. Kataloge werden in dieser ersten Version
+vollständig eingebettet; Weitergabe nur mit entsprechenden Nutzungsrechten.
+Die Prüfliste wird nach Änderungen und beim Öffnen aus den gespeicherten
+Regeln neu abgeleitet, nicht als unabhängig bearbeitbare zweite Liste gepflegt.
+Unbekannte Schemas, fehlende Pflichtfelder, ungültige Referenzen und
+widersprüchliche Parametertypen werden abgelehnt, ohne den aktiven Stand zu ersetzen.
+Unvollständige Mengenquellen oder ein noch leerer Prüfumfang erscheinen als
+Entwurfshinweise. Ungespeicherte Änderungen werden vor Verwerfen abgefragt.
+
+Die Identifikationsvorgaben entsprechen **Übertragen**: BGK aus `ASSEMBLY_CODE`,
+Typnummer aus `ALL_MODEL_TYPE_COMMENTS`, jeweils am Typ. Ein lokales
+`AVA_Anzahl / NUMBER` ist ausdrücklich nicht dasselbe wie ein gemeinsamer
+Parameter gleichen Namens mit `INTEGER`; es gibt keinen stillen Fallback.
+
+**Grenzen:** Die Prüfliste beschreibt Anforderungen, nicht bereits ermittelte
+Modellfehler. Der Prüfumfang ist bisher eine Beschreibung, noch kein ausführbarer
+Kategorienfilter. Keine Modellprüfung, Parameterbindung, Mengenermittlung,
+Umrechnung/Rundung/Aggregation und kein X31-Export. Keine Prioritäten oder
+Else-Regeln; mehrere Zuordnungen werden zur fachlichen Prüfung gekennzeichnet.
+Keine vollständige GAEB-XSD-Validierung. Unterstützte Mengenspezifikationen:
+Zahl/Ganzzahl, Länge, Fläche, Volumen, Winkel und Massendichte; nicht jede
+LV-Einheit ist damit bereits abgedeckt.
+
+Automatisierte AVA-Tests einschließlich WPF-Konstruktion/Layout:
+
+```bash
+dotnet run --project tests/AvaTemplateTests/AvaTemplateTests.csproj
+dotnet run --project tests/AvaRibbonTests/AvaRibbonTests.csproj
+```
+
+Optional kann dem ersten Testprojekt der Ordner mit den drei Referenzdateien
+als Argument übergeben werden. Es prüft deren Import und einen technischen
+JSON-Roundtrip; die Testzuordnung ist keine fachlich freigegebene LV-Zuordnung.
+Die Tests ersetzen nicht den interaktiven Test des Befehls in Revit.
+
 ## Geometrie aus gewählten Flächen (2026.1.37)
 
 Im Menü **Geometrien** lassen sich einzelne begrenzte Revit-Flächen auswählen.
