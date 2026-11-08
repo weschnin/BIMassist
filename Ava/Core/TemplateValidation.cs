@@ -11,8 +11,8 @@ public static class UnitCatalog
 {
     private static readonly Dictionary<string, string[]> Units = new(StringComparer.Ordinal)
     {
-        ["LENGTH"] = ["mm", "cm", "m", "km"], ["AREA"] = ["mm2", "cm2", "m2"],
-        ["VOLUME"] = ["cm3", "m3"], ["ANGLE"] = ["deg", "rad"],
+        ["LENGTH"] = ["mm", "cm", "m", "km"], ["AREA"] = ["mm2", "cm2", "m2", "m²"],
+        ["VOLUME"] = ["cm3", "m3", "m³"], ["ANGLE"] = ["deg", "rad"],
         ["NUMBER"] = ["1", "St", "psch"], ["INTEGER"] = ["1", "St", "psch"],
         ["MASS_DENSITY"] = ["kg/m3"]
     };
@@ -72,7 +72,7 @@ public static class TemplateValidator
                 else if (source.BuiltInId.Length > 0) Error("PARAMETER_SOURCE", path, "Lokale Quelle darf keine BuiltIn-ID enthalten.");
             }
         }
-        if (template.SchemaVersion != 2 || template.ProfileId == Guid.Empty) Error("IDENTITY", "Profil", "Schema oder Profil-ID ungültig.");
+        if (template.SchemaVersion != 3 || template.ProfileId == Guid.Empty) Error("IDENTITY", "Profil", "Schema oder Profil-ID ungültig.");
         if (string.IsNullOrWhiteSpace(template.Name) || string.IsNullOrWhiteSpace(template.Version)) Error("PROFILE_NAME", "Profil", "Name und Version sind erforderlich.");
         if (string.IsNullOrWhiteSpace(template.ReviewScope)) Warn("REVIEW_SCOPE", "Profil", "Unabhängigen Prüfumfang / Kategorien festlegen. BGK-Filter allein finden keine unmarkierten Elemente.");
         Source(template.BgkIdentification, "BGK-Identifikation"); Source(template.TypeIdentification, "Typ-Identifikation");
@@ -86,15 +86,16 @@ public static class TemplateValidator
         Unique(template.ParameterCatalog.Entries.Select(p => p.Guid.ToString()), "Parameterkatalog");
         foreach (var p in template.ParameterCatalog.Entries) if (p.Guid == Guid.Empty || string.IsNullOrWhiteSpace(p.Name) || string.IsNullOrWhiteSpace(p.Spec)) Error("PARAMETER_DEFINITION", "Parameterkatalog", "Unvollständige Definition.");
         Unique(template.Mappings.Select(m => m.Id.ToString()), "Regeln");
+        Unique(template.Mappings.SelectMany(m => m.Positions).Select(p => p.Id.ToString()), "Positionen");
         foreach (var rule in template.Mappings)
         {
-            string path = rule.BgkKey + " / " + rule.TypeNumber + " [" + rule.Id + "]";
+            string groupPath = rule.BgkKey + " / " + rule.TypeNumber + " [" + rule.Id + "]";
+            string path = groupPath;
+            if (rule.Positions.Count == 0) Error("POSITIONS_EMPTY", path, "Mindestens eine LV-Position ist erforderlich.");
             if (rule.Id == Guid.Empty) Error("RULE_ID", path, "Regel-ID fehlt.");
             var bgk = template.BgkCatalog.Entries.FirstOrDefault(b => b.Key == rule.BgkKey);
             if (bgk == null) Error("BGK_REFERENCE", path, "BGK nicht im Katalog.");
             else if (!bgk.Types.Any(t => t.Number == rule.TypeNumber)) Error("TYPE_REFERENCE", path, "Typnummer nicht in dieser BGK.");
-            var lv = template.LvCatalog.Entries.FirstOrDefault(l => l.Id == rule.LvItemId);
-            if (lv == null) Error("LV_REFERENCE", path, "LV-ID nicht im Katalog: " + rule.LvItemId);
             foreach (var condition in rule.Conditions)
             {
                 Source(condition.Source, path + " / Bedingung");
@@ -112,29 +113,53 @@ public static class TemplateValidator
                 }
                 else Error("CONDITION_TYPE", path, "Bedingungstyp / Spezifikation nicht unterstützt oder widersprüchlich: " + condition.Source.Spec);
             }
-            if (rule.Quantity is { } quantity)
+            foreach (var position in rule.Positions)
             {
-                if (quantity.Kind == QuantityKind.Parameter)
+                path = groupPath + " / Position " + position.Id;
+                if (position.Id == Guid.Empty) Error("POSITION_ID", path, "Positions-ID fehlt.");
+                var lv = template.LvCatalog.Entries.FirstOrDefault(l => l.Id == position.LvItemId);
+                if (lv == null) Error("LV_REFERENCE", path, "LV-ID nicht im Katalog: " + position.LvItemId);
+                if (position.Quantity is { } quantity)
                 {
-                    if (quantity.Source is not { } source || quantity.ConstantValue != null)
-                        Error("QUANTITY_MODE", path, "Parametermenge benötigt eine Quelle und darf keinen konstanten Wert enthalten.");
-                    else
+                    if (quantity.Kind != QuantityKind.Formula && (quantity.Expression.Length > 0 || quantity.Variables.Count > 0))
+                        Error("QUANTITY_MODE", path, "Nur Formelmengen dürfen Ausdruck und Variablen enthalten.");
+                    if (quantity.Kind == QuantityKind.Parameter)
                     {
-                        Source(source, path + " / Menge");
-                        if (!UnitCatalog.Allows(source.Spec, quantity.Unit)) Error("QUANTITY_UNIT", path, "Mengeneinheit passt nicht zur Parameterspezifikation.");
+                        if (quantity.Source is not { } source || quantity.ConstantValue != null)
+                            Error("QUANTITY_MODE", path, "Parametermenge benötigt eine Quelle und darf keinen konstanten Wert enthalten.");
+                        else
+                        {
+                            Source(source, path + " / Menge");
+                            if (!UnitCatalog.Allows(source.Spec, quantity.Unit)) Error("QUANTITY_UNIT", path, "Mengeneinheit passt nicht zur Parameterspezifikation.");
+                        }
                     }
+                    else if (quantity.Kind == QuantityKind.Constant)
+                    {
+                        if (quantity.Source != null) Error("QUANTITY_MODE", path, "Konstante Menge darf keine Parameterquelle enthalten.");
+                        if (quantity.ConstantValue is not { } value || value <= 0 || (quantity.Unit == "St" && decimal.Truncate(value) != value))
+                            Error("QUANTITY_VALUE", path, "Konstante Menge muss positiv und für St ganzzahlig sein.");
+                        if (!UnitCatalog.Compatible(quantity.Unit, quantity.Unit)) Error("QUANTITY_UNIT", path, "Konstante Menge benötigt eine unterstützte Einheit.");
+                    }
+                    else if (quantity.Kind == QuantityKind.Formula)
+                    {
+                        if (quantity.Source != null || quantity.ConstantValue != null)
+                            Error("QUANTITY_MODE", path, "Formelmenge darf keine direkte Quelle oder Konstante enthalten.");
+                        try { QuantityFormula.Validate(quantity.Expression, quantity.Variables.Select(v => v.Name)); }
+                        catch (System.IO.InvalidDataException ex) { Error("FORMULA", path, ex.Message); }
+                        foreach (var variable in quantity.Variables)
+                        {
+                            var variablePath = path + " / Formelvariable " + variable.Name;
+                            Source(variable.Source, variablePath);
+                            if (!UnitCatalog.Allows(variable.Source.Spec, variable.Unit))
+                                Error("FORMULA", variablePath, "Numerische Parameterspezifikation und explizite passende Eingabeeinheit erforderlich.");
+                        }
+                        if (!UnitCatalog.Compatible(quantity.Unit, quantity.Unit)) Error("QUANTITY_UNIT", path, "Formel benötigt eine unterstützte deklarierte Ergebniseinheit.");
+                    }
+                    else Error("QUANTITY_MODE", path, "Unbekannte Mengenart.");
+                    if (lv != null && !UnitCatalog.Compatible(quantity.Unit, lv.Unit)) Error("LV_UNIT", path, "Mengeneinheit " + quantity.Unit + " passt nicht zur unterstützten LV-Einheit " + lv.Unit + ". Keine stille Umrechnung.");
                 }
-                else if (quantity.Kind == QuantityKind.Constant)
-                {
-                    if (quantity.Source != null) Error("QUANTITY_MODE", path, "Konstante Menge darf keine Parameterquelle enthalten.");
-                    if (quantity.ConstantValue is not { } value || value <= 0 || (quantity.Unit == "St" && decimal.Truncate(value) != value))
-                        Error("QUANTITY_VALUE", path, "Konstante Menge muss positiv und für St ganzzahlig sein.");
-                    if (!UnitCatalog.Compatible(quantity.Unit, quantity.Unit)) Error("QUANTITY_UNIT", path, "Konstante Menge benötigt eine unterstützte Einheit.");
-                }
-                else Error("QUANTITY_MODE", path, "Unbekannte Mengenart.");
-                if (lv != null && !UnitCatalog.Compatible(quantity.Unit, lv.Unit)) Error("LV_UNIT", path, "Mengeneinheit " + quantity.Unit + " passt nicht zur unterstützten LV-Einheit " + lv.Unit + ". Keine stille Umrechnung.");
+                else Warn("QUANTITY_MISSING", path, "Keine Mengenquelle definiert; Zuordnung ist ein Entwurf.");
             }
-            else Warn("QUANTITY_MISSING", path, "Keine Mengenquelle definiert; Zuordnung ist ein Entwurf.");
         }
         foreach (var group in template.Mappings.GroupBy(m => (m.BgkKey, m.TypeNumber)).Where(g => g.Count() > 1))
             Warn("MULTIPLE_RULES", group.Key.ToString(), "Mehrere Zuordnungen: keine Priorität / Else-Regel. Überlappung und gewünschte Mehrfachleistung fachlich prüfen.");
@@ -158,15 +183,25 @@ public static class ChecklistBuilder
         };
         foreach (var rule in template.Mappings)
         {
-            var lv = template.LvCatalog.Entries.FirstOrDefault(l => l.Id == rule.LvItemId);
-            var context = $"{rule.BgkKey} / {rule.TypeNumber} → {lv?.Ordinal ?? rule.LvItemId} (Regel {rule.Id})";
-            checks.Add(new("Zuordnung", context, "LV-ID, OZ und Einheit gegen Snapshot prüfen: " + rule.LvItemId + " | " + lv?.Unit));
+            var groupContext = $"{rule.BgkKey} / {rule.TypeNumber} (Gruppe {rule.Id})";
             foreach (var condition in rule.Conditions)
-                checks.Add(new("Bedingung", context, "UND: " + condition + ". Quelle: " + condition.Source + ". Fehlender / ungültiger Eingang = nicht auswertbar / Fehler, nicht false; kein Fallback."));
-            if (rule.Quantity is { } quantity)
-                checks.Add(new("Menge", context + " — nur bei erfüllten UND-Bedingungen", quantity.Kind == QuantityKind.Constant
-                    ? quantity + "; fester Wert, kein Mengenparameter erforderlich. Deklarierte Einheit " + quantity.Unit + " → LV " + lv?.Unit + ". Bedingungen benötigen weiterhin ihre Parameterquellen. Modellauswertung, Umrechnung, Rundung und Aggregation sind noch nicht implementiert."
-                    : "Lesen: " + quantity.Source + "; deklarierte Einheit " + quantity.Unit + " → LV " + lv?.Unit + ". Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen. Umrechnung, Rundung und Aggregation sind noch nicht implementiert."));
+                checks.Add(new("Bedingung", groupContext, "UND: " + condition + ". Quelle: " + condition.Source + ". Fehlender / ungültiger Eingang = nicht auswertbar / Fehler, nicht false; kein Fallback."));
+            foreach (var position in rule.Positions)
+            {
+                var lv = template.LvCatalog.Entries.FirstOrDefault(l => l.Id == position.LvItemId);
+                var context = $"{groupContext} → {lv?.Ordinal ?? position.LvItemId} (Position {position.Id})";
+                checks.Add(new("Zuordnung", context, "LV-ID, OZ und Einheit gegen Snapshot prüfen: " + position.LvItemId + " | " + lv?.Unit));
+                var requirement = position.Quantity switch
+                {
+                    { Kind: QuantityKind.Constant } quantity => quantity + "; fester Wert, kein Mengenparameter erforderlich. Deklarierte Einheit " + quantity.Unit + " → LV " + lv?.Unit + ". Bedingungen benötigen weiterhin ihre Parameterquellen. Modellauswertung, Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
+                    { Kind: QuantityKind.Formula } quantity => "Formel: " + quantity.Expression + "; deklarierte Ergebniseinheit " + quantity.Unit + " → LV " + lv?.Unit + ". Eingänge: " +
+                        string.Join("; ", quantity.Variables.Select(v => v.Name + " = Lesen: " + v.Source + "; Eingabeeinheit " + v.Unit)) +
+                        ". Werte beziehen sich auf die expliziten Eingabeeinheiten; keine automatische Einheitenumrechnung oder Dimensionsableitung. Fehlende / ungültige Eingänge sind Fehler, kein Fallback. Modellauswertung, Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
+                    { } quantity => "Lesen: " + quantity.Source + "; deklarierte Einheit " + quantity.Unit + " → LV " + lv?.Unit + ". Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen. Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
+                    null => "Menge nicht definiert; Zuordnung ist ein Entwurf."
+                };
+                checks.Add(new("Menge", context + " — nur bei erfüllten UND-Bedingungen", requirement));
+            }
         }
         return checks;
     }

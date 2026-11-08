@@ -1,27 +1,23 @@
 using System.Globalization;
 using System.IO;
 using System.Windows;
+using Binding = System.Windows.Data.Binding;
 using BIMassist.Ava.Core;
 using W = System.Windows.Controls;
 
 namespace BIMassist.Ava.Views;
 
+/// <summary>One BGK/type/condition group, containing independently quantified LV positions.</summary>
 internal sealed class MappingEditorWindow : Window
 {
     private readonly AvaTemplate template;
     private readonly MappingRule draft;
     private readonly W.ListBox bgk = new();
     private readonly W.ListBox types = new();
-    private readonly W.ListBox lv = new();
     private readonly W.ListBox conditions = new();
-    private readonly W.CheckBox hasQuantity = new() { Content = "Menge ausdrücklich definieren", Margin = new Thickness(0, 8, 0, 12) };
-    private readonly ParameterSourceEditor quantity;
-    private readonly W.ComboBox quantityKind;
-    private readonly W.TextBox constantValue;
-    private readonly W.ComboBox quantityUnit = new() { MinHeight = 30, Width = 220, HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
+    private readonly W.DataGrid positions = new() { AutoGenerateColumns = false, IsReadOnly = true, CanUserAddRows = false, SelectionMode = W.DataGridSelectionMode.Single };
     private readonly W.TextBox bgkSearch = EditorUi.Input();
     private readonly W.TextBox typeSearch = EditorUi.Input();
-    private readonly W.TextBox lvSearch = EditorUi.Input();
     public MappingRule? Result { get; private set; }
 
     public MappingEditorWindow(AvaTemplate template, MappingRule? existing)
@@ -33,52 +29,49 @@ internal sealed class MappingEditorWindow : Window
         var root = new W.DockPanel { Margin = new Thickness(16) };
         var buttons = new W.WrapPanel(); W.DockPanel.SetDock(buttons, W.Dock.Bottom); root.Children.Add(buttons);
         buttons.Children.Add(EditorUi.Button("Zuordnung übernehmen", () => EditorUi.Guard(this, () => {
-            var candidate = BuildRule(); var p = TemplateJson.Copy(template); p.Mappings.RemoveAll(m => m.Id == candidate.Id); p.Mappings.Add(candidate); TemplateEditor.EnsureValid(p);
+            var candidate = BuildRule(); var copy = TemplateJson.Copy(template);
+            copy.Mappings.RemoveAll(m => m.Id == candidate.Id); copy.Mappings.Add(candidate); TemplateEditor.EnsureValid(copy);
             Result = candidate; DialogResult = true;
         })));
         buttons.Children.Add(EditorUi.Button("Abbrechen", () => DialogResult = false));
         var tabs = new W.TabControl(); root.Children.Add(tabs);
-        var mappingPanel = new W.DockPanel { Margin = new Thickness(12) };
-        var hint = EditorUi.Text("BGK und Typnummer werden exakt zugeordnet. Ähnliche Nummern erzeugen keine automatische LV-Zuordnung. Mehrere Regeln sind möglich; keine Priorität oder Else-Regel.");
-        W.DockPanel.SetDock(hint, W.Dock.Top); mappingPanel.Children.Add(hint);
-        var details = new W.TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = W.ScrollBarVisibility.Auto, Height = 150, Margin = new Thickness(0, 12, 0, 0) };
-        W.DockPanel.SetDock(details, W.Dock.Bottom); mappingPanel.Children.Add(details);
-        var selectionGrid = new W.Grid();
-        selectionGrid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        selectionGrid.ColumnDefinitions.Add(new() { Width = new GridLength(0.8, GridUnitType.Star) });
-        selectionGrid.ColumnDefinitions.Add(new() { Width = new GridLength(1.7, GridUnitType.Star) });
+        var selector = new W.DockPanel { Margin = new Thickness(12) };
+        var hint = EditorUi.Text("Eine Zuordnung gilt für BGK + Typ und gemeinsame UND-Bedingungen. Darunter können beliebig viele Leistungspositionen mit jeweils eigener Menge stehen.");
+        W.DockPanel.SetDock(hint, W.Dock.Top); selector.Children.Add(hint);
+        var grid = new W.Grid();
+        grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         void Column(int index, string label, W.TextBox search, W.ListBox list)
         {
-            var column = new W.DockPanel { Margin = new Thickness(0, 0, 10, 0) }; W.Grid.SetColumn(column, index);
-            var title = EditorUi.Text(label); W.DockPanel.SetDock(title, W.Dock.Top); column.Children.Add(title);
-            W.DockPanel.SetDock(search, W.Dock.Top); search.ToolTip = "Suche – Groß-/Kleinschreibung wird ignoriert; Schlüssel bleiben unverändert."; column.Children.Add(search);
-            W.ScrollViewer.SetHorizontalScrollBarVisibility(list, W.ScrollBarVisibility.Auto); column.Children.Add(list); selectionGrid.Children.Add(column);
+            var panel = new W.DockPanel { Margin = new Thickness(0, 0, 12, 0) }; W.Grid.SetColumn(panel, index);
+            var text = EditorUi.Text(label); W.DockPanel.SetDock(text, W.Dock.Top); panel.Children.Add(text);
+            W.DockPanel.SetDock(search, W.Dock.Top); panel.Children.Add(search); panel.Children.Add(list); grid.Children.Add(panel);
         }
-        Column(0, "1. BGK suchen / wählen", bgkSearch, bgk); Column(1, "2. Typ suchen / wählen", typeSearch, types); Column(2, "3. LV suchen / wählen (OZ, Text, ID)", lvSearch, lv);
-        mappingPanel.Children.Add(selectionGrid); tabs.Items.Add(new W.TabItem { Header = "BGK / Typ → LV", Content = mappingPanel });
-        bgkSearch.TextChanged += (_, _) => { var selected = bgk.SelectedItem; bgk.ItemsSource = template.BgkCatalog.Entries.Where(b => b.ToString().Contains(bgkSearch.Text, StringComparison.OrdinalIgnoreCase)).ToList(); if (selected != null && bgk.Items.Contains(selected)) bgk.SelectedItem = selected; };
+        Column(0, "BGK suchen / wählen", bgkSearch, bgk); Column(1, "Typ suchen / wählen", typeSearch, types);
+        selector.Children.Add(grid); tabs.Items.Add(new W.TabItem { Header = "1  BGK / Typ", Content = selector });
         void FilterTypes()
         {
-            var selected = types.SelectedItem;
+            var prior = types.SelectedItem;
             types.ItemsSource = (bgk.SelectedItem as BgkEntry)?.Types.Where(t => t.ToString().Contains(typeSearch.Text, StringComparison.OrdinalIgnoreCase)).ToList();
-            if (selected != null && types.Items.Contains(selected)) types.SelectedItem = selected;
+            if (prior != null && types.Items.Contains(prior)) types.SelectedItem = prior;
         }
         bgk.SelectionChanged += (_, _) => FilterTypes(); typeSearch.TextChanged += (_, _) => FilterTypes();
-        lvSearch.TextChanged += (_, _) => { var selected = lv.SelectedItem; lv.ItemsSource = template.LvCatalog.Entries.Where(l => (l.ToString() + " " + l.Id).Contains(lvSearch.Text, StringComparison.OrdinalIgnoreCase)).ToList(); if (selected != null && lv.Items.Contains(selected)) lv.SelectedItem = selected; };
-        lv.SelectionChanged += (_, _) => { if (lv.SelectedItem is LvEntry item) details.Text = $"{item.Ordinal} | ID {item.Id} | BoQ {item.BoqId} | Einheit {item.Unit}\n{item.Text}\n{item.Description}"; else details.Text = ""; };
-        bgk.ItemsSource = template.BgkCatalog.Entries; lv.ItemsSource = template.LvCatalog.Entries;
+        bgkSearch.TextChanged += (_, _) => {
+            var priorBgk = bgk.SelectedItem; var priorType = types.SelectedItem;
+            bgk.ItemsSource = template.BgkCatalog.Entries.Where(b => b.ToString().Contains(bgkSearch.Text, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (priorBgk != null && bgk.Items.Contains(priorBgk)) { bgk.SelectedItem = priorBgk; if (priorType != null && types.Items.Contains(priorType)) types.SelectedItem = priorType; }
+        };
+        bgk.ItemsSource = template.BgkCatalog.Entries;
         bgk.SelectedItem = template.BgkCatalog.Entries.FirstOrDefault(b => b.Key == draft.BgkKey);
         types.SelectedItem = (bgk.SelectedItem as BgkEntry)?.Types.FirstOrDefault(t => t.Number == draft.TypeNumber);
-        lv.SelectedItem = template.LvCatalog.Entries.FirstOrDefault(l => l.Id == draft.LvItemId);
 
         var conditionPanel = new W.DockPanel { Margin = new Thickness(12) };
-        var conditionHint = EditorUi.Text("Alle Bedingungen gelten gemeinsam (UND). Ohne Bedingung gilt die Zuordnung für das gewählte BGK-/Typ-Paar. Fehlende Eingänge bedeuten später nicht auswertbar / Fehler, nicht false. Keine frei ausführbaren Ausdrücke.");
+        var conditionHint = EditorUi.Text("Alle Bedingungen gelten gemeinsam für sämtliche Leistungspositionen dieser Zuordnung (UND). Fehlende Eingänge bleiben Fehler, nicht false. Keine Priorität oder Else-Regel zwischen Zuordnungen.");
         W.DockPanel.SetDock(conditionHint, W.Dock.Top); conditionPanel.Children.Add(conditionHint);
         var conditionButtons = new W.WrapPanel(); W.DockPanel.SetDock(conditionButtons, W.Dock.Top); conditionPanel.Children.Add(conditionButtons);
         void EditCondition(bool edit)
         {
-            var selected = conditions.SelectedItem as RuleCondition;
-            if (edit && selected == null) return;
+            var selected = conditions.SelectedItem as RuleCondition; if (edit && selected == null) return;
             var dialog = new ConditionEditorWindow(template, edit ? selected : null) { Owner = this };
             if (dialog.ShowDialog() == true && dialog.Result is { } result)
             {
@@ -90,56 +83,47 @@ internal sealed class MappingEditorWindow : Window
         conditionButtons.Children.Add(EditorUi.Button("Bearbeiten", () => EditCondition(true)));
         conditionButtons.Children.Add(EditorUi.Button("Entfernen", () => { if (conditions.SelectedItem is RuleCondition c) { draft.Conditions.Remove(c); conditions.ItemsSource = null; conditions.ItemsSource = draft.Conditions; } }));
         conditions.ItemsSource = draft.Conditions; conditionPanel.Children.Add(conditions);
-        tabs.Items.Add(new W.TabItem { Header = "Bedingungen (UND)", Content = conditionPanel });
+        tabs.Items.Add(new W.TabItem { Header = "2  Bedingungen (UND)", Content = conditionPanel });
 
-        var quantityPanel = new W.StackPanel { Margin = new Thickness(12) };
-        quantityPanel.Children.Add(EditorUi.Text("Die Menge gilt je passendem Element und nur bei erfüllten Bedingungen. Eine Konstante benötigt keinen Mengenparameter, z. B. 1 St. Hier wird die Vorschrift definiert, noch keine Modellmenge berechnet."));
-        quantityPanel.Children.Add(hasQuantity); hasQuantity.IsChecked = draft.Quantity != null;
-        quantityKind = EditorUi.Choice(new[] { (QuantityKind.Parameter, "Parameterwert lesen"), (QuantityKind.Constant, "Feste Zahl je passendem Element") }, draft.Quantity?.Kind ?? QuantityKind.Parameter);
-        EditorUi.Field(quantityPanel, "Mengenquelle", quantityKind);
-        constantValue = EditorUi.Input((draft.Quantity?.ConstantValue ?? 1m).ToString(CultureInfo.InvariantCulture));
-        EditorUi.Field(quantityPanel, "Feste Zahl (positiv; bei St ganzzahlig)", constantValue);
-        quantity = new ParameterSourceEditor(template.ParameterCatalog.Entries, draft.Quantity?.Source ?? new()); quantityPanel.Children.Add(quantity);
-        EditorUi.Field(quantityPanel, "Mengeneinheit (muss zur LV-Einheit passen)", quantityUnit);
-        void RefreshQuantity()
+        var positionPanel = new W.DockPanel { Margin = new Thickness(12) };
+        var positionHint = EditorUi.Text("Jede Zeile ist eine eigene Leistungsposition mit eigener Mengenquelle: feste Zahl, Parameter oder Formel. Änderungen werden erst mit 'Zuordnung übernehmen' gespeichert.");
+        W.DockPanel.SetDock(positionHint, W.Dock.Top); positionPanel.Children.Add(positionHint);
+        var positionButtons = new W.WrapPanel(); W.DockPanel.SetDock(positionButtons, W.Dock.Top); positionPanel.Children.Add(positionButtons);
+        void EditPosition(bool edit)
         {
-            bool enabled = hasQuantity.IsChecked == true;
-            bool constant = EditorUi.Selected<QuantityKind>(quantityKind) == QuantityKind.Constant;
-            quantityKind.IsEnabled = enabled; constantValue.IsEnabled = enabled && constant;
-            quantity.IsEnabled = enabled && !constant; quantity.Visibility = constant ? Visibility.Collapsed : Visibility.Visible;
-            quantityUnit.IsEnabled = enabled;
-            var prior = quantityUnit.SelectedItem as string ?? draft.Quantity?.Unit;
-            try { quantityUnit.ItemsSource = constant
-                ? new[] { "NUMBER", "LENGTH", "AREA", "VOLUME", "ANGLE", "MASS_DENSITY" }.SelectMany(UnitCatalog.ForSpec).Distinct().ToArray()
-                : UnitCatalog.ForSpec(quantity.ReadSource().Spec); }
-            catch (InvalidDataException) { quantityUnit.ItemsSource = Array.Empty<string>(); }
-            quantityUnit.SelectedItem = prior ?? (constant ? "St" : null);
+            var selected = positions.SelectedItem as PositionRow; if (edit && selected == null) return;
+            var dialog = new PositionEditorWindow(template, edit ? selected!.Position : null) { Owner = this };
+            if (dialog.ShowDialog() == true && dialog.Result is { } result) UpsertPosition(result);
         }
-        quantityKind.SelectionChanged += (_, _) => RefreshQuantity();
-        quantity.SourceChanged += RefreshQuantity; hasQuantity.Checked += (_, _) => RefreshQuantity(); hasQuantity.Unchecked += (_, _) => RefreshQuantity(); RefreshQuantity();
-        quantityPanel.Children.Add(EditorUi.Text("Unterstützte Mengen: NUMBER / INTEGER, LENGTH, AREA, VOLUME, ANGLE, MASS_DENSITY mit expliziten Einheiten. Zeit, Masse und freie LV-Einheiten sind noch nicht unterstützt. 'Menge nicht definiert' bleibt als Entwurf zulässig."));
-        tabs.Items.Add(new W.TabItem { Header = "Mengenquelle", Content = EditorUi.Scroll(quantityPanel) });
+        positionButtons.Children.Add(EditorUi.Button("Leistungsposition hinzufügen…", () => EditPosition(false)));
+        positionButtons.Children.Add(EditorUi.Button("Position / Menge bearbeiten…", () => EditPosition(true)));
+        positionButtons.Children.Add(EditorUi.Button("Position entfernen", () => { if (positions.SelectedItem is PositionRow row) RemovePosition(row.Position.Id); }));
+        positions.MouseDoubleClick += (_, _) => { if (positions.SelectedItem is PositionRow) EditPosition(true); };
+        positions.Columns.Add(new W.DataGridTextColumn { Header = "OZ", Binding = new Binding("Ordinal"), Width = 130 });
+        positions.Columns.Add(new W.DataGridTextColumn { Header = "Leistung", Binding = new Binding("Text"), Width = new W.DataGridLength(1, W.DataGridLengthUnitType.Star) });
+        positions.Columns.Add(new W.DataGridTextColumn { Header = "Eigene Mengenvorschrift", Binding = new Binding("Quantity"), Width = 330 });
+        positionPanel.Children.Add(positions); RefreshPositions();
+        tabs.Items.Add(new W.TabItem { Header = "3  Leistungspositionen / Mengen", Content = positionPanel });
         Content = root;
     }
+    internal void UpsertPosition(MappingPosition position)
+    {
+        int index = draft.Positions.FindIndex(p => p.Id == position.Id);
+        if (index < 0) draft.Positions.Add(TemplateJson.Copy(position)); else draft.Positions[index] = TemplateJson.Copy(position);
+        RefreshPositions();
+    }
+    internal void RemovePosition(Guid id) { draft.Positions.RemoveAll(p => p.Id == id); RefreshPositions(); }
+    private void RefreshPositions() => positions.ItemsSource = draft.Positions.Select(p => {
+        var lv = template.LvCatalog.Entries.FirstOrDefault(l => l.Id == p.LvItemId);
+        return new PositionRow(p, lv?.Ordinal ?? p.LvItemId, lv?.Text ?? "", p.Quantity?.ToString() ?? "Menge noch offen");
+    }).ToList();
     internal MappingRule BuildRule()
     {
-        if (bgk.SelectedItem is not BgkEntry b || types.SelectedItem is not BgkType t || lv.SelectedItem is not LvEntry l) throw new InvalidDataException("BGK, zugehörigen Typ und LV-Position auswählen.");
-        var result = TemplateJson.Copy(draft); result.BgkKey = b.Key; result.TypeNumber = t.Number; result.LvItemId = l.Id;
-        result.Quantity = null;
-        if (hasQuantity.IsChecked == true)
-        {
-            var kind = EditorUi.Selected<QuantityKind>(quantityKind);
-            var unit = quantityUnit.SelectedItem as string ?? "";
-            if (kind == QuantityKind.Constant)
-            {
-                if (!decimal.TryParse(constantValue.Text.Replace(',', '.'), NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var value))
-                    throw new InvalidDataException("Eine feste Zahl ohne Tausendertrennzeichen eingeben.");
-                result.Quantity = new() { Kind = kind, Source = null, ConstantValue = value, Unit = unit };
-            }
-            else result.Quantity = new() { Kind = kind, Source = quantity.ReadSource(), ConstantValue = null, Unit = unit };
-        }
-        return result;
+        if (bgk.SelectedItem is not BgkEntry b || types.SelectedItem is not BgkType t) throw new InvalidDataException("BGK und zugehörigen Typ auswählen.");
+        if (draft.Positions.Count == 0) throw new InvalidDataException("Mindestens eine Leistungsposition hinzufügen.");
+        var result = TemplateJson.Copy(draft); result.BgkKey = b.Key; result.TypeNumber = t.Number; return result;
     }
+    private sealed record PositionRow(MappingPosition Position, string Ordinal, string Text, string Quantity);
 }
 
 internal sealed class ConditionEditorWindow : Window
@@ -176,12 +160,11 @@ internal sealed class ConditionEditorWindow : Window
                 if (!decimal.TryParse(value.Text.Replace(',', '.'), NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var number)) throw new InvalidDataException("Eine Zahl ohne Tausendertrennzeichen eingeben.");
                 c.Number = number;
             }
-            var p = TemplateJson.Copy(template); p.Mappings = [new MappingRule { Conditions = [c] }];
-            var errors = TemplateValidator.Validate(p).Where(d => d.Severity == DiagnosticSeverity.Error && (d.Code.StartsWith("CONDITION", StringComparison.Ordinal) || d.Path.EndsWith(" / Bedingung", StringComparison.Ordinal))).ToList();
+            var copy = TemplateJson.Copy(template); copy.Mappings = [new MappingRule { Conditions = [c] }];
+            var errors = TemplateValidator.Validate(copy).Where(d => d.Severity == DiagnosticSeverity.Error && (d.Code.StartsWith("CONDITION", StringComparison.Ordinal) || d.Path.EndsWith(" / Bedingung", StringComparison.Ordinal))).ToList();
             if (errors.Count > 0) throw new InvalidDataException(string.Join("\n", errors));
             Result = c; DialogResult = true;
         })));
-        buttons.Children.Add(EditorUi.Button("Abbrechen", () => DialogResult = false));
-        Content = root;
+        buttons.Children.Add(EditorUi.Button("Abbrechen", () => DialogResult = false)); Content = root;
     }
 }

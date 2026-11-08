@@ -6,7 +6,7 @@ public enum ParameterKind { SharedGuid, LocalFamily, BuiltIn }
 public enum ParameterScope { Instance, Type }
 public enum ConditionOperator { Equal, NotEqual, Greater, GreaterOrEqual, Less, LessOrEqual }
 public enum OperandKind { Numeric, Boolean, Text }
-public enum QuantityKind { Parameter, Constant }
+public enum QuantityKind { Parameter, Constant, Formula }
 
 public sealed class ParameterSource
 {
@@ -29,29 +29,44 @@ public sealed class RuleCondition
     [JsonRequired] public string Unit { get; set; } = "";
     public override string ToString() => $"{Source.Name} {Operator} " + (Operand == OperandKind.Numeric ? Number.ToString(System.Globalization.CultureInfo.InvariantCulture) + " " + Unit : Operand == OperandKind.Boolean ? Boolean.ToString() : Text);
 }
+public sealed class FormulaVariable
+{
+    [JsonRequired] public string Name { get; set; } = "";
+    [JsonRequired] public ParameterSource Source { get; set; } = new();
+    [JsonRequired] public string Unit { get; set; } = "";
+}
 public sealed class QuantitySource
 {
     [JsonRequired] public QuantityKind Kind { get; set; } = QuantityKind.Parameter;
     [JsonRequired] public ParameterSource? Source { get; set; } = new();
     [JsonRequired] public decimal? ConstantValue { get; set; } = null;
     [JsonRequired] public string Unit { get; set; } = "";
+    [JsonRequired] public string Expression { get; set; } = "";
+    [JsonRequired] public List<FormulaVariable> Variables { get; set; } = [];
     public override string ToString() => Kind == QuantityKind.Constant
         ? $"Konstante {ConstantValue?.ToString(System.Globalization.CultureInfo.GetCultureInfo("de-DE")) ?? "nicht definiert"} {Unit} je passendem Element"
-        : Source?.ToString() ?? "nicht definiert";
+        : Kind == QuantityKind.Formula ? $"Formel {Expression} → {Unit}"
+        : Source is { } source ? $"{source} | {Unit}" : "nicht definiert";
+}
+public sealed class MappingPosition
+{
+    [JsonRequired] public Guid Id { get; set; } = Guid.NewGuid();
+    [JsonRequired] public string LvItemId { get; set; } = "";
+    [JsonRequired] public QuantitySource? Quantity { get; set; }
+    public override string ToString() => $"{LvItemId} | Menge: {Quantity?.ToString() ?? "nicht definiert"}";
 }
 public sealed class MappingRule
 {
     [JsonRequired] public Guid Id { get; set; } = Guid.NewGuid();
     [JsonRequired] public string BgkKey { get; set; } = "";
     [JsonRequired] public string TypeNumber { get; set; } = "";
-    [JsonRequired] public string LvItemId { get; set; } = "";
     [JsonRequired] public List<RuleCondition> Conditions { get; set; } = [];
-    [JsonRequired] public QuantitySource? Quantity { get; set; }
-    public override string ToString() => $"{BgkKey} / {TypeNumber} → {LvItemId} | UND: {Conditions?.Count ?? 0} | Menge: {Quantity?.ToString() ?? "nicht definiert"}";
+    [JsonRequired] public List<MappingPosition> Positions { get; set; } = [];
+    public override string ToString() => $"{BgkKey} / {TypeNumber} | UND: {Conditions?.Count ?? 0} | Positionen: {string.Join("; ", Positions ?? [])}";
 }
 public sealed class AvaTemplate
 {
-    [JsonRequired] public int SchemaVersion { get; set; } = 2;
+    [JsonRequired] public int SchemaVersion { get; set; } = 3;
     [JsonRequired] public Guid ProfileId { get; set; } = Guid.NewGuid();
     [JsonRequired] public string Name { get; set; } = "Neue AVA-Vorlage";
     [JsonRequired] public string Version { get; set; } = "1.0";

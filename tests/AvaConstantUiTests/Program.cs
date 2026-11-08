@@ -14,52 +14,52 @@ internal static class Program
             var template = new AvaTemplate { ReviewScope = "Losflansche" };
             template.BgkCatalog.Entries.Add(new("44-40", "Flansche", "", [new("110", "Losflansch Typ 02")]));
             template.LvCatalog.Entries.Add(new("test-id", "test-boq", ["44", "40", "0420"], "44.40.0420", "Test DN100", "", "St"));
-            var rule = new MappingRule { BgkKey = "44-40", TypeNumber = "110", LvItemId = "test-id", Quantity = new() { Source = new() { Kind = ParameterKind.LocalFamily, Name = "Count", Spec = "INTEGER", Scope = ParameterScope.Instance }, Unit = "St" } };
-            template.Mappings.Add(rule);
-            var window = new MappingEditorWindow(template, rule);
-            var mode = Field<ComboBox>(window, "quantityKind");
-            var value = Field<TextBox>(window, "constantValue");
-            mode.SelectedItem = mode.Items.Cast<ComboBoxItem>().Single(i => i.Tag.ToString() == "Constant");
-            value.Text = "1";
-            var result = window.BuildRule();
-            Check(result.Quantity!.Source == null, "Constant must not carry a parameter source");
-            Check(result.Quantity.GetType().GetProperty("ConstantValue")!.GetValue(result.Quantity) is decimal n && n == 1, "Constant number lost");
-            Check(result.Quantity.Unit == "St", "St unit lost");
+            var position = new MappingPosition { LvItemId = "test-id", Quantity = new() { Source = new() { Kind = ParameterKind.LocalFamily, Name = "Count", Spec = "INTEGER", Scope = ParameterScope.Instance }, Unit = "St" } };
+            var group = new MappingRule { BgkKey = "44-40", TypeNumber = "110", Positions = [position] }; template.Mappings.Add(group);
+            var window = new PositionEditorWindow(template, position);
+            var mode = Field<ComboBox>(window, "quantityKind"); var value = Field<TextBox>(window, "constantValue");
+            mode.SelectedItem = mode.Items.Cast<ComboBoxItem>().Single(i => i.Tag.ToString() == "Constant"); value.Text = "1";
+            var result = window.BuildPosition();
+            Check(result.Quantity is { Kind: QuantityKind.Constant, Source: null, ConstantValue: 1, Unit: "St" }, "Constant number/unit/source changed");
             Check(!Field<ParameterSourceEditor>(window, "quantity").IsEnabled, "Parameter input enabled in constant mode");
-            Check(!TemplateValidator.Validate(new AvaTemplate { ReviewScope = template.ReviewScope, BgkCatalog = template.BgkCatalog, LvCatalog = template.LvCatalog, Mappings = [result] }).Any(x => x.Severity == DiagnosticSeverity.Error), "Constant fails validation");
+            group.Positions = [result]; TemplateEditor.EnsureValid(template);
             value.Text = "not a number";
-            try { window.BuildRule(); throw new Exception("Invalid constant accepted"); } catch (InvalidDataException) { }
-            value.Text = "1,5";
-            Check(window.BuildRule().Quantity!.GetType().GetProperty("ConstantValue")!.GetValue(window.BuildRule().Quantity) is decimal fraction && fraction == 1.5m, "German decimal parsing failed");
+            try { window.BuildPosition(); throw new Exception("Invalid constant accepted"); } catch (InvalidDataException) { }
+            value.Text = "1,5"; Check(window.BuildPosition().Quantity!.ConstantValue == 1.5m, "German decimal parsing failed");
             mode.SelectedItem = mode.Items.Cast<ComboBoxItem>().Single(i => i.Tag.ToString() == "Parameter");
-            var parameter = window.BuildRule();
-            Check(parameter.Quantity!.Source!.Name == "Count", "Mode switch lost original parameter");
-            Check(parameter.Quantity.GetType().GetProperty("ConstantValue")!.GetValue(parameter.Quantity) == null, "Parameter mode retains constant");
-            window.Close();
-            var reopened = new MappingEditorWindow(template, result);
-            var restored = reopened.BuildRule();
-            Check(TemplateJson.Copy(restored).Quantity!.Source == null && restored.Quantity!.ToString()!.Contains("1"), "Constant edit roundtrip failed");
-            reopened.Close();
+            var parameter = window.BuildPosition();
+            Check(parameter.Quantity!.Source!.Name == "Count" && parameter.Quantity.ConstantValue == null, "Mode switch lost parameter or retained constant"); window.Close();
+            var reopened = new PositionEditorWindow(template, result);
+            Check(TemplateJson.Copy(reopened.BuildPosition()).Quantity is { Source: null, ConstantValue: 1 }, "Constant edit roundtrip failed"); reopened.Close();
+            foreach (var unit in new[] { "m²", "m³" })
+            {
+                var aliasTemplate = TemplateJson.Copy(template);
+                aliasTemplate.LvCatalog.Entries[0] = aliasTemplate.LvCatalog.Entries[0] with { Unit = unit };
+                var aliasPosition = new MappingPosition { LvItemId = "test-id", Quantity = new() { Kind = QuantityKind.Constant, Source = null, ConstantValue = 1, Unit = unit } };
+                var aliasWindow = new PositionEditorWindow(aliasTemplate, aliasPosition);
+                Check(aliasWindow.BuildPosition().Quantity!.Unit == unit, "Accepted unit alias lost in UI"); aliasWindow.Close();
+            }
             if (args.Length > 0)
             {
                 var delivered = TemplateJson.Load(args[0]);
                 foreach (var mapping in delivered.Mappings)
                 {
-                    var dialog = new MappingEditorWindow(delivered, mapping);
-                    dialog.Measure(new System.Windows.Size(1140, 800));
-                    dialog.Arrange(new System.Windows.Rect(0, 0, 1140, 800)); dialog.UpdateLayout();
+                    var dialog = new MappingEditorWindow(delivered, mapping); Layout(dialog);
                     var copy = dialog.BuildRule();
-                    Check(copy.Id == mapping.Id && copy.LvItemId == mapping.LvItemId && copy.Quantity is { Kind: QuantityKind.Constant, Source: null, ConstantValue: 1, Unit: "St" }, "Delivered mapping changed in WPF");
-                    Check(copy.Conditions.Single().Number == mapping.Conditions.Single().Number, "DN lost in WPF");
-                    dialog.Close();
+                    Check(copy.Id == mapping.Id && copy.Conditions.Single().Number == mapping.Conditions.Single().Number, "Migrated group ID/DN changed");
+                    var item = copy.Positions.Single();
+                    Check(item.LvItemId == mapping.Positions.Single().LvItemId && item.Quantity is { Kind: QuantityKind.Constant, Source: null, ConstantValue: 1, Unit: "St" }, "Delivered position changed in group UI");
+                    var positionWindow = new PositionEditorWindow(delivered, item); Layout(positionWindow);
+                    Check(positionWindow.BuildPosition().Quantity!.ConstantValue == 1, "Delivered constant changed in position UI");
+                    positionWindow.Close(); dialog.Close();
                 }
-                Console.WriteLine("PASS all " + delivered.Mappings.Count + " delivered DN mappings through WPF construction/layout/edit roundtrip");
+                Console.WriteLine("PASS all " + delivered.Mappings.Count + " delivered DN groups and positions through WPF layout/edit roundtrip");
             }
-            Console.WriteLine("PASS constant quantity WPF mode switch, input parsing, parameter preservation and edit roundtrip");
-            return 0;
+            Console.WriteLine("PASS constant quantity WPF mode switch, parsing, parameter preservation, aliases and roundtrip"); return 0;
         }
         catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
     }
-    private static T Field<T>(object target, string name) => (T)(target.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(target) ?? throw new Exception("Missing constant UI field: " + name));
+    private static void Layout(System.Windows.Window window) { window.Measure(new System.Windows.Size(1140, 850)); window.Arrange(new System.Windows.Rect(0, 0, 1140, 850)); window.UpdateLayout(); }
+    private static T Field<T>(object target, string name) => (T)(target.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(target) ?? throw new Exception("Missing UI field: " + name));
     private static void Check(bool result, string message) { if (!result) throw new Exception(message); }
 }

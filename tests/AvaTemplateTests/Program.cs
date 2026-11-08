@@ -17,16 +17,16 @@ internal static class Program
             Test("Portable template API exists", () => Check(typeof(Program).Assembly.GetType("BIMassist.Ava.Core.TemplateJson") != null, "TemplateJson missing"));
             Test("JSON roundtrip preserves identity sources and keys", () => {
                 var p = new AvaTemplate { Name = "Prüfung", ReviewScope = "Alle Rohre, auch ohne BGK" };
-                p.Mappings.Add(new MappingRule { BgkKey = "09-25", TypeNumber = "0100", LvItemId = "id", Quantity = new() { Source = new() { Kind = ParameterKind.LocalFamily, Name = "AVA_Anzahl", Spec = "NUMBER", Scope = ParameterScope.Instance }, Unit = "St" } });
+                p.Mappings.Add(new MappingRule { BgkKey = "09-25", TypeNumber = "0100", Positions = [new() { LvItemId = "id", Quantity = new() { Source = new() { Kind = ParameterKind.LocalFamily, Name = "AVA_Anzahl", Spec = "NUMBER", Scope = ParameterScope.Instance }, Unit = "St" } }] });
                 var q = TemplateJson.Deserialize(TemplateJson.Serialize(p));
                 Check(q.ProfileId == p.ProfileId && q.Mappings[0].TypeNumber == "0100", "Identity changed");
-                Check(q.Mappings[0].Quantity!.Source.Kind == ParameterKind.LocalFamily && q.Mappings[0].Quantity!.Source.Spec == "NUMBER", "local source lost");
+                Check(q.Mappings[0].Positions[0].Quantity!.Source!.Kind == ParameterKind.LocalFamily && q.Mappings[0].Positions[0].Quantity!.Source!.Spec == "NUMBER", "local source lost");
                 Check(q.BgkIdentification.BuiltInId == "ASSEMBLY_CODE" && q.TypeIdentification.BuiltInId == "ALL_MODEL_TYPE_COMMENTS", "transfer defaults wrong");
             });
             Test("JSON rejects null unsupported schema and unknown properties", () => {
                 Reject(() => TemplateJson.Deserialize("null")); Reject(() => TemplateJson.Deserialize("{}"));
                 var json = TemplateJson.Serialize(new AvaTemplate());
-                Reject(() => TemplateJson.Deserialize(json.Replace("\"SchemaVersion\": 2", "\"SchemaVersion\": 3")));
+                Reject(() => TemplateJson.Deserialize(json.Replace("\"SchemaVersion\": 3", "\"SchemaVersion\": 4")));
                 var node = JsonNode.Parse(json)!; node["Mappings"] = null; Reject(() => TemplateJson.Deserialize(node.ToJsonString()));
                 node = JsonNode.Parse(json)!; node["Mystery"] = 1; Reject(() => TemplateJson.Deserialize(node.ToJsonString()));
                 node = JsonNode.Parse(json)!; node["BgkIdentification"]!["Name"] = null; Reject(() => TemplateJson.Deserialize(node.ToJsonString()));
@@ -39,7 +39,7 @@ internal static class Program
                     node["Mappings"]![0]!["Conditions"]![0]!.AsObject().Remove(field);
                     Reject(() => TemplateJson.Deserialize(node.ToJsonString()));
                 }
-                foreach (string field in new[] { "Id", "Conditions", "Quantity" }) {
+                foreach (string field in new[] { "Id", "Conditions", "Positions" }) {
                     var node = JsonNode.Parse(TemplateJson.Serialize(p))!;
                     node["Mappings"]![0]!.AsObject().Remove(field);
                     Reject(() => TemplateJson.Deserialize(node.ToJsonString()));
@@ -53,8 +53,8 @@ internal static class Program
                 p.Mappings[0].Conditions.Add(new() { Source = new() { Kind = ParameterKind.LocalFamily, Name = "Dicke", Spec = "LENGTH", Scope = ParameterScope.Instance }, Operand = OperandKind.Numeric, Operator = ConditionOperator.Greater, Number = 40, Unit = "cm" });
                 var json = TemplateJson.Serialize(p);
                 var cases = new (string Field, string[] Names, string Compound, Func<JsonNode, JsonObject> Target)[] {
-                    ("Kind", Enum.GetNames<ParameterKind>(), "SharedGuid, LocalFamily", n => n["Mappings"]![0]!["Quantity"]!["Source"]!.AsObject()),
-                    ("Scope", Enum.GetNames<ParameterScope>(), "Instance, Type", n => n["Mappings"]![0]!["Quantity"]!["Source"]!.AsObject()),
+                    ("Kind", Enum.GetNames<ParameterKind>(), "SharedGuid, LocalFamily", n => n["Mappings"]![0]!["Positions"]![0]!["Quantity"]!["Source"]!.AsObject()),
+                    ("Scope", Enum.GetNames<ParameterScope>(), "Instance, Type", n => n["Mappings"]![0]!["Positions"]![0]!["Quantity"]!["Source"]!.AsObject()),
                     ("Operator", Enum.GetNames<ConditionOperator>(), "Greater, NotEqual", n => n["Mappings"]![0]!["Conditions"]![0]!.AsObject()),
                     ("Operand", Enum.GetNames<OperandKind>(), "Numeric, Numeric", n => n["Mappings"]![0]!["Conditions"]![0]!.AsObject())
                 };
@@ -91,8 +91,8 @@ internal static class Program
             });
             Test("Validation rejects unknown BGK type LV and shared GUID", () => {
                 var p = ValidTemplate(); Check(!TemplateValidator.Validate(p).Any(d => d.Severity == DiagnosticSeverity.Error), "valid template rejected");
-                p.Mappings[0].BgkKey = "unknown"; p.Mappings[0].LvItemId = "unknown";
-                p.Mappings[0].Quantity!.Source.Kind = ParameterKind.SharedGuid;
+                p.Mappings[0].BgkKey = "unknown"; p.Mappings[0].Positions[0].LvItemId = "unknown";
+                p.Mappings[0].Positions[0].Quantity!.Source!.Kind = ParameterKind.SharedGuid;
                 var codes = TemplateValidator.Validate(p).Select(d => d.Code).ToArray();
                 Check(codes.Contains("BGK_REFERENCE") && codes.Contains("LV_REFERENCE") && codes.Contains("PARAMETER_REFERENCE"), "unknown references accepted");
                 p = ValidTemplate(); p.Mappings[0].TypeNumber = "missing"; Check(TemplateValidator.Validate(p).Any(d => d.Code == "TYPE_REFERENCE"), "unknown type accepted");
@@ -101,8 +101,8 @@ internal static class Program
                 var p = ValidTemplate();
                 p.ParameterCatalog.Entries.Add(new(Guid.NewGuid(), "AVA_Anzahl", "INTEGER", "1"));
                 Check(!TemplateValidator.Validate(p).Any(d => d.Severity == DiagnosticSeverity.Error), "explicit local Number rejected");
-                p.Mappings[0].Quantity!.Source.Kind = ParameterKind.SharedGuid;
-                p.Mappings[0].Quantity!.Source.SharedGuid = p.ParameterCatalog.Entries[0].Guid;
+                p.Mappings[0].Positions[0].Quantity!.Source!.Kind = ParameterKind.SharedGuid;
+                p.Mappings[0].Positions[0].Quantity!.Source!.SharedGuid = p.ParameterCatalog.Entries[0].Guid;
                 Check(TemplateValidator.Validate(p).Any(d => d.Code == "PARAMETER_SPEC"), "shared spec mismatch accepted");
             });
             Test("Conditions enforce typed operators and explicit units", () => {
@@ -115,9 +115,9 @@ internal static class Program
                 c.Source.Spec = "MATERIAL"; Check(TemplateValidator.Validate(p).Any(d => d.Code == "CONDITION_TYPE"), "unsupported material accepted");
             });
             Test("Quantity validates spec source unit and LV dimensional compatibility", () => {
-                var p = ValidTemplate(); p.Mappings[0].Quantity!.Unit = "m";
+                var p = ValidTemplate(); p.Mappings[0].Positions[0].Quantity!.Unit = "m";
                 Check(TemplateValidator.Validate(p).Any(d => d.Code == "QUANTITY_UNIT"), "Number in metres accepted");
-                p.Mappings[0].Quantity!.Source.Spec = "LENGTH";
+                p.Mappings[0].Positions[0].Quantity!.Source!.Spec = "LENGTH";
                 Check(TemplateValidator.Validate(p).Any(d => d.Code == "LV_UNIT"), "length to pieces accepted");
             });
             Test("Checklist uses independent scope and branch-specific reading requirements", () => {
@@ -136,9 +136,9 @@ internal static class Program
                 var before = TemplateJson.Serialize(editor.Document);
                 Reject(() => editor.ImportJson("null")); Check(TemplateJson.Serialize(editor.Document) == before, "failed import replaced state");
                 Reject(() => editor.ReplaceLv(new(new("", "", ""), []))); Check(TemplateJson.Serialize(editor.Document) == before, "catalog replacement lost references");
-                p.Mappings[0].LvItemId = "invalid"; Reject(() => editor.ImportJson(TemplateJson.Serialize(p)));
+                p.Mappings[0].Positions[0].LvItemId = "invalid"; Reject(() => editor.ImportJson(TemplateJson.Serialize(p)));
                 Check(TemplateJson.Serialize(editor.Document) == before, "semantic failure replaced state");
-                string path = Path.Combine(Path.GetTempPath(), "ava-test-" + Guid.NewGuid() + ".json");
+                string path = Path.Combine(Environment.GetEnvironmentVariable("TMPDIR")!, "ava-test-" + Guid.NewGuid() + ".json");
                 try {
                     editor.SaveAs(path); Check(!editor.IsDirty && File.Exists(path), "save state");
                     editor.Document.Name = "Changed"; Check(editor.IsDirty, "metadata not tracked");
@@ -204,11 +204,16 @@ internal static class Program
             });
             Test("Parameter and mapping editors preserve explicit local source", () => {
                 var p = ValidTemplate();
-                var source = new BIMassist.Ava.Views.ParameterSourceEditor(p.ParameterCatalog.Entries, p.Mappings[0].Quantity!.Source);
+                var source = new BIMassist.Ava.Views.ParameterSourceEditor(p.ParameterCatalog.Entries, p.Mappings[0].Positions[0].Quantity!.Source!);
                 var value = source.ReadSource(); Check(value.Kind == ParameterKind.LocalFamily && value.Spec == "NUMBER" && value.Scope == ParameterScope.Instance, "local source lost in UI");
                 var mapping = new BIMassist.Ava.Views.MappingEditorWindow(p, p.Mappings[0]);
-                var rule = mapping.BuildRule(); Check(rule.Id == p.Mappings[0].Id && rule.BgkKey == "09-25" && rule.TypeNumber == "100" && rule.LvItemId == "id", "mapping edits lose identity");
-                Check(rule.Quantity!.Source.Kind == ParameterKind.LocalFamily, "UI converted local parameter"); mapping.Close();
+                var rule = mapping.BuildRule(); Check(rule.Id == p.Mappings[0].Id && rule.BgkKey == "09-25" && rule.TypeNumber == "100" && rule.Positions[0].LvItemId == "id", "mapping edits lose identity");
+                Check(rule.Positions[0].Quantity!.Source!.Kind == ParameterKind.LocalFamily, "UI converted local parameter"); mapping.Close();
+                var position = new BIMassist.Ava.Views.PositionEditorWindow(p, p.Mappings[0].Positions[0]);
+                var edited = position.BuildPosition();
+                Check(edited.Id == p.Mappings[0].Positions[0].Id && edited.LvItemId == "id", "position edits lose identity");
+                Check(edited.Quantity!.Source!.Kind == ParameterKind.LocalFamily && edited.Quantity.Source.Spec == "NUMBER" && edited.Quantity.Source.Scope == ParameterScope.Instance && edited.Quantity.Unit == "St", "position editor changed explicit local source/unit");
+                position.Close();
             });
             Test("X82 preserves hierarchical text keys", () => {
                 var c = Read("ReadX82", Encoding.UTF8.GetBytes("<GAEB xmlns='http://www.gaeb.de/GAEB_DA_XML/DA82/3.3'><Award><BoQ ID='b'><BoQBody><BoQCtgy RNoPart='01'><BoQBody><BoQCtgy RNoPart='09'><BoQBody><Itemlist><Item ID='i' RNoPart='0010'><QU>m</QU><Description><CompleteText><OutlineText><p>A <span>B</span></p></OutlineText></CompleteText></Description></Item></Itemlist></BoQBody></BoQCtgy></BoQBody></BoQCtgy></BoQBody></BoQ></Award></GAEB>"));
@@ -249,8 +254,8 @@ internal static class Program
                 var b = editor.Document.BgkCatalog.Entries.First(b => b.Types.Count > 0);
                 var l = editor.Document.LvCatalog.Entries.First(l => l.Unit == "St");
                 var p = editor.Document.ParameterCatalog.Entries.Single(p => p.Name == "AVA_Anzahl");
-                editor.UpsertMapping(new() { BgkKey = b.Key, TypeNumber = b.Types[0].Number, LvItemId = l.Id,
-                    Quantity = new() { Source = new() { Kind = ParameterKind.SharedGuid, SharedGuid = p.Guid, Name = p.Name, Spec = p.Spec, Scope = ParameterScope.Instance }, Unit = "St" } });
+                editor.UpsertMapping(new() { BgkKey = b.Key, TypeNumber = b.Types[0].Number, Positions = [new() { LvItemId = l.Id,
+                        Quantity = new() { Source = new() { Kind = ParameterKind.SharedGuid, SharedGuid = p.Guid, Name = p.Name, Spec = p.Spec, Scope = ParameterScope.Instance }, Unit = "St" } }] });
                 string directory = Path.Combine(Environment.GetEnvironmentVariable("TMPDIR") ?? Path.GetTempPath(), "ava-roundtrip-" + Guid.NewGuid());
                 Directory.CreateDirectory(directory);
                 try {
@@ -277,7 +282,7 @@ internal static class Program
         var p = new AvaTemplate { ReviewScope = "Kategorie Rohre, unabhängig von BGK" };
         p.BgkCatalog.Entries.Add(new("09-25", "Rohr", "", [new("100", "Typ")]));
         p.LvCatalog.Entries.Add(new("id", "b", ["09", "25", "0100"], "09.25.0100", "Rohr", "", "St"));
-        p.Mappings.Add(new() { BgkKey = "09-25", TypeNumber = "100", LvItemId = "id", Quantity = new() { Source = new() { Kind = ParameterKind.LocalFamily, Name = "AVA_Anzahl", Spec = "NUMBER", Scope = ParameterScope.Instance }, Unit = "St" } });
+        p.Mappings.Add(new() { BgkKey = "09-25", TypeNumber = "100", Positions = [new() { LvItemId = "id", Quantity = new() { Source = new() { Kind = ParameterKind.LocalFamily, Name = "AVA_Anzahl", Spec = "NUMBER", Scope = ParameterScope.Instance }, Unit = "St" } }] });
         return p;
     }
     private static void Check(bool value, string message) { if (!value) throw new Exception(message); }

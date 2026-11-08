@@ -18,7 +18,7 @@ public sealed class AvaTemplateWindow : Window
     private readonly W.TextBlock typeSource = EditorUi.Text("");
     private readonly W.TextBlock sources = EditorUi.Text("");
     private readonly W.TextBlock status = EditorUi.Text("");
-    private readonly W.DataGrid mappings = Table();
+    private readonly W.TreeView mappings = new() { Margin = new Thickness(6) };
     private readonly W.DataGrid checklist = Table();
     private readonly W.DataGrid diagnostics = Table();
     private readonly W.DataGrid catalog = Table();
@@ -92,16 +92,25 @@ public sealed class AvaTemplateWindow : Window
     private UIElement MappingTab()
     {
         var panel = new W.DockPanel { Margin = new Thickness(12) };
-        var hint = EditorUi.Text("Manuelle BGK-/Typ-zu-LV-Regeln. Zuerst Quellkataloge importieren. Mit Bearbeiten werden auch UND-Bedingungen und die optionale Mengenquelle geändert.");
+        var hint = EditorUi.Text("BGK → Typ → Zuordnung / Bedingungen → Leistungspositionen. Jede Position besitzt ihre eigene Menge. Gruppen lassen sich auf- und zuklappen; Doppelklick bearbeitet die gewählte Zuordnung oder Position.");
         W.DockPanel.SetDock(hint, W.Dock.Top); panel.Children.Add(hint);
         var buttons = new W.WrapPanel(); W.DockPanel.SetDock(buttons, W.Dock.Top); panel.Children.Add(buttons);
         buttons.Children.Add(EditorUi.Button("Zuordnung hinzufügen…", () => EditMapping(false)));
         buttons.Children.Add(EditorUi.Button("Ausgewählte bearbeiten…", () => EditMapping(true)));
+        buttons.Children.Add(EditorUi.Button("Leistungsposition hinzufügen…", () => EditPosition(false)));
         buttons.Children.Add(EditorUi.Button("Ausgewählte entfernen", () => EditorUi.Guard(this, () => {
-            if (mappings.SelectedItem is MappingRow row && System.Windows.MessageBox.Show(this, "Diese Zuordnung entfernen?", "AVA", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes) { editor.RemoveMapping(row.Rule.Id); Refresh(); }
+            var selected = SelectedMapping;
+            if (selected?.Rule is not { } rule) return;
+            string question = selected.Position == null ? "Diese Zuordnung mit allen Leistungspositionen entfernen?" : "Diese Leistungsposition aus der Zuordnung entfernen?";
+            if (System.Windows.MessageBox.Show(this, question, "AVA", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+            if (selected.Position == null) editor.RemoveMapping(rule.Id);
+            else { var copy = TemplateJson.Copy(rule); copy.Positions.RemoveAll(p => p.Id == selected.Position.Id); editor.UpsertMapping(copy); }
+            Refresh();
         })));
-        mappings.MouseDoubleClick += (_, _) => { if (mappings.SelectedItem is MappingRow) EditMapping(true); };
-        AddColumn(mappings, "BGK", "Rule.BgkKey", 100); AddColumn(mappings, "Typ", "Rule.TypeNumber", 75); AddColumn(mappings, "LV-OZ", "Ordinal", 130); AddColumn(mappings, "LV-Text", "Text", 1, true); AddColumn(mappings, "UND", "Rule.Conditions.Count", 50); AddColumn(mappings, "Mengenquelle", "Quantity", 260);
+        buttons.Children.Add(EditorUi.Button("Alle aufklappen", () => ExpandMappings(true)));
+        buttons.Children.Add(EditorUi.Button("Alle zuklappen", () => ExpandMappings(false)));
+        mappings.Name = "MappingsTree"; RegisterName(mappings.Name, mappings);
+        mappings.MouseDoubleClick += (_, e) => { if (SelectedMapping?.Rule != null) { if (SelectedMapping.Position != null) EditPosition(true); else EditMapping(true); e.Handled = true; } };
         panel.Children.Add(mappings); return panel;
     }
     private void EditIdentification(bool bgk)
@@ -114,10 +123,52 @@ public sealed class AvaTemplateWindow : Window
     }
     private void EditMapping(bool edit)
     {
-        if (edit && mappings.SelectedItem is not MappingRow) return;
+        if (edit && SelectedMapping?.Rule == null) return;
         if (editor.Document.BgkCatalog.Entries.Count == 0 || editor.Document.LvCatalog.Entries.Count == 0) { EditorUi.Error(this, new InvalidDataException("Zuerst BGK-XML und LV-X82 importieren.")); return; }
-        var dialog = new MappingEditorWindow(editor.Document, edit ? ((MappingRow)mappings.SelectedItem).Rule : null) { Owner = this };
+        if (edit && SelectedMapping?.Position != null) { EditPosition(true); return; }
+        var dialog = new MappingEditorWindow(editor.Document, edit ? SelectedMapping!.Rule : null) { Owner = this };
         if (dialog.ShowDialog() == true && dialog.Result is { } result) EditorUi.Guard(this, () => { editor.UpsertMapping(result); Refresh(); });
+    }
+    private MappingTreeNode? SelectedMapping => (mappings.SelectedItem as W.TreeViewItem)?.Tag as MappingTreeNode;
+    private void EditPosition(bool edit)
+    {
+        var selected = SelectedMapping;
+        if (selected?.Rule is not { } rule) { EditorUi.Error(this, new InvalidDataException("Zuerst eine Zuordnung oder ihre Leistungsposition auswählen.")); return; }
+        if (edit && selected.Position == null) return;
+        var dialog = new PositionEditorWindow(editor.Document, edit ? selected.Position : null) { Owner = this };
+        if (dialog.ShowDialog() == true && dialog.Result is { } result) EditorUi.Guard(this, () => {
+            var copy = TemplateJson.Copy(rule); int index = copy.Positions.FindIndex(p => p.Id == result.Id);
+            if (index < 0) copy.Positions.Add(result); else copy.Positions[index] = result;
+            editor.UpsertMapping(copy); Refresh();
+        });
+    }
+    internal void RefreshMappings()
+    {
+        var expanded = new Dictionary<string, bool>(StringComparer.Ordinal);
+        string? selected = SelectedMapping?.Key;
+        void Remember(W.ItemsControl parent)
+        {
+            foreach (W.TreeViewItem item in parent.Items) { expanded[((MappingTreeNode)item.Tag).Key] = item.IsExpanded; Remember(item); }
+        }
+        Remember(mappings); mappings.Items.Clear();
+        W.TreeViewItem? selection = null;
+        W.TreeViewItem Create(MappingTreeNode node)
+        {
+            var item = new W.TreeViewItem { Tag = node, IsExpanded = expanded.GetValueOrDefault(node.Key, true),
+                Header = new W.TextBlock { Text = node.Label, TextWrapping = TextWrapping.Wrap, MaxWidth = 980, Margin = new Thickness(3, 5, 3, 5), FontWeight = node.Kind is "BGK" or "Typ" ? FontWeights.SemiBold : FontWeights.Normal },
+                ToolTip = node.Position == null ? node.Rule?.Id.ToString() : "LV-ID: " + node.Position.LvItemId + " | Position: " + node.Position.Id };
+            foreach (var child in node.Children) item.Items.Add(Create(child));
+            if (node.Key == selected) selection = item;
+            return item;
+        }
+        foreach (var node in MappingTreeModel.Build(editor.Document)) mappings.Items.Add(Create(node));
+        // Selection changes reach the TreeView only after the item belongs to its hierarchy.
+        if (selection != null) selection.IsSelected = true;
+    }
+    private void ExpandMappings(bool expand)
+    {
+        void Apply(W.ItemsControl parent) { foreach (W.TreeViewItem item in parent.Items) { item.IsExpanded = expand; Apply(item); } }
+        Apply(mappings);
     }
     private void Open(bool import)
     {
@@ -189,7 +240,7 @@ public sealed class AvaTemplateWindow : Window
             bgkSource.Text = "BGK: " + editor.Document.BgkIdentification; typeSource.Text = "Typnummer: " + editor.Document.TypeIdentification;
             string Describe<T>(string label, Catalog<T> c) => $"{label}: {c.Entries.Count} Einträge | {c.Source.FileName} | {c.Source.Format}\nSHA-256: {c.Source.Sha256}";
             sources.Text = Describe("BGK", editor.Document.BgkCatalog) + "\n" + Describe("LV", editor.Document.LvCatalog) + "\n" + Describe("Parameter", editor.Document.ParameterCatalog);
-            mappings.ItemsSource = editor.Document.Mappings.Select(m => { var l = editor.Document.LvCatalog.Entries.FirstOrDefault(l => l.Id == m.LvItemId); return new MappingRow(m, l?.Ordinal ?? m.LvItemId, l?.Text ?? "", m.Quantity?.ToString() ?? "nicht definiert"); }).ToList();
+            RefreshMappings();
             RefreshCatalog(); RefreshDerived();
             Title = "AVA-Vorlage / Prüfliste – " + editor.Document.Name + (editor.IsDirty ? " *" : "");
         }
@@ -199,7 +250,7 @@ public sealed class AvaTemplateWindow : Window
     {
         var findings = TemplateValidator.Validate(editor.Document);
         diagnostics.ItemsSource = findings; checklist.ItemsSource = ChecklistBuilder.Build(editor.Document);
-        status.Text = $"{editor.Document.Mappings.Count} Zuordnungen · {findings.Count(d => d.Severity == DiagnosticSeverity.Error)} Fehler · {findings.Count(d => d.Severity == DiagnosticSeverity.Warning)} Hinweise · Prüfliste = Anforderungen, keine Modellbefunde";
+        status.Text = $"{editor.Document.Mappings.Count} Zuordnungen · {editor.Document.Mappings.Sum(m => m.Positions.Count)} Leistungspositionen · {findings.Count(d => d.Severity == DiagnosticSeverity.Error)} Fehler · {findings.Count(d => d.Severity == DiagnosticSeverity.Warning)} Hinweise · Prüfliste = Anforderungen, keine Modellbefunde";
     }
     private void RefreshCatalog()
     {
@@ -217,6 +268,6 @@ public sealed class AvaTemplateWindow : Window
         var style = new Style(typeof(W.TextBlock)); style.Setters.Add(new Setter(W.TextBlock.TextWrappingProperty, TextWrapping.Wrap)); style.Setters.Add(new Setter(W.TextBlock.MarginProperty, new Thickness(4)));
         grid.Columns.Add(new W.DataGridTextColumn { Header = header, Binding = new Binding(path), Width = new W.DataGridLength(width, star ? W.DataGridLengthUnitType.Star : W.DataGridLengthUnitType.Pixel), MinWidth = 50, ElementStyle = style });
     }
-    private sealed record MappingRow(MappingRule Rule, string Ordinal, string Text, string Quantity);
+
     private sealed record CatalogRow(string Key, string Detail, string Description, string Unit);
 }

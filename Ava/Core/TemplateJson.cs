@@ -35,7 +35,7 @@ public static class TemplateJson
     }
     public static string Serialize(AvaTemplate template)
     {
-        if (template.SchemaVersion != 2) throw new InvalidDataException("Zum Speichern wird Schema 2 benötigt; ältere Vorlagen zuerst importieren.");
+        if (template.SchemaVersion != 3) throw new InvalidDataException("Zum Speichern wird Schema 3 benötigt; ältere Vorlagen zuerst importieren.");
         return JsonSerializer.Serialize(template, Options);
     }
     public static AvaTemplate Deserialize(string json)
@@ -46,33 +46,99 @@ public static class TemplateJson
             using var document = JsonDocument.Parse(json, new() { MaxDepth = 64 });
             CheckJson(document.RootElement, "root");
             var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("SchemaVersion", out var version) || version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out int schema) || schema is not (1 or 2))
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("SchemaVersion", out var version) || version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out int schema) || schema is not (1 or 2 or 3))
                 throw new InvalidDataException("Fehlende oder nicht unterstützte SchemaVersion.");
-            if (schema == 1)
+            if (schema < 3)
             {
+                // Deserialize the complete ORIGINAL contract before adding, moving or removing a field.
+                // In particular, an old document must not smuggle in fields that migration overwrites.
+                if (schema == 1) _ = JsonSerializer.Deserialize<LegacyTemplate<LegacyQuantity1>>(json, Options);
+                else
+                {
+                    var legacy = JsonSerializer.Deserialize<LegacyTemplate<LegacyQuantity2>>(json, Options)!;
+                    foreach (var rule in legacy.Mappings)
+                        if (rule.Quantity is { } quantity &&
+                            (quantity.Kind is not (QuantityKind.Parameter or QuantityKind.Constant) ||
+                             (quantity.Kind == QuantityKind.Parameter ? quantity.Source == null || quantity.ConstantValue != null : quantity.Source != null || quantity.ConstantValue is not > 0)))
+                            throw new InvalidDataException("Widersprüchliche oder unvollständige Schema-2-Menge: " + rule.Id);
+                }
                 var migrated = JsonNode.Parse(json)!.AsObject();
                 if (migrated["Mappings"] is JsonArray mappings)
                     foreach (var mapping in mappings)
-                        if (mapping is JsonObject rule && rule["Quantity"] is JsonObject quantity)
+                        if (mapping is JsonObject rule)
                         {
-                            // Validate the original shape before supplying any new required fields.
-                            if (quantity.Count != 2 || !quantity.ContainsKey("Source") || !quantity.ContainsKey("Unit"))
-                                throw new InvalidDataException("Schema 1 erwartet ausschließlich Source und Unit für die Menge.");
-                            quantity["Kind"] = "Parameter";
-                            quantity["ConstantValue"] = null;
+                            if (rule["Quantity"] is JsonObject quantity)
+                            {
+                                if (schema == 1)
+                                {
+                                    quantity["Kind"] = "Parameter";
+                                    quantity["ConstantValue"] = null;
+                                }
+                                quantity["Expression"] = "";
+                                quantity["Variables"] = new JsonArray();
+                            }
+                            var position = new JsonObject {
+                                ["Id"] = rule["Id"]?.DeepClone(),
+                                ["LvItemId"] = rule["LvItemId"]?.DeepClone(),
+                                ["Quantity"] = rule["Quantity"]?.DeepClone()
+                            };
+                            rule.Remove("LvItemId"); rule.Remove("Quantity");
+                            rule["Positions"] = new JsonArray(position);
                         }
-                migrated["SchemaVersion"] = 2;
+                migrated["SchemaVersion"] = 3;
                 json = migrated.ToJsonString();
             }
             var template = JsonSerializer.Deserialize<AvaTemplate>(json, Options) ?? throw new InvalidDataException("Leere Vorlage.");
             if (template.ProfileId == Guid.Empty) throw new InvalidDataException("Profil-ID fehlt.");
             foreach (var rule in template.Mappings)
-                if (rule.Quantity is { } quantity &&
-                    (quantity.Kind == QuantityKind.Parameter ? quantity.Source == null || quantity.ConstantValue != null : quantity.Source != null || quantity.ConstantValue == null))
+            foreach (var position in rule.Positions)
+                if (position.Quantity is { } quantity &&
+                    (quantity.Kind switch {
+                        QuantityKind.Parameter => quantity.Source == null || quantity.ConstantValue != null || quantity.Expression.Length > 0 || quantity.Variables.Count > 0,
+                        QuantityKind.Constant => quantity.Source != null || quantity.ConstantValue is not > 0 || quantity.Expression.Length > 0 || quantity.Variables.Count > 0,
+                        QuantityKind.Formula => quantity.Source != null || quantity.ConstantValue != null || string.IsNullOrWhiteSpace(quantity.Expression),
+                        _ => true
+                    }))
                     throw new InvalidDataException("Widersprüchliche oder unvollständige Mengenart: " + rule.Id);
             return template;
         }
         catch (JsonException ex) { throw new InvalidDataException("Ungültige AVA-Vorlage: " + ex.Message, ex); }
+    }
+    // Frozen historical wire contracts. Do not reuse the evolving schema-3 model here.
+    private sealed class LegacyTemplate<TQuantity> where TQuantity : class
+    {
+        [JsonRequired] public int SchemaVersion { get; set; }
+        [JsonRequired] public Guid ProfileId { get; set; }
+        [JsonRequired] public string Name { get; set; } = "";
+        [JsonRequired] public string Version { get; set; } = "";
+        [JsonRequired] public string ReviewScope { get; set; } = "";
+        [JsonRequired] public ParameterSource BgkIdentification { get; set; } = new();
+        [JsonRequired] public ParameterSource TypeIdentification { get; set; } = new();
+        [JsonRequired] public Catalog<BgkEntry> BgkCatalog { get; set; } = new(new("", "", ""), []);
+        [JsonRequired] public Catalog<LvEntry> LvCatalog { get; set; } = new(new("", "", ""), []);
+        [JsonRequired] public Catalog<SharedParameter> ParameterCatalog { get; set; } = new(new("", "", ""), []);
+        [JsonRequired] public List<LegacyRule<TQuantity>> Mappings { get; set; } = [];
+    }
+    private sealed class LegacyRule<TQuantity> where TQuantity : class
+    {
+        [JsonRequired] public Guid Id { get; set; }
+        [JsonRequired] public string BgkKey { get; set; } = "";
+        [JsonRequired] public string TypeNumber { get; set; } = "";
+        [JsonRequired] public string LvItemId { get; set; } = "";
+        [JsonRequired] public List<RuleCondition> Conditions { get; set; } = [];
+        [JsonRequired] public TQuantity? Quantity { get; set; }
+    }
+    private sealed class LegacyQuantity1
+    {
+        [JsonRequired] public ParameterSource Source { get; set; } = new();
+        [JsonRequired] public string Unit { get; set; } = "";
+    }
+    private sealed class LegacyQuantity2
+    {
+        [JsonRequired] public QuantityKind Kind { get; set; }
+        [JsonRequired] public ParameterSource? Source { get; set; }
+        [JsonRequired] public decimal? ConstantValue { get; set; }
+        [JsonRequired] public string Unit { get; set; } = "";
     }
     public static AvaTemplate Load(string path)
     {
@@ -112,10 +178,10 @@ public static class TemplateJson
             foreach (var property in element.EnumerateObject())
             {
                 if (!keys.Add(property.Name)) throw new InvalidDataException("Doppelter JSON-Schlüssel: " + property.Name);
-                bool quantity = name == "root.Mappings[].Quantity";
-                bool nullable = (name == "root.Mappings[]" && property.Name == "Quantity") ||
+                bool quantity = name is "root.Mappings[].Quantity" or "root.Mappings[].Positions[].Quantity";
+                bool nullable = ((name is "root.Mappings[]" or "root.Mappings[].Positions[]") && property.Name == "Quantity") ||
                     (quantity && property.Name == "ConstantValue") ||
-                    (quantity && property.Name == "Source" && element.TryGetProperty("Kind", out var kind) && kind.ValueKind == JsonValueKind.String && kind.GetString() == "Constant");
+                    (quantity && property.Name == "Source" && element.TryGetProperty("Kind", out var kind) && kind.ValueKind == JsonValueKind.String && (kind.GetString() is "Constant" or "Formula"));
                 CheckJson(property.Value, name + "." + property.Name, nullable);
             }
         }

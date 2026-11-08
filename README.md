@@ -115,11 +115,45 @@ Die Bedingungen (etwa DN) werden weiterhin benötigt, aber kein Mengenparameter.
 Konstanten müssen positiv, für Stückmengen außerdem ganzzahlig sein.
 Die Prüfliste beschreibt die feste Menge ausdrücklich als Konstante.
 
-Neue Dateien verwenden **Schema 2**. Vorhandene Schema-1-Vorlagen werden beim
+Ab 2026.1.44 verwenden Dateien **Schema 2**. Vorhandene Schema-1-Vorlagen werden beim
 Laden verlustfrei in die neue Struktur übernommen; die Quelldatei wird erst
 beim Speichern geändert. Schema 2 benötigt BIMassist **2026.1.44 oder neuer**
 und kann nicht mit 2026.1.43 geöffnet werden. Modellprüfung und Berechnung
 sind weiterhin nicht Bestandteil dieses Editors.
+
+## Gruppierte AVA-Zuordnungen und Formeln (2026.1.45)
+
+Eine Zuordnung enthält jetzt **mehrere Leistungspositionen**, jeweils mit
+eigener Mengenquelle. BGK, Typ und UND-Bedingungen gelten für die gesamte
+Zuordnung. Die Ansicht zeigt aufklappbar **BGK → Typ → Bedingungen → Positionen**.
+Doppelklick bearbeitet eine Zuordnung oder eine einzelne Position; weitere
+Positionen lassen sich auch direkt aus der gruppierten Ansicht hinzufügen.
+
+Unter **Position / Menge bearbeiten → Eigene Menge / Formel** stehen feste
+Zahl, Parameter und Formel zur Wahl. Formeln unterstützen `+`, `-`, `*`, `/`,
+Klammern, Vorzeichen und Dezimalzahlen mit Punkt oder Komma. Beispiele:
+`2 * AVA_Laenge + 0.5` oder `[Laenge innen] * [Breite innen]`.
+Jeder verwendete Name wird ausdrücklich mit Parameterquelle (GUID oder lokale
+Identität), Instanz-/Typ-Geltung und Eingabeeinheit verknüpft. Groß-/Kleinschreibung
+ist relevant; Funktionen, Skripte, Potenzen und Tausendertrennzeichen sind nicht
+unterstützt. Fehlende oder unbenutzte Bindungen werden gemeldet.
+
+**Einheiten:** Die Formel rechnet mit Zahlenwerten in den deklarierten
+Eingabeeinheiten. Die Ergebniseinheit muss manuell passend zur LV-Position
+festgelegt werden. Keine automatische Umrechnung oder Dimensionsprüfung;
+beispielsweise Länge in m × Breite in m mit Ergebniseinheit m² konfigurieren.
+Die optionale **Testrechnung** verwendet ausschließlich eingegebene Testwerte,
+keine Revit-Modellwerte. Diese Testwerte werden nicht in der Vorlage gespeichert.
+Division durch null, Überlauf, negative Ergebnisse und nicht ganzzahlige
+Stückmengen werden bei der Testrechnung gemeldet.
+
+Neue Dateien verwenden **Schema 3** und benötigen **2026.1.45 oder neuer**.
+Schema 1 und 2 werden beim Laden übernommen: jede alte Regel bleibt eine
+eigene Zuordnung mit einer Leistungsposition; IDs, Bedingungen und Quellen
+bleiben erhalten. Bestehende Dateien werden nicht ungefragt überschrieben.
+Die Prüfliste leitet für jede Position die eigene Menge und alle benötigten
+Formelparameter ab. Modellprüfung, automatische Modellmengenermittlung und
+X31 sind weiterhin nicht Bestandteil dieses Editors.
 
 ## Geometrie aus gewählten Flächen (2026.1.37)
 
