@@ -45,6 +45,11 @@ public sealed class Parameter(string name, ForgeTypeId spec, object? value, Stor
     public double AsDouble() => (double)value!;
 }
 public sealed record ElementId(long Value);
+public sealed record ModelPath(string UserVisiblePath);
+public static class ModelPathUtils
+{
+    public static string ConvertModelPathToUserVisiblePath(ModelPath path) => path.UserVisiblePath;
+}
 public class Element
 {
     public ElementId Id { get; set; } = new(1);

@@ -34,8 +34,9 @@ internal static class ExecuteTests
             Check(rows.Any(r => r.Contains("913,048=")), "10 internal feet must export 3.048m without rounding");
             Check(output.Descendants(Ns + "Item").Single().Attribute("ID")!.Value == "FirstItem", "Original LV identity lost");
             Check(TaskDialog.Notices.Any(s => s.Contains("zurückgelesen")), "No verified-save notification");
-            var picker = (SaveFileDialog)CommonDialog.Shown.Single().Dialog;
-            Check(picker.AddExtension && picker.OverwritePrompt && picker.DefaultExt == ".x31" && picker.FilterIndex == 1, "Save safety defaults wrong");
+            var picker = (FileSaveDialog)CommonDialog.Shown.Single().Dialog;
+            Check(picker.Filter.Contains("*.x31", StringComparison.Ordinal) && picker.DefaultFilterEntry == "*.x31"
+                && picker.InitialFileName == "Mengenermittlung.x31", "Native save-dialog defaults wrong");
             Equal(TaskDialogResult.No, TaskDialog.Confirmations.Single().DefaultButton);
             Check(File.ReadAllText(f.TemplatePath) == TemplateJson.Serialize(template), "Template mutated");
             Equal(1, Directory.GetFiles(f.Directory, "*.x31").Length);
@@ -222,16 +223,17 @@ internal static class ExecuteTests
             Equal(Result.Cancelled, f.Execute()); f.NoOutput(); Equal("{broken", File.ReadAllText(f.TemplatePath));
             Equal(0, TaskDialog.Confirmations.Count);
         });
-        Test("both file pickers are owned by Revit and temporary owners are closed", f =>
+        Test("template picker is Revit-owned and X31 picker uses Revit native dialog", f =>
         {
             File.WriteAllText(f.TemplatePath, TemplateJson.Serialize(f.Template()));
             CommonDialog.OpenChoices.Enqueue(f.TemplatePath); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
             Equal(2, CommonDialog.Shown.Count);
-            Check(CommonDialog.Shown.All(s => s.Owner == f.Data.Application.MainWindowHandle), "Native Revit owner missing");
-            Equal(2, System.Windows.Window.Created); Equal(System.Windows.Window.Created, System.Windows.Window.Closed);
+            Check(CommonDialog.Shown.Single(s => s.Dialog is OpenFileDialog).Owner == f.Data.Application.MainWindowHandle, "Template picker Revit owner missing");
+            Check(CommonDialog.Shown.Single(s => s.Dialog is FileSaveDialog).Owner == IntPtr.Zero, "Expected Revit-owned native X31 picker");
+            Equal(1, System.Windows.Window.Created); Equal(System.Windows.Window.Created, System.Windows.Window.Closed);
         });
-        Test("unavailable native owner uses safe unowned fallback", f =>
+        Test("native X31 picker does not depend on a synthetic WPF owner", f =>
         {
             f.Data.Application.MainWindowHandle = IntPtr.Zero; f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute()); Equal(IntPtr.Zero, CommonDialog.Shown.Single().Owner);

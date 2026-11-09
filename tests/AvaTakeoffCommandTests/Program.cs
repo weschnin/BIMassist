@@ -13,7 +13,9 @@ Check(!Regex.IsMatch(source, @"new\s+(Transaction|TransactionGroup|SubTransactio
 Check(source.Contains("document.IsFamilyDocument") && source.Contains("ActiveUIDocument"), "Command must reject missing project/family context");
 Check(source.Contains("QuantityTakeoff.Calculate") && source.Contains("RevitQuantityReader.Elements") && source.Contains("X31Writer.Save"), "Command does not connect actual model calculation to X31 writer");
 Check(Regex.IsMatch(source, @"result\.Errors\.Count\s*>\s*0") && source.IndexOf("result.Errors.Count", StringComparison.Ordinal) < source.IndexOf("X31Writer.Save", StringComparison.Ordinal), "Partial/error results must not be exported");
-Check(source.Contains(".x31") && source.Contains("DefaultExt") && source.Contains("AddExtension = true") && source.Contains("OverwritePrompt = true") && source.Contains("FilterIndex = 1"), "X31 SaveFileDialog must have default extension, filter and overwrite guard");
+Check(source.Contains("new FileSaveDialog(") && source.Contains("InitialFileName = \"Mengenermittlung.x31\"")
+    && source.Contains("DefaultFilterEntry = \"*.x31\"") && source.Contains("GetSelectedModelPath()")
+    && !source.Contains("ShowFileDialog(save,"), "X31 export must use Revit's native save dialog, not WPF HWND ownership");
 Check(source.Contains("LV-Einheit") && source.Contains("Keine automatische Umrechnung"), "Declared quantity versus LV-unit warning must precede export");
 Check(source.Contains("result.Unmarked") && source.Contains("result.Unmapped"), "Scope omissions must be visible, not claimed a complete audit");
 ExecuteTests.Run();

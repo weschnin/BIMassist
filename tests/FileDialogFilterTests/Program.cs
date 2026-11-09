@@ -50,11 +50,13 @@ internal static class Program
     private static void TakeoffSave()
     {
         var dialog = Dialogs("Commands/AvaQuantityTakeoffCommand.cs", "Execute")
-            .Single(d => d.TypeName == "Microsoft.Win32.SaveFileDialog");
-        ExpectFilter(dialog, ".x31");
-        Expect(dialog, "FilterIndex", 1);
-        Expect(dialog, "AddExtension", true);
-        Expect(dialog, "OverwritePrompt", true);
+            .Single(d => d.TypeName == "Autodesk.Revit.UI.FileSaveDialog");
+        string filter = (string)((LiteralExpressionSyntax)dialog.Creation.ArgumentList!.Arguments.Single().Expression).Token.Value!;
+        string[] parts = filter.Split('|');
+        Check(parts.Length == 4 && parts[1] == "*.x31" && parts[3] == "*.*"
+            && parts[0].Contains("*.x31", StringComparison.Ordinal), "Native Revit picker must offer X31 and All Files");
+        Expect(dialog, "DefaultFilterEntry", "*.x31");
+        Expect(dialog, "InitialFileName", "Mengenermittlung.x31");
     }
 
     private static void BgkOpen()
@@ -124,17 +126,21 @@ internal static class Program
     {
         var assignment = dialog.Creation.Initializer!.Expressions.OfType<AssignmentExpressionSyntax>()
             .SingleOrDefault(item => item.Left.ToString() == property);
-        Check(assignment != null, dialog.Label + ": missing explicit " + property);
+        var setting = assignment ?? throw new InvalidOperationException(dialog.Label + ": missing explicit " + property);
         // Compile only the setting being asserted, not business logic referencing
         // Revit state. Binding catches wrong API names/types, not just text matches.
-        var tree = CSharpSyntaxTree.ParseText(
-            $"class Wiring {{ object Create() => new {dialog.TypeName} {{ {assignment} }}; }}");
+        string createExpression = dialog.TypeName == "Autodesk.Revit.UI.FileSaveDialog"
+            ? setting.Right.ToString()
+            : $"new {dialog.TypeName}{dialog.Creation.ArgumentList} {{ {setting} }}";
+        var tree = CSharpSyntaxTree.ParseText($"class Wiring {{ object Create() => {createExpression}; }}");
         var compilation = CSharpCompilation.Create("DialogWiring", [tree], References,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         var errors = compilation.GetDiagnostics().Where(item => item.Severity == DiagnosticSeverity.Error).ToArray();
         Check(errors.Length == 0, dialog.Label + ": invalid dialog API setting: " + string.Join("; ", errors.Select(e => e.ToString())));
-        var expression = tree.GetRoot().DescendantNodes().OfType<AssignmentExpressionSyntax>().Single().Right;
-        var constant = compilation.GetSemanticModel(tree).GetConstantValue(expression);
+        ExpressionSyntax valueExpression = dialog.TypeName == "Autodesk.Revit.UI.FileSaveDialog"
+            ? tree.GetRoot().DescendantNodes().OfType<ArrowExpressionClauseSyntax>().Single().Expression
+            : tree.GetRoot().DescendantNodes().OfType<AssignmentExpressionSyntax>().Single().Right;
+        var constant = compilation.GetSemanticModel(tree).GetConstantValue(valueExpression);
         Check(constant.HasValue && constant.Value != null, dialog.Label + ": expected constant " + property);
         return constant.Value!;
     }
@@ -151,16 +157,17 @@ internal static class Program
             {
                 string type = creation.Type.ToString();
                 if (aliases.TryGetValue(type, out string? resolved)) type = resolved;
-                if (type is "OpenFileDialog" or "SaveFileDialog")
+                if (type is "OpenFileDialog" or "SaveFileDialog" or "FileSaveDialog")
                 {
-                    string ns = root.Usings.Select(u => u.Name?.ToString()).Single(name =>
-                        name is "Microsoft.Win32" or "System.Windows.Forms")!;
+                    string ns = type == "FileSaveDialog" ? "Autodesk.Revit.UI"
+                        : root.Usings.Select(u => u.Name?.ToString()).Single(name => name is "Microsoft.Win32" or "System.Windows.Forms")!;
                     type = ns + "." + type;
                 }
                 return new Dialog(relativePath + ":" + (creation.GetLocation().GetLineSpan().StartLinePosition.Line + 1), type, creation);
             })
             .Where(dialog => dialog.TypeName is "Microsoft.Win32.OpenFileDialog" or "Microsoft.Win32.SaveFileDialog"
-                or "System.Windows.Forms.OpenFileDialog" or "System.Windows.Forms.SaveFileDialog")
+                or "System.Windows.Forms.OpenFileDialog" or "System.Windows.Forms.SaveFileDialog"
+                or "Autodesk.Revit.UI.FileSaveDialog")
             .Where(dialog => method == null || dialog.Creation.Ancestors().OfType<MethodDeclarationSyntax>()
                 .First().Identifier.ValueText == method).ToArray();
     }

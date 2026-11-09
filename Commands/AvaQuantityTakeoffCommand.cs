@@ -82,19 +82,21 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                 DefaultButton = TaskDialogResult.No
             };
             if (confirm.Show() != TaskDialogResult.Yes) return Result.Cancelled;
-            var save = new Microsoft.Win32.SaveFileDialog
+            using var save = new FileSaveDialog("GAEB-Mengenermittlung (*.x31)|*.x31|Alle Dateien (*.*)|*.*")
             {
-                Title = "AVA-Mengenermittlung speichern", Filter = "GAEB-Mengenermittlung (*.x31)|*.x31|Alle Dateien (*.*)|*.*",
-                FilterIndex = 1, DefaultExt = ".x31", AddExtension = true, OverwritePrompt = true,
-                FileName = "Mengenermittlung.x31"
+                Title = "AVA-Mengenermittlung speichern",
+                DefaultFilterEntry = "*.x31",
+                InitialFileName = "Mengenermittlung.x31"
             };
-            if (ShowFileDialog(save, commandData.Application) != true) return Result.Cancelled;
-            var outputPath = Path.GetFullPath(save.FileName);
+            if (save.Show() != ItemSelectionDialogResult.Confirmed) return Result.Cancelled;
+            var selectedPath = save.GetSelectedModelPath();
+            if (selectedPath == null) throw new InvalidDataException("Der Revit-Speicherdialog hat keinen Dateipfad zurückgegeben.");
+            var outputPath = Path.GetFullPath(ModelPathUtils.ConvertModelPathToUserVisiblePath(selectedPath));
             if (string.Equals(outputPath, Path.GetFullPath(workspace.LastTemplatePath!), StringComparison.OrdinalIgnoreCase)
                 || string.Equals(outputPath, Path.GetFullPath(AvaWorkspace.DefaultSettingsPath), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Die X31-Ausgabe darf weder die aktive AVA-Vorlage noch die Arbeitsbereich-Einstellungen überschreiben.");
             X31Writer.Save(outputPath, template, result.Rows.Select(r => new QuantityTakeoffRow(r.LvItemId, r.Value, r.Unit, r.Explanation)).ToList());
-            TaskDialog.Show("AVA – Mengenermittlung", "X31-Datei erstellt und zurückgelesen.\n" + result.Rows.Count + " Mengenzeilen.\n\n" + save.FileName
+            TaskDialog.Show("AVA – Mengenermittlung", "X31-Datei erstellt und zurückgelesen.\n" + result.Rows.Count + " Mengenzeilen.\n\n" + outputPath
                 + "\n\nDer Import in California ist separat zu prüfen.");
             return Result.Succeeded;
         }
