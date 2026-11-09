@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Ava/Core/AvaTemplate.cs" Link="Core/AvaTemplate.cs" />
+    <Compile Include="../../Ava/Core/CatalogReaders.cs" Link="Core/CatalogReaders.cs" />
+    <Compile Include="../../Ava/Core/TemplateValidation.cs" Link="Core/TemplateValidation.cs" />
+    <Compile Include="../../Ava/Core/TemplateEditor.cs" Link="Core/TemplateEditor.cs" />
+    <Compile Include="../../Ava/Core/TemplateJson.cs" Link="Core/TemplateJson.cs" />
+    <Compile Include="../../Ava/Core/QuantityFormula.cs" Link="Core/QuantityFormula.cs" />
+    <Compile Include="../../Ava/Core/QuantityTakeoff.cs" Link="Core/QuantityTakeoff.cs" Condition="Exists('../../Ava/Core/QuantityTakeoff.cs')" />
+  </ItemGroup>
+</Project>

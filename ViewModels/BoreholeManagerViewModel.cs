@@ -368,7 +368,13 @@ namespace BIMassist.ViewModels
 
         private void ImportHoles()
         {
-            var dlg = new Win32OpenFileDialog { Filter = "CSV (*.csv)|*.csv" };
+            var dlg = new Win32OpenFileDialog
+            {
+                Filter = "CSV (*.csv)|*.csv|Alle Dateien (*.*)|*.*",
+                FilterIndex = 1,
+                DefaultExt = ".csv",
+                CheckFileExists = true
+            };
             if (dlg.ShowDialog() == true)
             {
                 Merge(_csv.ReadHoles(dlg.FileName), null);
@@ -377,7 +383,13 @@ namespace BIMassist.ViewModels
 
         private void ImportGeology()
         {
-            var dlg = new Win32OpenFileDialog { Filter = "CSV (*.csv)|*.csv" };
+            var dlg = new Win32OpenFileDialog
+            {
+                Filter = "CSV (*.csv)|*.csv|Alle Dateien (*.*)|*.*",
+                FilterIndex = 1,
+                DefaultExt = ".csv",
+                CheckFileExists = true
+            };
             if (dlg.ShowDialog() == true)
             {
                 Merge(null, _csv.ReadGeology(dlg.FileName));
@@ -386,10 +398,26 @@ namespace BIMassist.ViewModels
 
         private void ImportPair()
         {
-            var dlgH = new Win32OpenFileDialog { Title = "hole.csv wählen", Filter = "CSV (*.csv)|*.csv", Multiselect = true };
+            var dlgH = new Win32OpenFileDialog
+            {
+                Title = "hole.csv wählen",
+                Filter = "CSV (*.csv)|*.csv|Alle Dateien (*.*)|*.*",
+                FilterIndex = 1,
+                DefaultExt = ".csv",
+                CheckFileExists = true,
+                Multiselect = true
+            };
             if (dlgH.ShowDialog() == true)
             {
-                var dlgG = new Win32OpenFileDialog { Title = "geol.csv wählen", Filter = "CSV (*.csv)|*.csv", Multiselect = true };
+                var dlgG = new Win32OpenFileDialog
+                {
+                    Title = "geol.csv wählen",
+                    Filter = "CSV (*.csv)|*.csv|Alle Dateien (*.*)|*.*",
+                    FilterIndex = 1,
+                    DefaultExt = ".csv",
+                    CheckFileExists = true,
+                    Multiselect = true
+                };
                 if (dlgG.ShowDialog() == true)
                 {
                     foreach (var f in dlgH.FileNames) Merge(_csv.ReadHoles(f), null);

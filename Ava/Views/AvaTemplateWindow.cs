@@ -9,7 +9,9 @@ namespace BIMassist.Ava.Views;
 /// <summary>Modal, file-only AVA editor. No Revit API objects, model access, binding or transactions.</summary>
 public sealed class AvaTemplateWindow : Window
 {
-    private readonly TemplateEditor editor = new();
+    private TemplateEditor editor = new();
+    private readonly AvaWorkspace workspace;
+    private readonly W.TextBlock workspaceWarning = EditorUi.Text("");
     private readonly W.TextBox profileName = EditorUi.Input();
     private readonly W.TextBox profileVersion = EditorUi.Input();
     private readonly W.TextBox reviewScope = EditorUi.Input();
@@ -25,9 +27,20 @@ public sealed class AvaTemplateWindow : Window
     private readonly W.ComboBox catalogKind = new() { ItemsSource = new[] { "BGK und Typen", "LV-Positionen", "Gemeinsame Parameter" }, SelectedIndex = 0, Width = 240, MinHeight = 30, Margin = new Thickness(0, 0, 10, 8) };
     private readonly W.TextBox catalogSearch = EditorUi.Input();
     private bool refreshing;
+    private bool shuttingDown;
 
-    public AvaTemplateWindow()
+    // Replace only human interactions in STA tests; all real editor/save/Closing paths still run.
+    internal Func<MessageBoxResult>? PendingPrompt { get; set; }
+    internal Func<string?>? SavePathSelector { get; set; }
+    internal Func<int, bool>? DraftPrompt { get; set; }
+    internal Action<Exception>? ErrorReporter { get; set; }
+
+    public AvaTemplateWindow() : this(new AvaWorkspace()) { }
+
+    /// <summary>Inject a workspace with an isolated settings path for file-only hosts and tests.</summary>
+    public AvaTemplateWindow(AvaWorkspace workspace)
     {
+        this.workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         NameScope.SetNameScope(this, new NameScope());
         Title = "AVA-Vorlage / Prüfliste"; Width = 1200; Height = 820; MinWidth = 900; MinHeight = 620;
         ResizeMode = ResizeMode.CanResize; WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -40,8 +53,12 @@ public sealed class AvaTemplateWindow : Window
         toolbar.Children.Add(EditorUi.Button("Speichern unter…", () => Save(true)));
         toolbar.Children.Add(EditorUi.Button("JSON importieren…", () => Open(true)));
         toolbar.Children.Add(EditorUi.Button("JSON exportieren…", Export));
-        var notice = EditorUi.Text("Dateibasierter Vorlageneditor · keine Modellprüfung, keine Revit-Schreibzugriffe, kein X31. Die Prüfliste wird aus der Vorlage abgeleitet; sie ist kein bereits ausgeführter Modellcheck.");
+        var notice = EditorUi.Text("Dateibasierter Vorlageneditor · keine Modellprüfung und keine Revit-Schreibzugriffe. Mengenermittlung / Mengenexport erfolgt separat über den Ribbon-Befehl. Die Prüfliste wird aus der Vorlage abgeleitet; sie ist kein bereits ausgeführter Modellcheck.");
         W.DockPanel.SetDock(notice, W.Dock.Top); root.Children.Add(notice);
+        workspaceWarning.Name = "WorkspaceWarning"; RegisterName(workspaceWarning.Name, workspaceWarning);
+        workspaceWarning.Visibility = Visibility.Collapsed;
+        workspaceWarning.Foreground = System.Windows.Media.Brushes.DarkRed;
+        W.DockPanel.SetDock(workspaceWarning, W.Dock.Top); root.Children.Add(workspaceWarning);
         W.DockPanel.SetDock(status, W.Dock.Bottom); root.Children.Add(status);
         var tabs = new W.TabControl { Name = "EditorTabs" }; RegisterName(tabs.Name, tabs); root.Children.Add(tabs);
         tabs.Items.Add(new W.TabItem { Header = "1  Profil / Prüfumfang", Content = ProfileTab() });
@@ -57,8 +74,35 @@ public sealed class AvaTemplateWindow : Window
         profileName.TextChanged += (_, _) => { if (!refreshing) { editor.Document.Name = profileName.Text; MarkTitle(); } };
         profileVersion.TextChanged += (_, _) => { if (!refreshing) { editor.Document.Version = profileVersion.Text; MarkTitle(); } };
         reviewScope.TextChanged += (_, _) => { if (!refreshing) { editor.Document.ReviewScope = reviewScope.Text; MarkTitle(); } };
-        Closing += (_, e) => { if (!ConfirmPending()) e.Cancel = true; };
-        Content = root; Refresh();
+        // ShutdownStarted is raised before HasShutdownStarted becomes true.
+        EventHandler markShutdown = (_, _) => shuttingDown = true;
+        Dispatcher.ShutdownStarted += markShutdown;
+        Closed += (_, _) => Dispatcher.ShutdownStarted -= markShutdown;
+        Closing += (_, e) =>
+        {
+            // Normal modal-editor closes are cancellable; dispatcher/process teardown
+            // must not start dialogs or file writes while the host is shutting down.
+            if (!shuttingDown && !Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished && !Environment.HasShutdownStarted && !ConfirmPending())
+                e.Cancel = true;
+        };
+        Content = root;
+        Loaded += LoadWorkspace;
+        Refresh();
+    }
+    private void LoadWorkspace(object sender, RoutedEventArgs e)
+    {
+        // A window can receive Loaded again after visual-tree changes. Only the first
+        // actual open may replace the fresh editor; never overwrite subsequent edits.
+        Loaded -= LoadWorkspace;
+        if (workspace.HasRememberedTemplate)
+        {
+            try { workspace.LoadLast(); editor.Open(workspace.LastTemplatePath!); }
+            catch (Exception ex) when (EditorUi.IsInputError(ex))
+            {
+                workspaceWarning.Text = ex.Message; workspaceWarning.Visibility = Visibility.Visible;
+            }
+        }
+        Refresh();
     }
     private UIElement ProfileTab()
     {
@@ -172,15 +216,33 @@ public sealed class AvaTemplateWindow : Window
     }
     private void Open(bool import)
     {
-        var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "AVA-Vorlage (*.json)|*.json", Title = import ? "Portable Vorlage importieren" : "AVA-Vorlage öffnen" };
+        var dialog = AvaFileDialogs.OpenTemplate(import);
         if (dialog.ShowDialog(this) != true) return;
-        EditorUi.Guard(this, () =>
+        OpenPath(dialog.FileName, import);
+    }
+    internal bool OpenPath(string path, bool import)
+    {
+        try
         {
-            var candidate = TemplateJson.Load(dialog.FileName); TemplateEditor.EnsureValid(candidate); // validate before discard prompt or replacement
-            if (!ConfirmPending()) return;
-            if (import) editor.ImportJson(TemplateJson.Serialize(candidate)); else editor.Open(dialog.FileName);
-            Refresh();
-        });
+            // Validate before asking to discard edits, then re-read after a pending
+            // save: opening the same file must not commit its pre-save snapshot.
+            TemplateEditor ReadCandidate()
+            {
+                var replacement = new TemplateEditor();
+                if (import) replacement.ImportJson(TemplateJson.Serialize(TemplateJson.Load(path)));
+                else replacement.Open(Path.GetFullPath(path));
+                return replacement;
+            }
+            var candidate = ReadCandidate();
+            bool hadPendingEdits = editor.IsDirty;
+            if (!ConfirmPending()) return false;
+            if (hadPendingEdits) candidate = ReadCandidate();
+            if (!import) workspace.Remember(candidate.FilePath!);
+            editor = candidate;
+            workspaceWarning.Text = ""; workspaceWarning.Visibility = Visibility.Collapsed;
+            Refresh(); return true;
+        }
+        catch (Exception ex) when (EditorUi.IsInputError(ex)) { ReportError(ex); return false; }
     }
     private bool Save(bool saveAs)
     {
@@ -188,31 +250,45 @@ public sealed class AvaTemplateWindow : Window
         {
             TemplateEditor.EnsureValid(editor.Document);
             var warnings = TemplateValidator.Validate(editor.Document).Count(d => d.Severity == DiagnosticSeverity.Warning);
-            if (warnings > 0 && System.Windows.MessageBox.Show(this, $"{warnings} Hinweise in der Validierung. Als Entwurf speichern?", "AVA-Vorlage", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return false;
+            if (warnings > 0 && !(DraftPrompt?.Invoke(warnings) ?? (System.Windows.MessageBox.Show(this, $"{warnings} Hinweise in der Validierung. Als Entwurf speichern?", "AVA-Vorlage", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes))) return false;
             string? path = editor.FilePath;
             if (saveAs || path == null)
             {
-                var dialog = SaveDialog("AVA-Vorlage speichern"); if (dialog.ShowDialog(this) != true) return false; path = dialog.FileName;
+                if (SavePathSelector != null) path = SavePathSelector();
+                else { var dialog = SaveDialog("AVA-Vorlage speichern"); if (dialog.ShowDialog(this) != true) return false; path = dialog.FileName; }
+                if (string.IsNullOrWhiteSpace(path)) return false;
             }
-            editor.SaveAs(path); Refresh(); return true;
+            // Keep the old document/path/baseline if either file or workspace persistence fails.
+            workspace.EnsureTemplatePath(path);
+            var candidate = new TemplateEditor(); candidate.ImportJson(TemplateJson.Serialize(editor.Document));
+            candidate.SaveAs(path); workspace.Remember(path);
+            editor = candidate;
+            workspaceWarning.Text = ""; workspaceWarning.Visibility = Visibility.Collapsed;
+            Refresh(); return true;
         }
-        catch (Exception ex) when (EditorUi.IsInputError(ex)) { EditorUi.Error(this, ex); RefreshDerived(); return false; }
+        catch (Exception ex) when (EditorUi.IsInputError(ex)) { ReportError(ex); RefreshDerived(); return false; }
     }
     private void Export()
     {
         var dialog = SaveDialog("Portable JSON-Kopie exportieren"); if (dialog.ShowDialog(this) != true) return;
-        EditorUi.Guard(this, () => { editor.Export(dialog.FileName); status.Text = "JSON-Kopie exportiert und zurückgelesen. Aktueller Speicherpfad / Änderungsstatus bleiben unverändert."; });
+        EditorUi.Guard(this, () => ExportPath(dialog.FileName));
     }
-    private Microsoft.Win32.SaveFileDialog SaveDialog(string title) => new() { Title = title, Filter = "AVA-Vorlage (*.json)|*.json", DefaultExt = ".json", AddExtension = true, FileName = editor.FilePath == null ? "AVA-Vorlage.json" : Path.GetFileName(editor.FilePath), OverwritePrompt = true };
+    internal void ExportPath(string path)
+    {
+        workspace.EnsureTemplatePath(path);
+        editor.Export(path);
+        status.Text = "JSON-Kopie exportiert und zurückgelesen. Aktueller Speicherpfad / Änderungsstatus bleiben unverändert.";
+    }
+    private Microsoft.Win32.SaveFileDialog SaveDialog(string title) => AvaFileDialogs.SaveTemplate(title, editor.FilePath);
     private bool ConfirmPending()
     {
         if (!editor.IsDirty) return true;
-        var answer = System.Windows.MessageBox.Show(this, "Ungespeicherte Änderungen speichern?\nJa: speichern · Nein: verwerfen · Abbrechen: weiter bearbeiten", "AVA-Vorlage", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+        var answer = PendingPrompt?.Invoke() ?? System.Windows.MessageBox.Show(this, "Ungespeicherte Änderungen speichern?\nJa: speichern · Nein: verwerfen · Abbrechen: weiter bearbeiten", "AVA-Vorlage", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
         return answer == MessageBoxResult.No || answer == MessageBoxResult.Yes && Save(false);
     }
     private void ImportCatalog(string kind)
     {
-        var dialog = new Microsoft.Win32.OpenFileDialog { Filter = kind == "bgk" ? "BGK-Katalog (*.xml)|*.xml" : kind == "lv" ? "GAEB DA82/3.3 (*.x82)|*.x82" : "Gemeinsame Parameter (*.txt)|*.txt" };
+        var dialog = AvaFileDialogs.OpenCatalog(kind);
         if (dialog.ShowDialog(this) != true) return;
         EditorUi.Guard(this, () =>
         {
@@ -229,7 +305,8 @@ public sealed class AvaTemplateWindow : Window
         });
     }
     private static Action Prepared<T>(T parsed, Action<T> setter) => () => setter(parsed);
-    private void MarkTitle() => Title = "AVA-Vorlage / Prüfliste – " + editor.Document.Name + " *";
+    private void ReportError(Exception ex) { if (ErrorReporter != null) ErrorReporter(ex); else EditorUi.Error(this, ex); }
+    private void MarkTitle() => Title = "AVA-Vorlage / Prüfliste – " + editor.Document.Name + (editor.IsDirty ? " *" : "");
     private void Refresh()
     {
         refreshing = true;

@@ -6,7 +6,9 @@ using System.Xml.Linq;
 
 namespace BIMassist.Ava.Core;
 
-public sealed record SourceStamp(string FileName, string Format, string Sha256);
+public sealed record SourceStamp(string FileName, string Format, string Sha256,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? X82SnapshotBase64 = null);
 public sealed record Catalog<T>(SourceStamp Source, List<T> Entries);
 public sealed record BgkType(string Number, string Description)
 {
@@ -54,7 +56,7 @@ public static class CatalogReaders
         if (entries.Count == 0) throw new InvalidDataException("Keine LV-Positionen gefunden.");
         Unique(entries.Select(e => e.Id), "LV-ID");
         Unique(entries.Select(e => e.BoqId + "\0" + e.Ordinal), "LV-OZ");
-        return new(Stamp(bytes, fileName, "GAEB DA82/3.3"), entries);
+        return new(Stamp(bytes, fileName, "GAEB DA82/3.3") with { X82SnapshotBase64 = Convert.ToBase64String(bytes) }, entries);
     }
 
     public static Catalog<BgkEntry> ReadBgk(Stream input, string fileName)

@@ -1,17 +1,20 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Revit 2026 RTM uses .NET 8; 2026.5+ runs existing managed .NET 8 add-ins
+         on .NET 10. Do not retarget the portable artifact to the developer PC's runtime. -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RevitApiReferenceVersion>2026.0.0.9999</RevitApiReferenceVersion>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
-    <Version>2026.1.47</Version>
-    <AssemblyVersion>2026.1.47.0</AssemblyVersion>
-    <FileVersion>2026.1.47.0</FileVersion>
-    <InformationalVersion>2026.1.47</InformationalVersion>
+    <Version>2026.1.48</Version>
+    <AssemblyVersion>2026.1.48.0</AssemblyVersion>
+    <FileVersion>2026.1.48.0</FileVersion>
+    <InformationalVersion>2026.1.48</InformationalVersion>
     <DeployToRevit Condition="'$(DeployToRevit)' == ''">false</DeployToRevit>
     <Authors>Alexander Weschnin</Authors>
     <Product>BIMassist für Revit 2026</Product>
@@ -20,6 +23,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Keep WinForms available, but require local imports: its implicit global
+         namespace makes WPF/Microsoft.Win32 file dialogs ambiguous. -->
+    <Using Remove="System.Windows.Forms" />
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
   </ItemGroup>
 
@@ -35,11 +41,21 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- This community-distributed NuGet contains the original Autodesk-signed 26.0.10.0
+         .NET 8 API binaries (not stubs). Pin the baseline, exclude all automatic package
+         assets, and reference only the host APIs below. Never resolve against Program Files:
+         Revit 2026.5 replaces those DLLs with .NET 10 assemblies (CS1705 on .NET 8).
+         Autodesk migration guidance:
+         https://blog.autodesk.io/autodesk-desktop-products-2025-2026-net-10-updates/ -->
+    <PackageReference Include="Autodesk.Revit.SDK" Version="[$(RevitApiReferenceVersion)]"
+                      GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
     <Reference Include="RevitAPI">
-      <HintPath>..\..\..\..\..\Program Files\Autodesk\Revit 2026\RevitAPI.dll</HintPath>
+      <HintPath>$(PkgAutodesk_Revit_SDK)/ref/net8.0/RevitAPI.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="RevitAPIUI">
-      <HintPath>..\..\..\..\..\Program Files\Autodesk\Revit 2026\RevitAPIUI.dll</HintPath>
+      <HintPath>$(PkgAutodesk_Revit_SDK)/ref/net8.0/RevitAPIUI.dll</HintPath>
+      <Private>false</Private>
     </Reference>
   </ItemGroup>
 

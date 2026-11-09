@@ -1,0 +1,20 @@
+using System.Text.RegularExpressions;
+string? root = AppContext.BaseDirectory;
+while (root != null && !File.Exists(Path.Combine(root, "App.cs"))) root = Directory.GetParent(root)?.FullName;
+if (root == null) throw new Exception("Repository not found");
+void Check(bool yes, string message) { if (!yes) throw new Exception(message); }
+var app = File.ReadAllText(Path.Combine(root, "App.cs"));
+var ava = app.IndexOf("new PulldownButtonData(\"AVA\"", StringComparison.Ordinal);
+var info = app.IndexOf("new PushButtonData(\"BIMassist Info\"", StringComparison.Ordinal);
+Check(ava >= 0 && info > ava && app[ava..info].Contains("BIMassist.Commands.AvaQuantityTakeoffCommand"), "Mengenermittlung command is not in the AVA group before Info");
+var source = File.ReadAllText(Path.Combine(root, "Commands", "AvaQuantityTakeoffCommand.cs"));
+Check(source.Contains("TransactionMode.ReadOnly"), "Takeoff must be read-only");
+Check(!Regex.IsMatch(source, @"new\s+(Transaction|TransactionGroup|SubTransaction)\b"), "Takeoff must not write Revit elements");
+Check(source.Contains("document.IsFamilyDocument") && source.Contains("ActiveUIDocument"), "Command must reject missing project/family context");
+Check(source.Contains("QuantityTakeoff.Calculate") && source.Contains("RevitQuantityReader.Elements") && source.Contains("X31Writer.Save"), "Command does not connect actual model calculation to X31 writer");
+Check(Regex.IsMatch(source, @"result\.Errors\.Count\s*>\s*0") && source.IndexOf("result.Errors.Count", StringComparison.Ordinal) < source.IndexOf("X31Writer.Save", StringComparison.Ordinal), "Partial/error results must not be exported");
+Check(source.Contains(".x31") && source.Contains("DefaultExt") && source.Contains("AddExtension = true") && source.Contains("OverwritePrompt = true") && source.Contains("FilterIndex = 1"), "X31 SaveFileDialog must have default extension, filter and overwrite guard");
+Check(source.Contains("LV-Einheit") && source.Contains("Keine automatische Umrechnung"), "Declared quantity versus LV-unit warning must precede export");
+Check(source.Contains("result.Unmarked") && source.Contains("result.Unmapped"), "Scope omissions must be visible, not claimed a complete audit");
+ExecuteTests.Run();
+Console.WriteLine("PASS AVA quantity command ribbon/context/read-only/export-blocking and X31 save-dialog wiring (static, no Revit-host claim)");

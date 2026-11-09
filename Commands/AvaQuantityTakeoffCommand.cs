@@ -1,0 +1,122 @@
+using System;
+using System.IO;
+using System.Linq;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+using BIMassist.Ava.Core;
+using BIMassist.Ava.Revit;
+
+namespace BIMassist.Commands;
+
+[Transaction(TransactionMode.ReadOnly)]
+public sealed class AvaQuantityTakeoffCommand : IExternalCommand
+{
+    public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+    {
+        try
+        {
+            var uiDocument = commandData.Application.ActiveUIDocument;
+            if (uiDocument == null) throw new InvalidDataException("Zuerst ein Revit-Projekt öffnen.");
+            var document = uiDocument.Document;
+            if (document.IsFamilyDocument) throw new InvalidDataException("Mengenermittlung steht nur in einem Projekt, nicht im Familieneditor, zur Verfügung.");
+            var workspace = new AvaWorkspace();
+            AvaTemplate? template = null;
+            if (workspace.HasRememberedTemplate)
+            {
+                try { template = workspace.LoadLast(); }
+                catch (InvalidDataException ex)
+                {
+                    TaskDialog.Show("AVA – Mengenermittlung", "Die gespeicherte AVA-Vorlage ist nicht verfügbar oder ungültig. Wählen Sie eine gültige Vorlage.\n\n" + ex.Message);
+                }
+            }
+            if (template == null)
+            {
+                var choose = new Microsoft.Win32.OpenFileDialog
+                {
+                    Title = "AVA-Vorlage für die Mengenermittlung wählen", Filter = "AVA-Vorlage (*.json)|*.json|Alle Dateien (*.*)|*.*",
+                    DefaultExt = ".json", FilterIndex = 1, CheckFileExists = true, Multiselect = false
+                };
+                if (ShowFileDialog(choose, commandData.Application) != true) return Result.Cancelled;
+                template = TemplateJson.Load(choose.FileName); TemplateEditor.EnsureValid(template);
+                workspace.Remember(choose.FileName);
+            }
+            var result = QuantityTakeoff.Calculate(template, RevitQuantityReader.Elements(document, template));
+            if (result.Errors.Count > 0)
+            {
+                const int errorLimit = 15;
+                message = "Mengenermittlung abgebrochen: " + result.Errors.Count + " Fehler. Keine X31-Datei erstellt oder ersetzt.\n\n"
+                    + "Untersuchte Modellelemente: " + result.Examined
+                    + "\nOhne vollständige BGK-/Typkennzeichnung: " + result.Unmarked
+                    + "\nOhne passende BGK-/Typzuordnung: " + result.Unmapped
+                    + "\nErmittelte Mengenzeilen (nicht exportiert): " + result.Rows.Count
+                    + "\nVerknüpfte Modelle werden nicht ausgewertet."
+                    + "\n\nFehlerdetails (erste " + Math.Min(errorLimit, result.Errors.Count) + " von " + result.Errors.Count + ", maximal " + errorLimit + "):\n"
+                    + string.Join("\n", result.Errors.Take(errorLimit).Select(e => "Element " + e.ElementId + ": " + e.Message))
+                    + (result.Errors.Count > errorLimit ? "\n" + (result.Errors.Count - errorLimit) + " weitere Fehler nicht angezeigt." : "");
+                TaskDialog.Show("AVA – Mengenermittlung", message);
+                return Result.Failed;
+            }
+            if (result.Rows.Count == 0)
+            {
+                TaskDialog.Show("AVA – Mengenermittlung", "Keine passenden Mengenzeilen gefunden.\nUntersuchte Modellelemente: " + result.Examined
+                    + "\nOhne vollständige BGK-/Typkennzeichnung: " + result.Unmarked + "\nOhne passende BGK-/Typzuordnung: " + result.Unmapped
+                    + "\nKeine Datei erstellt. Verknüpfte Modelle werden nicht ausgewertet.");
+                return Result.Cancelled;
+            }
+            var units = result.Rows.Where(r => template.LvCatalog.Entries.Single(l => l.Id == r.LvItemId).Unit != r.Unit)
+                .Select(r => { var lv = template.LvCatalog.Entries.Single(l => l.Id == r.LvItemId); return lv.Ordinal + ": Menge " + r.Unit + " / LV-Einheit " + lv.Unit; })
+                .Distinct(StringComparer.Ordinal).ToList();
+            var warnings = TemplateValidator.Validate(template).Where(d => d.Severity == DiagnosticSeverity.Warning).ToList();
+            var confirm = new TaskDialog("AVA – Mengenermittlung")
+            {
+                MainInstruction = "Mengenermittlung als X31 exportieren?",
+                MainContent = "Projekt: " + document.Title + "\nVorlage: " + template.Name + "\n" + workspace.LastTemplatePath
+                    + "\n\n" + result.Examined + " Modellelemente untersucht; " + result.Rows.Count + " Mengenzeilen."
+                    + "\nOhne vollständige Kennzeichnung: " + result.Unmarked + "; ohne BGK-/Typzuordnung: " + result.Unmapped + "."
+                    + "\n\nUmfang: alle Modellelement-Instanzen im aktuellen Hauptmodell, keine verknüpften Modelle. Der textuelle Prüfumfang ist kein Kategorienfilter; dies ist keine vollständige Modellprüfung."
+                    + "\nAlle zutreffenden Regeln werden additiv ausgewertet. Verwendet wird die gespeicherte Vorlage. Keine Revit-Schreibzugriffe."
+                    + (units.Count > 0 ? "\n\nACHTUNG: " + units.Count + " unterschiedliche Mengen-/LV-Einheiten. Keine automatische Umrechnung. Mit Ja werden die Zahlen unverändert unter der jeweiligen LV-Position ausgegeben; eigene Einheit steht im Erläuterungstext." : ""),
+                ExpandedContent = string.Join("\n", units.Concat(warnings.Select(w => w.ToString()))),
+                CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No,
+                DefaultButton = TaskDialogResult.No
+            };
+            if (confirm.Show() != TaskDialogResult.Yes) return Result.Cancelled;
+            var save = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "AVA-Mengenermittlung speichern", Filter = "GAEB-Mengenermittlung (*.x31)|*.x31|Alle Dateien (*.*)|*.*",
+                FilterIndex = 1, DefaultExt = ".x31", AddExtension = true, OverwritePrompt = true,
+                FileName = "Mengenermittlung.x31"
+            };
+            if (ShowFileDialog(save, commandData.Application) != true) return Result.Cancelled;
+            var outputPath = Path.GetFullPath(save.FileName);
+            if (string.Equals(outputPath, Path.GetFullPath(workspace.LastTemplatePath!), StringComparison.OrdinalIgnoreCase)
+                || string.Equals(outputPath, Path.GetFullPath(AvaWorkspace.DefaultSettingsPath), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Die X31-Ausgabe darf weder die aktive AVA-Vorlage noch die Arbeitsbereich-Einstellungen überschreiben.");
+            X31Writer.Save(outputPath, template, result.Rows.Select(r => new QuantityTakeoffRow(r.LvItemId, r.Value, r.Unit, r.Explanation)).ToList());
+            TaskDialog.Show("AVA – Mengenermittlung", "X31-Datei erstellt und zurückgelesen.\n" + result.Rows.Count + " Mengenzeilen.\n\n" + save.FileName
+                + "\n\nDer Import in California ist separat zu prüfen.");
+            return Result.Succeeded;
+        }
+        catch (Exception ex)
+        {
+            message = "Die AVA-Mengenermittlung konnte nicht abgeschlossen werden.\n\n" + ex.Message;
+            return Result.Failed;
+        }
+    }
+
+    // Mirror WpfOwner's Revit HWND ownership without showing a second window.
+    // WPF CommonDialog accepts a Window, not an arbitrary external HWND.
+    private static bool? ShowFileDialog(Microsoft.Win32.CommonDialog dialog, UIApplication application)
+    {
+        var handle = application.MainWindowHandle;
+        if (handle == IntPtr.Zero) return dialog.ShowDialog();
+        var owner = new System.Windows.Window();
+        try
+        {
+            new System.Windows.Interop.WindowInteropHelper(owner).Owner = handle;
+            return dialog.ShowDialog(owner);
+        }
+        finally { owner.Close(); }
+    }
+}

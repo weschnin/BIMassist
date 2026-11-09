@@ -1198,8 +1198,11 @@ namespace BIMassist
                 {
                     SaveFileDialog saveFileDialog = new SaveFileDialog
                     {
-                        Filter = "xml files (*.xml)|*.xml",
-                        FilterIndex = 2,
+                        Filter = "BGK-Katalog (*.xml)|*.xml|Alle Dateien (*.*)|*.*",
+                        FilterIndex = 1,
+                        DefaultExt = ".xml",
+                        AddExtension = true,
+                        OverwritePrompt = true,
                         RestoreDirectory = true
                     };
 
@@ -1317,8 +1320,10 @@ namespace BIMassist
                 {
                     OpenFileDialog openFileDialog = new OpenFileDialog
                     {
-                        Filter = "xml files (*.xml)|*.xml",
-                        FilterIndex = 2,
+                        Filter = "BGK-Katalog (*.xml)|*.xml|Alle Dateien (*.*)|*.*",
+                        FilterIndex = 1,
+                        DefaultExt = ".xml",
+                        CheckFileExists = true,
                         Multiselect = false
                     };
 

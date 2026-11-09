@@ -1095,7 +1095,10 @@ namespace BIMassist.Core
 
                     Microsoft.Win32.OpenFileDialog openFileDialog = new Microsoft.Win32.OpenFileDialog()
                     {
-                        Filter = "rft files (*.rft)|*.rft",
+                        Filter = "Revit-Familienvorlage (*.rft)|*.rft|Alle Dateien (*.*)|*.*",
+                        FilterIndex = 1,
+                        DefaultExt = ".rft",
+                        CheckFileExists = true,
                         InitialDirectory = uiapp.Application.FamilyTemplatePath
                     };
                     if (openFileDialog.ShowDialog() == true)
@@ -1314,7 +1317,10 @@ namespace BIMassist.Core
 
                     Microsoft.Win32.OpenFileDialog openFileDialog = new Microsoft.Win32.OpenFileDialog()
                     {
-                        Filter = "rft files (*.rft)|*.rft",
+                        Filter = "Revit-Familienvorlage (*.rft)|*.rft|Alle Dateien (*.*)|*.*",
+                        FilterIndex = 1,
+                        DefaultExt = ".rft",
+                        CheckFileExists = true,
                         InitialDirectory = uiapp.Application.FamilyTemplatePath
                     };
                     if (openFileDialog.ShowDialog() == true)

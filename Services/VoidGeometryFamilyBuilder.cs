@@ -36,7 +36,10 @@ namespace BIMassist.Services
                 TaskDialog.Show("Abzugskörper", "Die Familienvorlage fehlt. Bitte eine Vorlage für Allgemeine Modelle auswählen.");
                 Microsoft.Win32.OpenFileDialog picker = new Microsoft.Win32.OpenFileDialog
                 {
-                    Filter = "Revit-Familienvorlage (*.rft)|*.rft",
+                    Filter = "Revit-Familienvorlage (*.rft)|*.rft|Alle Dateien (*.*)|*.*",
+                    FilterIndex = 1,
+                    DefaultExt = ".rft",
+                    CheckFileExists = true,
                     InitialDirectory = uiapp.Application.FamilyTemplatePath
                 };
                 if (picker.ShowDialog() != true)

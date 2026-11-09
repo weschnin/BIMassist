@@ -1,8 +1,10 @@
 using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 namespace BIMassist.Ava.Core;
 
@@ -14,14 +16,37 @@ public static class TemplateJson
     {
         WriteIndented = true,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-        RespectNullableAnnotations = true,
-        RespectRequiredConstructorParameters = true,
+        // .NET 8 supports required-property metadata, but not the .NET 9+
+        // RespectRequiredConstructorParameters/RespectNullableAnnotations switches.
+        // CheckJson checks nulls (including collection elements) before migration.
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { ConfigureStrictContract } },
         Converters = {
             new ExactEnumConverter<ParameterKind>(), new ExactEnumConverter<ParameterScope>(),
             new ExactEnumConverter<ConditionOperator>(), new ExactEnumConverter<OperandKind>(),
             new ExactEnumConverter<QuantityKind>()
         }
     };
+    private static void ConfigureStrictContract(JsonTypeInfo type)
+    {
+        if (type.Kind != JsonTypeInfoKind.Object || type.Type.Namespace != typeof(AvaTemplate).Namespace) return;
+        // Guard Serialize/Copy too. Import's CheckJson is deliberately stronger:
+        // it also rejects null collection elements and invalid mode-specific nulls.
+        var nullability = new NullabilityInfoContext();
+        foreach (var property in type.Properties)
+            if (property.AttributeProvider is PropertyInfo member &&
+                nullability.Create(member).ReadState == NullabilityState.NotNull && property.Get is { } get)
+                property.Get = owner => get(owner) ?? throw new JsonException("Null ist nicht erlaubt: " + type.Type.Name + "." + property.Name);
+        // Portable catalog records have one public constructor. Mirror required
+        // constructor parameters, not optional metadata such as X82SnapshotBase64.
+        var constructors = type.Type.GetConstructors();
+        if (constructors.Length != 1) return;
+        foreach (var parameter in constructors[0].GetParameters().Where(p => !p.HasDefaultValue))
+        {
+            var property = type.Properties.Single(p => p.PropertyType == parameter.ParameterType &&
+                string.Equals(p.Name, parameter.Name, StringComparison.OrdinalIgnoreCase));
+            property.IsRequired = true;
+        }
+    }
     private sealed class ExactEnumConverter<T> : JsonConverter<T> where T : struct, Enum
     {
         public override T Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)

@@ -3,6 +3,9 @@
 ###############################################################################
 * text=auto
 
+# Preserve official GAEB test schemas byte-for-byte, including vendor whitespace.
+tests/AvaX31Tests/Fixtures/Official/*.xsd -text -diff
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #

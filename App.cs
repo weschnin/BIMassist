@@ -293,7 +293,7 @@ namespace BIMassist
 
                 panel.AddSeparator();
 
-                // AVA: portable templates and derived checklists; no model writes or X31 export.
+                // AVA: portable templates, derived checklists and read-only model quantity export.
                 PanelgroupData = new PulldownButtonData("AVA", "AVA")
                 {
                     ToolTip = "AVA-Vorlagen und Prüfvorschriften",
@@ -307,6 +307,14 @@ namespace BIMassist
                 {
                     ToolTip = "BGK und Typmarkierungen mit LV-Positionen verknüpfen",
                     LongDescription = "Lädt Stamm-LV, BGK-Struktur und Parameterkatalog. Bearbeitet portable AVA-Vorlagen und erzeugt daraus Prüfvorschriften. Verändert keine Revit-Elemente und führt noch keine Modellprüfung oder X31-Ausgabe aus.",
+                };
+                pulldownGroup.AddPushButton(btnData);
+
+                btnData = new PushButtonData("AVA Mengenermittlung", "Mengenermittlung",
+                    Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaQuantityTakeoffCommand")
+                {
+                    ToolTip = "Mengen gemäß gespeicherter AVA-Vorlage ermitteln und als X31 speichern",
+                    LongDescription = "Wertet BGK, Typen und UND-Bedingungen der zuletzt gespeicherten Vorlage an den Modellelementen im aktuellen Hauptmodell aus. Jede Leistungsposition nutzt ihre eigene Menge. Verknüpfte Modelle sind ausgeschlossen; Fehler verhindern die Ausgabe. Keine Modelländerungen.",
                 };
                 pulldownGroup.AddPushButton(btnData);
 

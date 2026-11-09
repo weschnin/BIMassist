@@ -86,10 +86,11 @@ Typnummer aus `ALL_MODEL_TYPE_COMMENTS`, jeweils am Typ. Ein lokales
 `AVA_Anzahl / NUMBER` ist ausdrücklich nicht dasselbe wie ein gemeinsamer
 Parameter gleichen Namens mit `INTEGER`; es gibt keinen stillen Fallback.
 
-**Grenzen:** Die Prüfliste beschreibt Anforderungen, nicht bereits ermittelte
+**Grenzen des Vorlageneditors:** Die Prüfliste beschreibt Anforderungen, nicht bereits ermittelte
 Modellfehler. Der Prüfumfang ist bisher eine Beschreibung, noch kein ausführbarer
-Kategorienfilter. Keine Modellprüfung, Parameterbindung, Mengenermittlung,
-Umrechnung/Rundung/Aggregation und kein X31-Export. Keine Prioritäten oder
+Kategorienfilter. Keine Modellprüfung oder Parameterbindung im Editor; für
+Mengenermittlung und X31 steht ab 2026.1.48 ein eigener AVA-Befehl bereit.
+Keine automatische Umrechnung der Ergebnisseinheit, keine Prioritäten oder
 Else-Regeln; mehrere Zuordnungen werden zur fachlichen Prüfung gekennzeichnet.
 Keine vollständige GAEB-XSD-Validierung. Unterstützte Mengenspezifikationen:
 Zahl/Ganzzahl, Länge, Fläche, Volumen, Winkel und Massendichte. Diese betreffen
@@ -152,8 +153,8 @@ Schema 1 und 2 werden beim Laden übernommen: jede alte Regel bleibt eine
 eigene Zuordnung mit einer Leistungsposition; IDs, Bedingungen und Quellen
 bleiben erhalten. Bestehende Dateien werden nicht ungefragt überschrieben.
 Die Prüfliste leitet für jede Position die eigene Menge und alle benötigten
-Formelparameter ab. Modellprüfung, automatische Modellmengenermittlung und
-X31 sind weiterhin nicht Bestandteil dieses Editors.
+Formelparameter ab. Modellprüfung und automatische Modellmengenermittlung
+bleiben vom Vorlageneditor getrennt; siehe den eigenen Befehl ab 2026.1.48.
 
 ## Mengeneinheit neuer AVA-Positionen (2026.1.46)
 
@@ -183,6 +184,81 @@ Bei direkt gelesenen Parametern und Formeleingängen muss die Leseeinheit
 weiterhin zur Parameterspezifikation passen. Fehlende Quellen und ungültige
 Formeln bleiben Fehler. Schema 3 bleibt unverändert; mit früheren Versionen
 können die nun zugelassenen Einheitenkombinationen nicht erneut bearbeitbar sein.
+
+## AVA-Arbeitsbereich, Dateidialoge und Mengenermittlung (2026.1.48)
+
+**Vorlagen wieder öffnen:** Der Editor merkt sich die zuletzt erfolgreich
+geöffnete oder gespeicherte Arbeitsdatei pro Windows-Benutzer und lädt sie
+beim nächsten Fensteröffnen erneut. Die Einstellung liegt unter
+`%LOCALAPPDATA%\BIMassist\ava-workspace.json`; die JSON-Vorlage wird dadurch
+nicht verschoben oder ungefragt überschrieben. Fehlende oder beschädigte Dateien
+werden sichtbar gemeldet. Importierte und exportierte Kopien ändern den
+Arbeitsdateipfad nicht. Eine neue/importierte Vorlage zunächst speichern.
+
+Beim Schließen werden echte Datenänderungen geprüft: **Ja** speichert,
+**Nein** verwirft die ungespeicherten Änderungen, **Abbrechen** lässt das
+Fenster offen. Ein abgebrochener Dateidialog oder fehlgeschlagener
+Speichervorgang lässt das Fenster ebenfalls offen. Eine nur durchgesehene oder
+vollständig zurückgeänderte Vorlage löst keine Speicherabfrage aus.
+Dateidialoge bieten den passenden Dateityp zuerst und zusätzlich **Alle Dateien**:
+BGK `.xml`, Stamm-LV `.x82`, gemeinsame Parameter `.txt`, AVA-Vorlagen `.json`
+und Mengenermittlungen `.x31`; vorhandene CSV-/Familienvorlagen-Dialoge behalten
+ihren jeweiligen `.csv`-/`.rft`-Filter. Weitere Formate werden dadurch nicht
+automatisch von den Importern unterstützt.
+
+**AVA → Mengenermittlung** liest das aktuell geöffnete Hauptmodell und die
+zuletzt gespeicherte Arbeitsvorlage. Der Befehl verändert keine Revit-Elemente.
+Alle Modellelement-Instanzen werden betrachtet, nicht nur die Auswahl oder
+aktuelle Ansicht; verknüpfte Modelle und der Familieneditor sind ausgeschlossen.
+BGK und Typnummer werden exakt aus den konfigurierten Quellen gelesen.
+Fehlende Kennzeichnungen und nicht zugeordnete BGK-/Typkombinationen werden
+separat gezählt. Der beschreibende Prüfumfang wird nicht als Filter interpretiert;
+die Auswertung ist keine vollständige Modell- oder Parameterbindungsprüfung.
+
+Alle zutreffenden Zuordnungen wirken **additiv**, alle Bedingungen innerhalb
+einer Zuordnung als **UND**. Jede Leistungsposition berechnet ihre eigene
+Konstante, Parameter-Menge oder Formel je passendem Element. Revit-interne
+Parameterwerte werden in die ausdrücklich konfigurierte Leseeinheit umgerechnet;
+die Formel arbeitet mit diesen Zahlenwerten. Eine automatische Umrechnung
+von der Ergebniseinheit in die LV-Einheit erfolgt nicht. Bei unterschiedlichen
+Einheiten muss die unveränderte Ausgabe ausdrücklich bestätigt werden.
+Fehlende benötigte Parameter, falsche Spezifikationen, mehrdeutige lokale
+Quellen, ungültige Rechenoperationen oder fehlende Mengenvorschriften verhindern
+den gesamten Export statt einer stillen Teil- oder Nullmengenausgabe.
+
+Die Ausgabe verwendet **GAEB DA XML X31 / 3.3, Ausgabe 2023-01**,
+Verfahrensbeschreibung **REB23003-2009**. Berechnete Einzelmengen werden als
+REB-Formel 91 ausgegeben; Standard-Kommentarzeilen erläutern Quelle und eigene
+Ergebniseinheit. Die ursprünglichen LV-IDs, Teil-OZ und Gliederungsbreiten werden
+aus dem unveränderten X82-Snapshot übernommen, nicht aus Punktfolgen geraten.
+Der neue X82-Import bettet dafür die Originalbytes mit SHA-256 in die portable
+Vorlage ein. Bei älteren Vorlagen ohne diesen Snapshot das ursprüngliche
+Stamm-LV erneut importieren und die Vorlage speichern; die Zuordnungen bleiben
+bei unveränderten LV-IDs erhalten. Die Schema-Nummer bleibt 3, aber Vorlagen
+mit dem zusätzlichen Snapshot benötigen **2026.1.48 oder neuer**.
+
+Vor dem Schreiben wird das XML gegen die eingebetteten offiziellen X31-XSDs
+validiert. Der Speicherort wird mit einem `.x31`-Dateidialog abgefragt;
+Abbrechen erstellt keine Datei. Die lokale Schema- und Dateiprüfung ersetzt
+**nicht** die Importabnahme in California. Insbesondere LV-Zuordnung und
+Darstellung der REB-Erläuterungen dort mit einem kleinen Pilotexport prüfen.
+
+## Portable DLL für Revit 2026 (2026.1.48)
+
+Die DLL wird für `net8.0-windows` und die ursprünglichen Revit-2026-APIs
+gebaut. Ein ausschließlich für .NET 10 gebautes Add-in kann in einem älteren
+Revit-2026-Host mit `System.Runtime, Version=10.0.0.0` scheitern; die Installation
+einer zusätzlichen Laufzeit stellt den bereits laufenden Revit-Host nicht um.
+Die API-Referenzen sind reproduzierbar auf `Autodesk.Revit.SDK 2026.0.0.9999`
+festgelegt. Dieses NuGet-Paket ist **community-distribuiert**, nicht offiziell
+von Autodesk herausgegeben; die enthaltenen Original-API-DLLs werden nicht
+mit BIMassist ausgeliefert. Kein Verweis auf die vom lokalen Revit-Update
+abhängigen API-DLLs unter `Program Files`.
+
+Vor einem Austausch Revit vollständig schließen. Für einen anderen Rechner
+die zusammengehörenden `BIMassist.dll` und `BIMassist.addin` verwenden; keine
+RevitAPI-DLLs oder RevitMCP-Komponenten mitkopieren. Build, API-Metadaten- und
+Laufzeittests ersetzen keine interaktive Prüfung auf dem Zielrechner.
 
 ## Geometrie aus gewählten Flächen (2026.1.37)
 
