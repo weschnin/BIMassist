@@ -207,6 +207,23 @@ internal static class Program
             var empty = QuantityTakeoff.Calculate(template, []);
             Equal(0, empty.Examined); Equal(0, empty.Rows.Count);
         });
+        Test("BGK assignment value with the catalog description maps back to its exact key", () =>
+        {
+            var template = Template();
+            template.BgkCatalog = new(template.BgkCatalog.Source,
+                [new("02-10", "Bodenaushub", "Category", [new("110", "Type")])]);
+            template.Mappings[0].BgkKey = "02-10";
+            template.Mappings[0].TypeNumber = "110";
+            var result = QuantityTakeoff.Calculate(template,
+                [Element("composite-bgk", template, bgk: "02-10 Bodenaushub", type: "110")]);
+            Equal(1, result.Examined);
+            Equal(0, result.Unmarked);
+            Equal(0, result.Unmapped);
+            Equal(0, result.Errors.Count);
+            Equal(1, result.Rows.Count);
+            Equal("lv1", result.Rows[0].LvItemId);
+            Equal(2m, result.Rows[0].Value);
+        });
         Test("identification reader errors and mistyped identification are not hidden as unmarked", () =>
         {
             var template = Template();

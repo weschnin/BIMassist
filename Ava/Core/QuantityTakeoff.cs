@@ -64,6 +64,18 @@ public static class QuantityTakeoff
             if (string.IsNullOrWhiteSpace(bgk) || string.IsNullOrWhiteSpace(type)) { unmarked++; continue; }
             var rules = template.Mappings.Where(r => string.Equals(r.BgkKey, bgk, StringComparison.Ordinal)
                 && string.Equals(r.TypeNumber, type, StringComparison.Ordinal)).ToList();
+            if (rules.Count == 0)
+            {
+                // BIMassist's BGK assignment stores "<key> <description>" in Revit's
+                // Assembly Code field. Resolve only an exact, unique catalog label;
+                // do not accept arbitrary prefixes or trim/normalize model values.
+                var catalogMatches = template.BgkCatalog.Entries
+                    .Where(entry => string.Equals(bgk, entry.Key + " " + entry.Description, StringComparison.Ordinal))
+                    .Select(entry => entry.Key).Distinct(StringComparer.Ordinal).Take(2).ToList();
+                if (catalogMatches.Count == 1)
+                    rules = template.Mappings.Where(r => string.Equals(r.BgkKey, catalogMatches[0], StringComparison.Ordinal)
+                        && string.Equals(r.TypeNumber, type, StringComparison.Ordinal)).ToList();
+            }
             if (rules.Count == 0) { unmapped++; continue; }
             foreach (var rule in rules)
             {
