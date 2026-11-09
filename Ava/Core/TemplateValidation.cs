@@ -138,7 +138,7 @@ public static class TemplateValidator
                         if (quantity.Source != null) Error("QUANTITY_MODE", path, "Konstante Menge darf keine Parameterquelle enthalten.");
                         if (quantity.ConstantValue is not { } value || value <= 0 || (quantity.Unit == "St" && decimal.Truncate(value) != value))
                             Error("QUANTITY_VALUE", path, "Konstante Menge muss positiv und für St ganzzahlig sein.");
-                        if (!UnitCatalog.Compatible(quantity.Unit, quantity.Unit)) Error("QUANTITY_UNIT", path, "Konstante Menge benötigt eine unterstützte Einheit.");
+                        if (string.IsNullOrWhiteSpace(quantity.Unit)) Error("QUANTITY_UNIT", path, "Konstante Menge benötigt eine nichtleere deklarierte Mengeneinheit.");
                     }
                     else if (quantity.Kind == QuantityKind.Formula)
                     {
@@ -153,10 +153,11 @@ public static class TemplateValidator
                             if (!UnitCatalog.Allows(variable.Source.Spec, variable.Unit))
                                 Error("FORMULA", variablePath, "Numerische Parameterspezifikation und explizite passende Eingabeeinheit erforderlich.");
                         }
-                        if (!UnitCatalog.Compatible(quantity.Unit, quantity.Unit)) Error("QUANTITY_UNIT", path, "Formel benötigt eine unterstützte deklarierte Ergebniseinheit.");
+                        if (string.IsNullOrWhiteSpace(quantity.Unit)) Error("QUANTITY_UNIT", path, "Formel benötigt eine nichtleere deklarierte Ergebniseinheit.");
                     }
                     else Error("QUANTITY_MODE", path, "Unbekannte Mengenart.");
-                    if (lv != null && !UnitCatalog.Compatible(quantity.Unit, lv.Unit)) Error("LV_UNIT", path, "Mengeneinheit " + quantity.Unit + " passt nicht zur unterstützten LV-Einheit " + lv.Unit + ". Keine stille Umrechnung.");
+                    if (lv != null && !string.Equals(quantity.Unit, lv.Unit, StringComparison.Ordinal))
+                        Warn("LV_UNIT", path, "Mengeneinheit " + quantity.Unit + " und LV-Einheit " + lv.Unit + " sind unabhängig deklariert. Keine automatische Umrechnung oder Änderung von Werten und Einheiten.");
                 }
                 else Warn("QUANTITY_MISSING", path, "Keine Mengenquelle definiert; Zuordnung ist ein Entwurf.");
             }
@@ -193,11 +194,11 @@ public static class ChecklistBuilder
                 checks.Add(new("Zuordnung", context, "LV-ID, OZ und Einheit gegen Snapshot prüfen: " + position.LvItemId + " | " + lv?.Unit));
                 var requirement = position.Quantity switch
                 {
-                    { Kind: QuantityKind.Constant } quantity => quantity + "; fester Wert, kein Mengenparameter erforderlich. Deklarierte Einheit " + quantity.Unit + " → LV " + lv?.Unit + ". Bedingungen benötigen weiterhin ihre Parameterquellen. Modellauswertung, Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
-                    { Kind: QuantityKind.Formula } quantity => "Formel: " + quantity.Expression + "; deklarierte Ergebniseinheit " + quantity.Unit + " → LV " + lv?.Unit + ". Eingänge: " +
+                    { Kind: QuantityKind.Constant } quantity => quantity + "; fester Wert, kein Mengenparameter erforderlich. Eigene Mengeneinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + " (unabhängig; keine automatische Umrechnung). Bedingungen benötigen weiterhin ihre Parameterquellen. Modellauswertung, Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
+                    { Kind: QuantityKind.Formula } quantity => "Formel: " + quantity.Expression + "; deklarierte Ergebniseinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + " (unabhängig; keine automatische Umrechnung). Eingänge: " +
                         string.Join("; ", quantity.Variables.Select(v => v.Name + " = Lesen: " + v.Source + "; Eingabeeinheit " + v.Unit)) +
                         ". Werte beziehen sich auf die expliziten Eingabeeinheiten; keine automatische Einheitenumrechnung oder Dimensionsableitung. Fehlende / ungültige Eingänge sind Fehler, kein Fallback. Modellauswertung, Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
-                    { } quantity => "Lesen: " + quantity.Source + "; deklarierte Einheit " + quantity.Unit + " → LV " + lv?.Unit + ". Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen. Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
+                    { } quantity => "Lesen: " + quantity.Source + "; deklarierte Leseeinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + " (unabhängig; keine automatische Umrechnung). Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen. Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
                     null => "Menge nicht definiert; Zuordnung ist ein Entwurf."
                 };
                 checks.Add(new("Menge", context + " — nur bei erfüllten UND-Bedingungen", requirement));

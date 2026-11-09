@@ -92,8 +92,8 @@ Kategorienfilter. Keine Modellprüfung, Parameterbindung, Mengenermittlung,
 Umrechnung/Rundung/Aggregation und kein X31-Export. Keine Prioritäten oder
 Else-Regeln; mehrere Zuordnungen werden zur fachlichen Prüfung gekennzeichnet.
 Keine vollständige GAEB-XSD-Validierung. Unterstützte Mengenspezifikationen:
-Zahl/Ganzzahl, Länge, Fläche, Volumen, Winkel und Massendichte; nicht jede
-LV-Einheit ist damit bereits abgedeckt.
+Zahl/Ganzzahl, Länge, Fläche, Volumen, Winkel und Massendichte. Diese betreffen
+die Parameter-Leseeinheiten, nicht die Auswahl der zugeordneten LV-Positionen.
 
 Automatisierte AVA-Tests einschließlich WPF-Konstruktion/Layout:
 
@@ -139,8 +139,8 @@ ist relevant; Funktionen, Skripte, Potenzen und Tausendertrennzeichen sind nicht
 unterstützt. Fehlende oder unbenutzte Bindungen werden gemeldet.
 
 **Einheiten:** Die Formel rechnet mit Zahlenwerten in den deklarierten
-Eingabeeinheiten. Die Ergebniseinheit muss manuell passend zur LV-Position
-festgelegt werden. Keine automatische Umrechnung oder Dimensionsprüfung;
+Eingabeeinheiten. Die Ergebniseinheit wird für jede Position unabhängig
+festgelegt. Keine automatische Umrechnung oder Dimensionsprüfung;
 beispielsweise Länge in m × Breite in m mit Ergebniseinheit m² konfigurieren.
 Die optionale **Testrechnung** verwendet ausschließlich eingegebene Testwerte,
 keine Revit-Modellwerte. Diese Testwerte werden nicht in der Vorlage gespeichert.
@@ -162,7 +162,27 @@ beispielsweise **psch** statt einer pauschalen Vorbelegung mit **St**.
 Solange die Menge unberührt ist, folgt der Vorschlag der LV-Auswahl.
 Gespeicherte Mengen sowie ausdrücklich gewählte Einheiten oder eingegebene
 Zahlen/Formeln werden beim Wechsel der LV-Position nicht still umetikettiert.
-Widersprüchliche Einheiten bleiben ein Fehler; keine automatische Umrechnung.
+Die damalige Sperre bei abweichender LV-Einheit wird ab 2026.1.47 aufgehoben;
+es erfolgt weiterhin keine automatische Umrechnung.
+
+## Unabhängige LV-Positionen und Mengenvorschriften (2026.1.47)
+
+Jedem BGK/Typ können beliebige Positionen aus dem geladenen LV zugeordnet
+werden, unabhängig von deren Einheit. Jede Leistungsposition enthält ihre
+eigene Zahl, Parameterquelle oder Formel; Mengen werden weder von einer
+Nachbarposition übernommen noch über eine gemeinsame Einheit gekoppelt.
+Auch beim Bearbeiten einer vorhandenen Position bleibt ihre eigene Menge
+erhalten, wenn eine andere LV-Position ausgewählt wird.
+
+Für Zahlen und Formeln ist die Mengeneinheit frei eingebbar, etwa **Mt** oder
+eine eigene Bezeichnung. Die LV-Einheit ist nur ein Vorschlag und bleibt als
+unabhängige Kataloginformation erhalten. Unterschiedliche LV-/Mengeneinheiten
+erzeugen höchstens einen Hinweis, verhindern aber weder Übernahme noch
+Speichern/Import/Export. Es wird keine Umrechnung behauptet oder durchgeführt.
+Bei direkt gelesenen Parametern und Formeleingängen muss die Leseeinheit
+weiterhin zur Parameterspezifikation passen. Fehlende Quellen und ungültige
+Formeln bleiben Fehler. Schema 3 bleibt unverändert; mit früheren Versionen
+können die nun zugelassenen Einheitenkombinationen nicht erneut bearbeitbar sein.
 
 ## Geometrie aus gewählten Flächen (2026.1.37)
 

@@ -19,7 +19,7 @@ internal sealed class PositionEditorWindow : Window
     private readonly ParameterSourceEditor quantity;
     private readonly W.ComboBox quantityKind;
     private readonly W.TextBox constantValue;
-    private readonly W.ComboBox quantityUnit = new() { MinHeight = 30 };
+    private readonly W.ComboBox quantityUnit = new() { MinHeight = 30, IsEditable = true, IsTextSearchEnabled = false };
     private readonly W.TextBox expression = EditorUi.Input();
     private readonly W.ListBox variables = new() { MinHeight = 75, MaxHeight = 140, DisplayMemberPath = "Name" };
     private readonly List<FormulaVariable> bindings;
@@ -64,7 +64,8 @@ internal sealed class PositionEditorWindow : Window
         constantValue = EditorUi.Input((draft.Quantity?.ConstantValue ?? 1m).ToString(CultureInfo.InvariantCulture));
         EditorUi.Field(panel, "Feste Zahl (positiv, für St ganzzahlig)", constantValue);
         quantity = new ParameterSourceEditor(template.ParameterCatalog.Entries, draft.Quantity?.Source ?? new()); panel.Children.Add(quantity);
-        EditorUi.Field(panel, "Ergebniseinheit (zur LV-Einheit passend)", quantityUnit);
+        EditorUi.Field(panel, "Eigene Mengeneinheit (bei Parameter: Leseeinheit)", quantityUnit);
+        panel.Children.Add(EditorUi.Text("LV-Auswahl und Mengenvorschrift sind unabhängig. Für Zahl/Formel darf eine eigene Einheit eingegeben werden, auch Mt oder freie Bezeichnungen. Abweichungen zur LV-Einheit verhindern das Speichern nicht; keine automatische Umrechnung. Andere Leistungspositionen bleiben unverändert."));
         expression.Text = draft.Quantity?.Expression ?? ""; expression.MinHeight = 60; expression.AcceptsReturn = true; expression.TextWrapping = TextWrapping.Wrap;
         EditorUi.Field(formulaPanel, "Formel: +, −, *, / und Klammern; z. B. 2 * AVA_Laenge + 0.5", expression);
         formulaPanel.Children.Add(EditorUi.Text("Parameternamen mit Leerzeichen in [Klammern] schreiben. Jeder verwendete Name wird unten ausdrücklich einer Quelle und Eingabeeinheit zugeordnet. Die Formel rechnet mit diesen Zahlenwerten; Ergebniseinheit manuell festlegen. Keine automatische Umrechnung oder Dimensionsprüfung."));
@@ -92,11 +93,12 @@ internal sealed class PositionEditorWindow : Window
         formulaPanel.Children.Add(EditorUi.Button("Mit Testwerten berechnen", () => EditorUi.Guard(this, () => {
             preview.Text = ""; testValues.CommitEdit(); testValues.CommitEdit();
             var inputs = previewRows.ToDictionary(r => r.Name, r => ParseNumber(r.Value), StringComparer.Ordinal);
-            var value = EvaluatePreview(inputs); preview.Text = $"Testrechnung: {value.ToString(CultureInfo.GetCultureInfo("de-DE"))} {quantityUnit.SelectedItem} je Element – kein Modellwert";
+            var value = EvaluatePreview(inputs); preview.Text = $"Testrechnung: {value.ToString(CultureInfo.GetCultureInfo("de-DE"))} {quantityUnit.Text} je Element – kein Modellwert";
         })));
         formulaPanel.Children.Add(preview); panel.Children.Add(formulaPanel); RefreshBindings();
         bool preserveUnit = draft.Quantity != null;
         bool updatingUnits = false;
+        string lastAssignedUnit = "";
         void RefreshQuantity()
         {
             bool enabled = hasQuantity.IsChecked == true;
@@ -105,25 +107,32 @@ internal sealed class PositionEditorWindow : Window
             quantity.IsEnabled = enabled && kind == QuantityKind.Parameter; quantity.Visibility = kind == QuantityKind.Parameter ? Visibility.Visible : Visibility.Collapsed;
             formulaPanel.Visibility = kind == QuantityKind.Formula ? Visibility.Visible : Visibility.Collapsed; formulaPanel.IsEnabled = enabled;
             quantityUnit.IsEnabled = enabled;
-            var prior = quantityUnit.SelectedItem as string ?? draft.Quantity?.Unit;
+            // Editable ComboBox.Text can change before its inner TextBox is realized or raises a routed event.
+            if (quantityUnit.Text != lastAssignedUnit && !string.IsNullOrWhiteSpace(quantityUnit.Text)) preserveUnit = true;
+            var prior = quantityUnit.Text.Length > 0 ? quantityUnit.Text : draft.Quantity?.Unit;
             // Only an untouched default follows LV selection; never relabel a saved or edited quantity.
             var selectedUnit = preserveUnit ? prior : (lv.SelectedItem as LvEntry)?.Unit ?? prior;
             updatingUnits = true;
             try
             {
                 try { quantityUnit.ItemsSource = kind == QuantityKind.Parameter ? UnitCatalog.ForSpec(quantity.ReadSource().Spec)
-                    : new[] { "NUMBER", "LENGTH", "AREA", "VOLUME", "ANGLE", "MASS_DENSITY" }.SelectMany(UnitCatalog.ForSpec).Concat(new[] { "m²", "m³" }).Distinct().ToArray(); }
+                    : new[] { "NUMBER", "LENGTH", "AREA", "VOLUME", "ANGLE", "MASS_DENSITY" }.SelectMany(UnitCatalog.ForSpec)
+                        .Concat(new[] { (lv.SelectedItem as LvEntry)?.Unit ?? "", selectedUnit ?? "" }).Where(u => !string.IsNullOrWhiteSpace(u)).Distinct().ToArray(); }
                 catch (InvalidDataException) { quantityUnit.ItemsSource = Array.Empty<string>(); }
                 quantityUnit.SelectedItem = selectedUnit;
+                quantityUnit.Text = selectedUnit ?? "";
+                lastAssignedUnit = quantityUnit.Text;
             }
             finally { updatingUnits = false; }
             preview.Text = "";
         }
         quantityKind.SelectionChanged += (_, _) => RefreshQuantity(); quantity.SourceChanged += RefreshQuantity;
         hasQuantity.Checked += (_, _) => RefreshQuantity(); hasQuantity.Unchecked += (_, _) => RefreshQuantity();
-        void QuantityEdited() { if (quantityUnit.SelectedItem != null) preserveUnit = true; preview.Text = ""; }
+        void QuantityEdited() { if (!string.IsNullOrWhiteSpace(quantityUnit.Text)) preserveUnit = true; preview.Text = ""; }
         expression.TextChanged += (_, _) => QuantityEdited(); constantValue.TextChanged += (_, _) => QuantityEdited();
         quantityUnit.SelectionChanged += (_, _) => { if (!updatingUnits) QuantityEdited(); };
+        // Realizing the editable TextBox also raises TextChanged for the untouched assigned default.
+        quantityUnit.AddHandler(W.Primitives.TextBoxBase.TextChangedEvent, new W.TextChangedEventHandler((_, _) => { if (!updatingUnits && quantityUnit.Text != lastAssignedUnit) QuantityEdited(); }));
         lv.SelectionChanged += (_, _) => RefreshQuantity();
         RefreshQuantity(); tabs.Items.Add(new W.TabItem { Header = "2  Eigene Menge / Formel", Content = EditorUi.Scroll(panel) }); Content = root;
     }
@@ -146,7 +155,7 @@ internal sealed class PositionEditorWindow : Window
         var result = TemplateJson.Copy(draft); result.LvItemId = item.Id; result.Quantity = null;
         if (hasQuantity.IsChecked == true)
         {
-            var kind = EditorUi.Selected<QuantityKind>(quantityKind); var unit = quantityUnit.SelectedItem as string ?? "";
+            var kind = EditorUi.Selected<QuantityKind>(quantityKind); var unit = quantityUnit.Text;
             result.Quantity = kind switch {
                 QuantityKind.Constant => new() { Kind = kind, Source = null, ConstantValue = ParseNumber(constantValue.Text), Unit = unit },
                 QuantityKind.Parameter => new() { Kind = kind, Source = quantity.ReadSource(), Unit = unit },

@@ -48,7 +48,8 @@ internal static class Program
             var explicitUnit = added.BuildPosition();
             Check(explicitUnit.Quantity!.Unit == "m", "LV selection silently relabels an explicitly chosen quantity unit");
             multiple.Mappings[0].Positions[1] = explicitUnit;
-            Check(TemplateValidator.Validate(multiple).Any(d => d.Code == "LV_UNIT" && d.Severity == DiagnosticSeverity.Error), "Explicit mismatched units are no longer rejected"); added.Close();
+            Check(TemplateValidator.Validate(multiple).Any(d => d.Code == "LV_UNIT" && d.Severity == DiagnosticSeverity.Warning), "Independent LV/quantity unit difference is not explained");
+            TemplateEditor.EnsureValid(multiple); added.Close();
             var saved = new PositionEditorWindow(template, result);
             Field<ListBox>(saved, "lv").SelectedItem = lump;
             Check(saved.BuildPosition().Quantity!.Unit == "St", "Saved unit silently changed when selecting another LV"); saved.Close();

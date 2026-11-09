@@ -43,8 +43,7 @@ internal static class Program
                     (new() { Source = null, Unit = "St" }, "QUANTITY_MODE"),
                     (new() { Source = ValidTemplate().Mappings[0].Positions[0].Quantity!.Source, ConstantValue = 1, Unit = "St" }, "QUANTITY_MODE"),
                     (new() { Kind = (QuantityKind)99, Unit = "St" }, "QUANTITY_MODE"),
-                    (new() { Kind = QuantityKind.Constant, Source = null, ConstantValue = 1, Unit = "unsupported" }, "QUANTITY_UNIT"),
-                    (new() { Kind = QuantityKind.Constant, Source = null, ConstantValue = 1, Unit = "m" }, "LV_UNIT")
+                    (new() { Kind = QuantityKind.Constant, Source = null, ConstantValue = 1, Unit = " " }, "QUANTITY_UNIT")
                 };
                 foreach (var item in cases)
                 {

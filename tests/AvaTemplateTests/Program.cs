@@ -114,11 +114,14 @@ internal static class Program
                 c.Source.Spec = "TEXT"; c.Operand = OperandKind.Text; c.Text = "001"; Check(!TemplateValidator.Validate(p).Any(d => d.Severity == DiagnosticSeverity.Error), "valid text rejected");
                 c.Source.Spec = "MATERIAL"; Check(TemplateValidator.Validate(p).Any(d => d.Code == "CONDITION_TYPE"), "unsupported material accepted");
             });
-            Test("Quantity validates spec source unit and LV dimensional compatibility", () => {
+            Test("Quantity validates source read units independently of LV metadata", () => {
                 var p = ValidTemplate(); p.Mappings[0].Positions[0].Quantity!.Unit = "m";
-                Check(TemplateValidator.Validate(p).Any(d => d.Code == "QUANTITY_UNIT"), "Number in metres accepted");
+                Check(TemplateValidator.Validate(p).Any(d => d.Code == "QUANTITY_UNIT" && d.Severity == DiagnosticSeverity.Error), "Number in metres accepted");
                 p.Mappings[0].Positions[0].Quantity!.Source!.Spec = "LENGTH";
-                Check(TemplateValidator.Validate(p).Any(d => d.Code == "LV_UNIT"), "length to pieces accepted");
+                var diagnostics = TemplateValidator.Validate(p);
+                Check(diagnostics.Any(d => d.Code == "LV_UNIT" && d.Severity == DiagnosticSeverity.Warning), "independent length/piece unit hint missing");
+                Check(!diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error), "LV metadata blocked a valid typed read");
+                TemplateEditor.EnsureValid(p);
             });
             Test("Checklist uses independent scope and branch-specific reading requirements", () => {
                 var p = ValidTemplate(); p.Mappings[0].Conditions.Add(new() { Source = new() { Kind = ParameterKind.LocalFamily, Name = "Flag", Spec = "YESNO" }, Operand = OperandKind.Boolean, Boolean = true });
