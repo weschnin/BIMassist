@@ -20,6 +20,7 @@ internal static class Program
             var first = new MappingPosition { LvItemId = "pieces", Quantity = new() { Kind = QuantityKind.Constant, Source = null, ConstantValue = 1, Unit = "St" } };
             var second = new MappingPosition { LvItemId = "length", Quantity = new() { Kind = QuantityKind.Formula, Source = null, Unit = "m", Expression = "2 * AVA_Laenge + 0.5", Variables = [new() { Name = "AVA_Laenge", Source = new() { Kind = ParameterKind.LocalFamily, Name = "AVA_Laenge", Spec = "LENGTH", Scope = ParameterScope.Instance }, Unit = "m" }] } };
             t.LvCatalog.Entries.Add(new("nested", "b", ["01", "10", "010"], "01.10.010", "Ventil", "Detail", "St"));
+            t.LvCatalog = CatalogWithTitleSnapshot(t.LvCatalog.Entries);
             var rule = new MappingRule { BgkKey = "44-40", TypeNumber = "110", Positions = [first] }; t.Mappings.Add(rule);
             var group = new MappingEditorWindow(t, rule); group.UpsertPosition(second);
             Check(group.BuildRule().Positions.Count == 2 && rule.Positions.Count == 1, "child add mutates original/loses sibling");
@@ -41,15 +42,15 @@ internal static class Program
             Check(Field<TextBox>(hierarchicalPosition, "lvDetail").Text.Contains("Flansch", StringComparison.Ordinal),
                 "Position editor does not show details for the selected LV position");
             var positionLvRoot = (TreeViewItem)positionLvTree.Items[0];
-            var positionLvTitle = positionLvRoot.Items.Cast<TreeViewItem>().First(x => ((TextBlock)x.Header).Text.Contains("Titel 01"));
+            var positionLvTitle = positionLvRoot.Items.Cast<TreeViewItem>().First(x => ((TextBlock)x.Header).Text == "01 Baustelleneinrichtung");
             Field<Button>(hierarchicalPosition, "lvCollapseAll").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(!positionLvTitle.IsExpanded, "Position editor LV collapse-all did not collapse titles");
             Field<Button>(hierarchicalPosition, "lvExpandAll").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(positionLvTitle.IsExpanded, "Position editor LV expand-all did not expand titles");
-            var nestedPositionTitle = FindTreeItem(positionLvTree, "Titel 01.10"); nestedPositionTitle.IsExpanded = false;
+            var nestedPositionTitle = FindTreeItem(positionLvTree, "10 Unter titel"); nestedPositionTitle.IsExpanded = false;
             Field<TextBox>(hierarchicalPosition, "lvSearch").Text = "Leistung";
             Field<TextBox>(hierarchicalPosition, "lvSearch").Text = "";
-            nestedPositionTitle = FindTreeItem(positionLvTree, "Titel 01.10");
+            nestedPositionTitle = FindTreeItem(positionLvTree, "10 Unter titel");
             Check(!nestedPositionTitle.IsExpanded, "LV title expansion state was lost after filtering and refreshing the tree");
             if (args.Length > 1 && args[0] == "--render") RenderContent(hierarchicalPosition, args[1], "position-editor.png", 1050, 850);
             hierarchicalPosition.Close();
@@ -66,10 +67,10 @@ internal static class Program
             var bgkTree = CatalogTreeModel.BuildBgk(t, "110");
             Check(bgkTree.Count == 1 && bgkTree[0].Children.Single().Label.Contains("Typ 110"), "BGK source tree does not retain BGK → type hierarchy or filtering");
             var lvTree = CatalogTreeModel.BuildLv(t);
-            Check(lvTree.Count == 1 && lvTree[0].Children.Any(x => x.Label.Contains("Titel 01")), "LV source tree lacks title hierarchy");
-            var lvTitle = lvTree[0].Children.Single(x => x.Label.Contains("Titel 01"));
+            Check(lvTree.Count == 1 && lvTree[0].Children.Any(x => x.Label == "01 Baustelleneinrichtung"), "LV source tree does not show the source title short text");
+            var lvTitle = lvTree[0].Children.Single(x => x.Label == "01 Baustelleneinrichtung");
             Check(lvTitle.Children.Any(x => x.Label.StartsWith("OZ 01 —", StringComparison.Ordinal)), "LV leaves do not show the OZ number");
-            var nestedTitle = lvTitle.Children.Single(x => x.Label == "Titel 01.10");
+            var nestedTitle = lvTitle.Children.Single(x => x.Label == "10 Unter titel");
             Check(nestedTitle.Children.Single().Label.StartsWith("OZ 01.10.010 —", StringComparison.Ordinal), "Nested LV position does not show its OZ number");
             Check(!nestedTitle.Children.Single().Label.Contains("nested", StringComparison.Ordinal), "LV internal key/GUID leaked into the visible row");
             var picker = new LvPositionPickerWindow(t);
@@ -82,14 +83,14 @@ internal static class Program
             var interactivePicker = new LvPositionPickerWindow(t) { TitleSelectionPrompt = _ => true };
             var interactiveTree = Field<TreeView>(interactivePicker, "tree");
             var interactiveRoot = (TreeViewItem)interactiveTree.Items[0]; interactiveRoot.IsExpanded = false;
-            var interactiveTitle = FindTreeItem(interactiveTree, "Titel 01");
+            var interactiveTitle = FindTreeItem(interactiveTree, "01 Baustelleneinrichtung");
             var titleCheck = ((StackPanel)interactiveTitle.Header).Children.OfType<CheckBox>().Single();
             titleCheck.IsChecked = true; titleCheck.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Check(interactivePicker.SelectedPositionIds.Count == 2 && !interactiveRoot.IsExpanded,
                 "Title checkbox did not select all descendants or reset the collapsed tree");
             int filteredConfirmationCount = 0;
             var filteredPicker = new LvPositionPickerWindow(t) { TitleSelectionPrompt = count => { filteredConfirmationCount = count; return true; } };
-            var filteredTopTitle = CatalogTreeModel.BuildLv(t, "OZ 01.10.010")[0].Children.Single(x => x.Label.Contains("Titel 01"));
+            var filteredTopTitle = CatalogTreeModel.BuildLv(t, "OZ 01.10.010")[0].Children.Single(x => x.Label == "01 Baustelleneinrichtung");
             Check(filteredPicker.SetNodeChecked(filteredTopTitle, true) && filteredConfirmationCount == 2,
                 "Filtering the LV caused title selection to omit hidden descendant positions");
             Check(CatalogTreeModel.GetPositionIds(nestedTitle).SequenceEqual(new[] { "nested" }), "Nested title descendant selection is incorrect");
@@ -129,14 +130,14 @@ internal static class Program
                 var lvRoot = (TreeViewItem)catalogTree.Items[0];
                 Check(lvRoot.Header is TextBlock rootLabel && rootLabel.Text.StartsWith("LV ", StringComparison.Ordinal), "LV source tree root missing");
                 Check(lvRoot.Items.Count >= 1, "LV category hierarchy not rendered");
-                var category = lvRoot.Items.Cast<TreeViewItem>().Single(x => ((TextBlock)x.Header).Text.Contains("Titel 01"));
-                Check(category.Header is TextBlock categoryLabel && categoryLabel.Text.Contains("Titel"), "LV title node not rendered");
+                var category = lvRoot.Items.Cast<TreeViewItem>().Single(x => ((TextBlock)x.Header).Text == "01 Baustelleneinrichtung");
+                Check(category.Header is TextBlock categoryLabel && categoryLabel.Text == "01 Baustelleneinrichtung", "LV title source short text not rendered");
                 category.IsExpanded = false;
                 var catalogSearch = Field<TextBox>(main, "catalogSearch");
                 catalogSearch.Text = "OZ 02 — Leistung";
                 catalogSearch.Text = "";
                 category = ((TreeViewItem)catalogTree.Items[0]).Items.Cast<TreeViewItem>()
-                    .Single(x => ((TextBlock)x.Header).Text.Contains("Titel 01"));
+                    .Single(x => ((TextBlock)x.Header).Text == "01 Baustelleneinrichtung");
                 Check(!category.IsExpanded, "Catalog title expansion state was lost after filtering and refreshing the tree");
                 category.IsExpanded = false;
                 ((Button)main.FindName("CatalogExpandAll")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -198,6 +199,12 @@ internal static class Program
         using var file = File.Create(Path.Combine(directory, name)); png.Save(file);
     }
     private static T Field<T>(object o, string name) => (T)(o.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(o) ?? throw new Exception("Missing UI field: " + name));
+    private static Catalog<LvEntry> CatalogWithTitleSnapshot(List<LvEntry> entries)
+    {
+        const string xml = "<GAEB xmlns=\"http://www.gaeb.de/GAEB_DA_XML/DA82/3.3\"><BoQ ID=\"b\"><BoQInfo><Name>Test-LV</Name></BoQInfo><BoQBody><BoQCtgy ID=\"title01\" RNoPart=\"01\"><LblTx><p>Baustelleneinrichtung</p></LblTx><BoQBody><Itemlist><Item ID=\"pieces\" RNoPart=\"01\"/></Itemlist><BoQCtgy ID=\"title10\" RNoPart=\"10\"><LblTx><div>Unter</div><br/><div>titel</div></LblTx><BoQBody><Itemlist><Item ID=\"nested\" RNoPart=\"010\"/></Itemlist></BoQBody></BoQCtgy></BoQBody></BoQCtgy><BoQCtgy ID=\"title02\" RNoPart=\"02\"><LblTx><p>Weitere Leistungen</p></LblTx><BoQBody><Itemlist><Item ID=\"length\" RNoPart=\"02\"/></Itemlist></BoQBody></BoQCtgy></BoQBody></BoQ></GAEB>";
+        var bytes = System.Text.Encoding.UTF8.GetBytes(xml);
+        return new(new("test.x82", "GAEB DA82/3.3", Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), Convert.ToBase64String(bytes)), entries);
+    }
     private static TreeViewItem FindTreeItem(ItemsControl parent, string label)
     {
         TreeViewItem? Search(ItemsControl current)

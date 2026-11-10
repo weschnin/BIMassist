@@ -73,10 +73,10 @@ internal static class CatalogTreeModel
         foreach (var category in body.Elements(Ns + "BoQCtgy"))
         {
             var part = (string?)category.Attribute("RNoPart") ?? "?";
-            var title = category.Elements().Where(element => element.Name == Ns + "OutlineText" || element.Name == Ns + "DetailTxt")
+            var title = category.Elements().Where(element => element.Name == Ns + "LblTx" || element.Name == Ns + "OutlineText" || element.Name == Ns + "DetailTxt")
                 .Select(ReadText).FirstOrDefault(text => !string.IsNullOrWhiteSpace(text)) ?? "";
             var node = new CatalogTreeNode("category:" + category.Attribute("ID")?.Value,
-                "Titel " + part + (title.Length == 0 ? "" : " — " + title), (string?)category.Attribute("ID") ?? "");
+                part + (title.Length == 0 ? "" : " " + title), (string?)category.Attribute("ID") ?? "");
             parent.Children.Add(node);
             foreach (var child in category.Elements(Ns + "BoQBody")) AddBody(child, node, entries);
         }
@@ -111,7 +111,7 @@ internal static class CatalogTreeModel
                 var path = entry.BoqId + "\0" + sectionNumber;
                 if (!pathNodes.TryGetValue(path, out var section))
                 {
-                    section = new("section:" + path, "Titel " + sectionNumber);
+                    section = new("section:" + path, sectionNumber);
                     pathNodes.Add(path, section); parent.Children.Add(section);
                 }
                 parent = section;
@@ -157,7 +157,17 @@ internal static class CatalogTreeModel
     private static string ReadText(XElement? element)
     {
         if (element == null) return "";
-        var paragraphs = element.Descendants().Where(node => node.Name.LocalName == "p").Select(node => node.Value.Trim()).Where(text => text.Length > 0).ToArray();
-        return paragraphs.Length == 0 ? element.Value.Trim() : string.Join(" ", paragraphs);
+        string ReadNode(XNode node) => node switch
+        {
+            XText text => text.Value,
+            XElement child when child.Name.LocalName == "br" => " ",
+            XElement child =>
+                (child.Name.LocalName is "p" or "div" ? " " : "") +
+                string.Concat(child.Nodes().Select(ReadNode)) +
+                (child.Name.LocalName is "p" or "div" ? " " : ""),
+            _ => ""
+        };
+        var raw = string.Concat(element.Nodes().Select(ReadNode));
+        return string.Join(" ", raw.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     }
 }

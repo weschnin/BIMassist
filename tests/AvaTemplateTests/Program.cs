@@ -123,6 +123,17 @@ internal static class Program
                 Check(!diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error), "LV metadata blocked a valid typed read");
                 TemplateEditor.EnsureValid(p);
             });
+            Test("Missing quantity warning identifies the exact LV position", () => {
+                var p = ValidTemplate(); p.Mappings[0].Positions[0].Quantity = null;
+                p.LvCatalog.Entries.Add(new("id2", "b", ["09", "25", "0110"], "09.25.0110", "Rohrbogen", "", "St"));
+                p.Mappings[0].Positions.Add(new() { LvItemId = "id2", Quantity = null });
+                var warnings = TemplateValidator.Validate(p).Where(d => d.Code == "QUANTITY_MISSING").ToArray();
+                Check(warnings.Length == 2
+                    && warnings.Any(d => d.Path.Contains("09.25.0100 — Rohr", StringComparison.Ordinal))
+                    && warnings.Any(d => d.Path.Contains("09.25.0110 — Rohrbogen", StringComparison.Ordinal))
+                    && warnings.All(d => d.Message.Contains("diese LV-Position", StringComparison.Ordinal)),
+                    "Missing quantity warnings do not identify each position independently");
+            });
             Test("Checklist uses independent scope and branch-specific reading requirements", () => {
                 var p = ValidTemplate(); p.Mappings[0].Conditions.Add(new() { Source = new() { Kind = ParameterKind.LocalFamily, Name = "Flag", Spec = "YESNO" }, Operand = OperandKind.Boolean, Boolean = true });
                 var checks = ChecklistBuilder.Build(p);

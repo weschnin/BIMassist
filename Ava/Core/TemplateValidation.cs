@@ -119,6 +119,7 @@ public static class TemplateValidator
                 if (position.Id == Guid.Empty) Error("POSITION_ID", path, "Positions-ID fehlt.");
                 var lv = template.LvCatalog.Entries.FirstOrDefault(l => l.Id == position.LvItemId);
                 if (lv == null) Error("LV_REFERENCE", path, "LV-ID nicht im Katalog: " + position.LvItemId);
+                else path += " / OZ " + lv.Ordinal + " — " + lv.Text;
                 if (position.Quantity is { } quantity)
                 {
                     if (quantity.Kind != QuantityKind.Formula && (quantity.Expression.Length > 0 || quantity.Variables.Count > 0))
@@ -159,7 +160,7 @@ public static class TemplateValidator
                     if (lv != null && !string.Equals(quantity.Unit, lv.Unit, StringComparison.Ordinal))
                         Warn("LV_UNIT", path, "Mengeneinheit " + quantity.Unit + " und LV-Einheit " + lv.Unit + " sind unabhängig deklariert. Keine automatische Umrechnung oder Änderung von Werten und Einheiten.");
                 }
-                else Warn("QUANTITY_MISSING", path, "Keine Mengenquelle definiert; Zuordnung ist ein Entwurf.");
+                else Warn("QUANTITY_MISSING", path, "Für diese LV-Position ist noch keine Mengenart (Parameter, feste Zahl oder Formel) festgelegt; Zuordnung ist ein Entwurf.");
             }
         }
         foreach (var group in template.Mappings.GroupBy(m => (m.BgkKey, m.TypeNumber)).Where(g => g.Count() > 1))
