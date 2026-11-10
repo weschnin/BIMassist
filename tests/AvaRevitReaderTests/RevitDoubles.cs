@@ -18,7 +18,7 @@ public static class UnitTypeId
 }
 public static class UnitUtils
 {
-    public static double ConvertFromInternalUnits(double value, ForgeTypeId unit) => value * (unit.Value switch
+    public static double ConvertFromInternalUnits(double value, ForgeTypeId unit) => !double.IsFinite(value) ? throw new ArgumentException("Nonfinite test input") : value * (unit.Value switch
     {
         "mm" => 304.8, "cm" => 30.48, "m" => 0.3048, "km" => 0.0003048,
         "mm2" => 92903.04, "cm2" => 929.0304, "m2" => 0.09290304,

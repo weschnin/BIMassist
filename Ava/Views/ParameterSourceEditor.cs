@@ -65,11 +65,11 @@ internal sealed class ParameterSourceEditor : W.StackPanel
         EditorUi.Field(localPanel, "Exakter Parametername (unverändert)", name);
         EditorUi.Field(localPanel, "Explizite Spezifikation", spec);
         localHint = EditorUi.Text("Liest ausschließlich einen lokalen Familienparameter auf Instanz oder Typ. Gleichnamige gemeinsame und eingebaute Parameter werden nicht als Ersatz verwendet.");
-        nameHint = EditorUi.Text("Liest einen einzigen Treffer mit diesem Namen und dieser Spezifikation aus der gewählten Instanz bzw. dem Typ – gemeinsam, lokal oder eingebaut. Bei mehreren passenden Treffern bricht die Mengenermittlung ab; dann eine exakte GUID bzw. BuiltIn-Kennung wählen. Eingebaute Namen hängen von der Revit-Sprache ab. Verfügbarkeit im Modell wird hier nicht geprüft.");
+        nameHint = EditorUi.Text("Liest einen einzigen Treffer mit diesem Namen und dieser Spezifikation aus der gewählten Instanz bzw. dem Typ – gemeinsam, lokal oder eingebaut. Bei mehreren passenden Treffern bricht die Mengenermittlung ab; dann eine eindeutige lokale, GUID- oder BuiltIn-Quelle wählen. Eingebaute Namen hängen von der Revit-Sprache ab. Verfügbarkeit im Modell wird hier nicht geprüft.");
         localPanel.Children.Add(localHint);
         localPanel.Children.Add(nameHint);
-        builtIn = new W.ComboBox { ItemsSource = new[] { "ASSEMBLY_CODE", "ALL_MODEL_TYPE_COMMENTS", "ALL_MODEL_DESCRIPTION" }, SelectedItem = initial.BuiltInId, MinHeight = 30, Margin = new Thickness(0, 0, 0, 8) };
-        EditorUi.Field(builtInPanel, "BuiltIn-Kennung (TEXT, Typ)", builtIn);
+        builtIn = new W.ComboBox { ItemsSource = new[] { "ASSEMBLY_CODE", "ALL_MODEL_TYPE_COMMENTS", "ALL_MODEL_DESCRIPTION", "HOST_VOLUME_COMPUTED" }, SelectedItem = initial.BuiltInId, MinHeight = 30, Margin = new Thickness(0, 0, 0, 8) };
+        EditorUi.Field(builtInPanel, "BuiltIn-Kennung (Text am Typ oder Volumen an Instanz)", builtIn);
         Children.Add(sharedPanel); Children.Add(localPanel); Children.Add(builtInPanel);
         EditorUi.Field(this, "Geltung / Lesequelle", scope);
         kind.SelectionChanged += (_, _) => { RefreshVisibility(); SourceChanged?.Invoke(); };
@@ -77,7 +77,13 @@ internal sealed class ParameterSourceEditor : W.StackPanel
         spec.SelectionChanged += (_, _) => SourceChanged?.Invoke();
         scope.SelectionChanged += (_, _) => SourceChanged?.Invoke();
         name.TextChanged += (_, _) => SourceChanged?.Invoke();
-        builtIn.SelectionChanged += (_, _) => SourceChanged?.Invoke();
+        builtIn.SelectionChanged += (_, _) =>
+        {
+            if (builtIn.SelectedItem is string id)
+                scope.SelectedItem = scope.Items.OfType<W.ComboBoxItem>().Single(item => (ParameterScope)item.Tag ==
+                    (id == "HOST_VOLUME_COMPUTED" ? ParameterScope.Instance : ParameterScope.Type));
+            SourceChanged?.Invoke();
+        };
         search.TextChanged += (_, _) => {
             var selected = shared.SelectedItem;
             shared.ItemsSource = catalog.Where(p => p.ToString().Contains(search.Text, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -106,7 +112,9 @@ internal sealed class ParameterSourceEditor : W.StackPanel
         if (value == ParameterKind.BuiltIn)
         {
             if (builtIn.SelectedItem is not string id) throw new InvalidDataException("BuiltIn-Kennung auswählen.");
-            return new() { Kind = value, BuiltInId = id, Name = id == "ASSEMBLY_CODE" ? "Baugruppenkennzeichen" : id == "ALL_MODEL_TYPE_COMMENTS" ? "Typnummer" : "Beschreibung", Spec = "TEXT", Scope = selectedScope };
+            return new() { Kind = value, BuiltInId = id,
+                Name = id switch { "ASSEMBLY_CODE" => "Baugruppenkennzeichen", "ALL_MODEL_TYPE_COMMENTS" => "Typnummer", "HOST_VOLUME_COMPUTED" => "Volumen", _ => "Beschreibung" },
+                Spec = id == "HOST_VOLUME_COMPUTED" ? "VOLUME" : "TEXT", Scope = selectedScope };
         }
         if (string.IsNullOrWhiteSpace(name.Text) || spec.SelectedItem is not string selectedSpec) throw new InvalidDataException("Exakten Parameternamen und Spezifikation angeben.");
         return new() { Kind = value, Name = name.Text, Spec = selectedSpec, Scope = selectedScope };

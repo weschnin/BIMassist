@@ -112,7 +112,10 @@ public static class RevitQuantityReader
                     // parameters. On the selected owner, never choose an arbitrary duplicate.
                     var named = owner.GetParameters(source.Name);
                     var matches = named.Where(p => p.Definition.GetDataType().Equals(spec)).ToList();
-                    if (matches.Count > 1) throw Invalid(source, "Mehrere Parameter mit diesem Namen und dieser Spezifikation im gewählten Geltungsbereich; keine eindeutige Quelle. Bitte GUID oder BuiltIn-Kennung verwenden.");
+                    if (matches.Count > 1) throw Invalid(source, "Mehrere Parameter mit diesem Namen und dieser Spezifikation im gewählten Geltungsbereich; keine eindeutige Quelle. "
+                        + "Treffer: " + string.Join("; ", matches.Take(6).Select(p => DescribeCandidate(p, source.Spec)))
+                        + (matches.Count > 6 ? $"; weitere {matches.Count - 6} Treffer" : "")
+                        + ". Bitte anhand der IDs und Werte eine eindeutige Quelle (lokale Familie, GUID oder BuiltIn-Kennung) auswählen; keine automatische Auswahl.");
                     if (matches.Count == 0 && named.Count > 0)
                         throw Invalid(source, "Parametername gefunden, aber die Spezifikation im Modell weicht von der Vorlage ab.");
                     parameter = matches.SingleOrDefault();
@@ -159,6 +162,7 @@ public static class RevitQuantityReader
         }
         if (source.Spec == "INTEGER") return new(Number: parameter.AsInteger());
         double value = parameter.AsDouble();
+        if (!double.IsFinite(value)) throw Invalid(source, "Parameterwert ist nicht endlich.");
         if (source.Spec != "NUMBER")
         {
             var displayUnit = unit switch
@@ -176,6 +180,34 @@ public static class RevitQuantityReader
         if (!double.IsFinite(value)) throw Invalid(source, "Parameterwert ist nicht endlich.");
         try { return new(Number: checked((decimal)value)); }
         catch (OverflowException ex) { throw new InvalidDataException(source.Name + ": Parameterwert überschreitet den Dezimalbereich.", ex); }
+    }
+
+    private static string DescribeCandidate(Parameter parameter, string spec)
+    {
+        var id = parameter.Id.Value;
+        string identity;
+        if (parameter.IsShared) identity = "Gemeinsam GUID " + parameter.GUID;
+        else if (id < 0 && id >= int.MinValue && Enum.GetName(typeof(BuiltInParameter), (int)id) is string builtIn)
+            identity = "BuiltIn " + builtIn;
+        else identity = "Nicht geteilt";
+        string value = parameter.HasValue ? "Wert vorhanden" : "kein Wert";
+        if (parameter.HasValue && spec == "VOLUME" && parameter.StorageType == StorageType.Double)
+        {
+            var raw = parameter.AsDouble();
+            if (!double.IsFinite(raw)) value = "Wert nicht endlich";
+            else
+            {
+                try
+                {
+                    var cubicMetres = UnitUtils.ConvertFromInternalUnits(raw, UnitTypeId.CubicMeters);
+                    value = double.IsFinite(cubicMetres)
+                        ? cubicMetres.ToString("G15", System.Globalization.CultureInfo.InvariantCulture) + " m3"
+                        : "Wert nach Umrechnung nicht endlich";
+                }
+                catch (ArgumentException) { value = "Wert nicht umrechenbar"; }
+            }
+        }
+        return $"{identity} (ID {id}, {value})";
     }
 
     private static InvalidDataException Invalid(ParameterSource source, string message) => new(source.Name + " (" + source.Scope + "): " + message);

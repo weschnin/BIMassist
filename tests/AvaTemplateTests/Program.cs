@@ -123,6 +123,24 @@ internal static class Program
                 Check(!diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error), "LV metadata blocked a valid typed read");
                 TemplateEditor.EnsureValid(p);
             });
+            Test("Explicit built-in volume is allowed only as instance VOLUME", () => {
+                var p = ValidTemplate(); var src = p.Mappings[0].Positions[0].Quantity!.Source!;
+                src.Kind = ParameterKind.BuiltIn; src.BuiltInId = "HOST_VOLUME_COMPUTED"; src.Name = "Volumen"; src.Spec = "VOLUME"; src.Scope = ParameterScope.Instance;
+                p.Mappings[0].Positions[0].Quantity!.Unit = "m3";
+                Check(!TemplateValidator.Validate(p).Any(d => d.Severity == DiagnosticSeverity.Error), "Explicit built-in instance volume rejected");
+                src.Scope = ParameterScope.Type;
+                Check(TemplateValidator.Validate(p).Any(d => d.Code == "BUILTIN_SOURCE"), "Built-in volume at type scope accepted");
+                src.Scope = ParameterScope.Instance; src.Spec = "TEXT";
+                Check(TemplateValidator.Validate(p).Any(d => d.Code == "BUILTIN_SOURCE"), "Built-in volume as TEXT accepted");
+                var editor = new BIMassist.Ava.Views.ParameterSourceEditor([], new() { Kind = ParameterKind.BuiltIn, BuiltInId = "HOST_VOLUME_COMPUTED", Name = "Volumen", Spec = "VOLUME", Scope = ParameterScope.Instance });
+                var selected = editor.ReadSource();
+                Check(selected.Kind == ParameterKind.BuiltIn && selected.BuiltInId == "HOST_VOLUME_COMPUTED" && selected.Spec == "VOLUME" && selected.Scope == ParameterScope.Instance,
+                    "Built-in volume not retained by the source editor");
+                var freshEditor = new BIMassist.Ava.Views.ParameterSourceEditor([], new() { Kind = ParameterKind.BuiltIn, BuiltInId = "ASSEMBLY_CODE", Scope = ParameterScope.Type, Spec = "TEXT" });
+                var builtinList = (System.Windows.Controls.ComboBox)typeof(BIMassist.Ava.Views.ParameterSourceEditor).GetField("builtIn", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(freshEditor)!;
+                builtinList.SelectedItem = "HOST_VOLUME_COMPUTED";
+                Check(freshEditor.ReadSource().Scope == ParameterScope.Instance, "Selecting built-in instance volume retained type scope");
+            });
             Test("Missing quantity warning identifies the exact LV position", () => {
                 var p = ValidTemplate(); p.Mappings[0].Positions[0].Quantity = null;
                 p.LvCatalog.Entries.Add(new("id2", "b", ["09", "25", "0110"], "09.25.0110", "Rohrbogen", "", "St"));

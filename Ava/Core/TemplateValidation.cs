@@ -66,8 +66,12 @@ public static class TemplateValidator
                 if (source.SharedGuid != Guid.Empty) Error("PARAMETER_SOURCE", path, "Namens- / BuiltIn-Quelle darf keine gemeinsame GUID enthalten.");
                 if (source.Kind == ParameterKind.BuiltIn)
                 {
-                    if (source.BuiltInId is not ("ASSEMBLY_CODE" or "ALL_MODEL_TYPE_COMMENTS" or "ALL_MODEL_DESCRIPTION") || source.Scope != ParameterScope.Type || source.Spec != "TEXT")
-                        Error("BUILTIN_SOURCE", path, "Unterstützt: ASSEMBLY_CODE, ALL_MODEL_TYPE_COMMENTS, ALL_MODEL_DESCRIPTION, jeweils TEXT am Typ.");
+                    bool textOnType = source.BuiltInId is ("ASSEMBLY_CODE" or "ALL_MODEL_TYPE_COMMENTS" or "ALL_MODEL_DESCRIPTION")
+                        && source.Scope == ParameterScope.Type && source.Spec == "TEXT";
+                    bool volumeOnInstance = source.BuiltInId == "HOST_VOLUME_COMPUTED"
+                        && source.Scope == ParameterScope.Instance && source.Spec == "VOLUME";
+                    if (!textOnType && !volumeOnInstance)
+                        Error("BUILTIN_SOURCE", path, "Unterstützt: ASSEMBLY_CODE, ALL_MODEL_TYPE_COMMENTS, ALL_MODEL_DESCRIPTION (TEXT am Typ) oder HOST_VOLUME_COMPUTED (VOLUME an Instanz).");
                 }
                 else if (source.BuiltInId.Length > 0) Error("PARAMETER_SOURCE", path, "Namensquelle darf keine BuiltIn-ID enthalten.");
             }

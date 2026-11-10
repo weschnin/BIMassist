@@ -39,11 +39,31 @@ Check(RevitQuantityReader.Read(document, system, namedLength, "m").Number == 0.3
 var byNameVolume = new ParameterSource { Kind = ParameterKind.ByName, Name = "Volumen", Spec = "VOLUME", Scope = ParameterScope.Instance };
 Check(byNameVolume.ToString().Contains("Name", StringComparison.Ordinal) && !byNameVolume.ToString().Contains("lokale Familie", StringComparison.Ordinal),
     "Existing template still describes its named source as strictly local");
-instance.BuiltIns[BuiltInParameter.HOST_VOLUME_COMPUTED] = new("Volumen", SpecTypeId.Volume, 100d, StorageType.Double) { Id = new(-100) };
+instance.BuiltIns[BuiltInParameter.HOST_VOLUME_COMPUTED] = new("Volumen", SpecTypeId.Volume, 100d, StorageType.Double) { Id = new((long)BuiltInParameter.HOST_VOLUME_COMPUTED) };
 Check(RevitQuantityReader.Read(document, instance, byNameVolume, "m3").Number == 2.8316846592m,
     "Exact-name VOLUME did not read a single built-in instance value");
 instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, 200d, StorageType.Double));
-Reject(() => RevitQuantityReader.Read(document, instance, byNameVolume, "m3"), "Built-in/local duplicate volume was resolved arbitrarily");
+try { RevitQuantityReader.Read(document, instance, byNameVolume, "m3"); throw new Exception("Built-in/local duplicate volume was resolved arbitrarily"); }
+catch (InvalidDataException ex)
+{
+    Check(ex.Message.Contains("HOST_VOLUME_COMPUTED", StringComparison.Ordinal)
+        && ex.Message.Contains("2.8316846592", StringComparison.Ordinal)
+        && ex.Message.Contains("5.6633693184", StringComparison.Ordinal)
+        && ex.Message.Contains("ID 10", StringComparison.Ordinal), "Ambiguous source does not reveal both identities and model values");
+}
+instance.Parameters.RemoveAll(p => p.Definition.Name == "Volumen");
+instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, double.NaN, StorageType.Double));
+try { RevitQuantityReader.Read(document, instance, byNameVolume, "m3"); throw new Exception("Nonfinite duplicate volume accepted"); }
+catch (InvalidDataException ex) { Check(ex.Message.Contains("HOST_VOLUME_COMPUTED") && ex.Message.Contains("nicht endlich"), "Nonfinite duplicate escaped ambiguity report"); }
+instance.Parameters.RemoveAll(p => p.Definition.Name == "Volumen");
+instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, 1e-12, StorageType.Double));
+try { RevitQuantityReader.Read(document, instance, byNameVolume, "m3"); throw new Exception("Tiny duplicate volume accepted"); }
+catch (InvalidDataException ex) { Check(ex.Message.Contains("2.8316846592") && ex.Message.Contains("2.8316846592E-14"), "Tiny candidate rounded into an indistinguishable zero"); }
+instance.Parameters.RemoveAll(p => p.Definition.Name == "Volumen");
+instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, 200d, StorageType.Double));
+var volumeBuiltIn = new ParameterSource { Kind = ParameterKind.BuiltIn, Name = "Volumen", BuiltInId = "HOST_VOLUME_COMPUTED", Spec = "VOLUME", Scope = ParameterScope.Instance };
+Check(RevitQuantityReader.Read(document, instance, volumeBuiltIn, "m3").Number == 2.8316846592m,
+    "Explicit built-in volume was not read while a same-name local volume coexists");
 instance.Parameters.RemoveAll(p => p.Definition.Name == "Volumen");
 instance.Parameters.Add(new("Volumen", SpecTypeId.String.Text, "other", StorageType.String));
 Check(RevitQuantityReader.Read(document, instance, byNameVolume, "m3").Number == 2.8316846592m,
