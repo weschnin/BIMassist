@@ -220,6 +220,18 @@ internal static class Program
                 var p = ValidTemplate();
                 var source = new BIMassist.Ava.Views.ParameterSourceEditor(p.ParameterCatalog.Entries, p.Mappings[0].Positions[0].Quantity!.Source!);
                 var value = source.ReadSource(); Check(value.Kind == ParameterKind.LocalFamily && value.Spec == "NUMBER" && value.Scope == ParameterScope.Instance, "local source lost in UI");
+                var sourceLabel = source.Children.OfType<System.Windows.Controls.TextBlock>().Select(x => x.Text).FirstOrDefault();
+                Check(sourceLabel != null && sourceLabel.Contains("Parameterquelle", StringComparison.Ordinal), "Parameter source label missing");
+                var kinds = (System.Windows.Controls.ComboBox)typeof(BIMassist.Ava.Views.ParameterSourceEditor).GetField("kind", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(source)!;
+                Check(kinds.Items.OfType<System.Windows.Controls.ComboBoxItem>().Any(x => x.Tag is ParameterKind.LocalFamily && x.Content.ToString()!.Contains("Lokaler Familienparameter", StringComparison.Ordinal)), "Legacy local source not selectable");
+                var namedItem = kinds.Items.OfType<System.Windows.Controls.ComboBoxItem>().Single(x => x.Tag is ParameterKind.ByName);
+                Check(namedItem.Content.ToString()!.Contains("Name", StringComparison.Ordinal), "Name source not selectable");
+                kinds.SelectedItem = namedItem;
+                Check(source.ReadSource().Kind == ParameterKind.ByName, "Name source not saved from UI");
+                var namedTemplate = ValidTemplate();
+                namedTemplate.Mappings[0].Positions[0].Quantity!.Source!.Kind = ParameterKind.ByName;
+                Check(TemplateJson.Deserialize(TemplateJson.Serialize(namedTemplate)).Mappings[0].Positions[0].Quantity!.Source!.Kind == ParameterKind.ByName,
+                    "Name source not preserved in template JSON");
                 var mapping = new BIMassist.Ava.Views.MappingEditorWindow(p, p.Mappings[0]);
                 var rule = mapping.BuildRule(); Check(rule.Id == p.Mappings[0].Id && rule.BgkKey == "09-25" && rule.TypeNumber == "100" && rule.Positions[0].LvItemId == "id", "mapping edits lose identity");
                 Check(rule.Positions[0].Quantity!.Source!.Kind == ParameterKind.LocalFamily, "UI converted local parameter"); mapping.Close();

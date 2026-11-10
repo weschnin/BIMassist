@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace BIMassist.Ava.Core;
 
-public enum ParameterKind { SharedGuid, LocalFamily, BuiltIn }
+public enum ParameterKind { SharedGuid, LocalFamily, BuiltIn, ByName }
 public enum ParameterScope { Instance, Type }
 public enum ConditionOperator { Equal, NotEqual, Greater, GreaterOrEqual, Less, LessOrEqual }
 public enum OperandKind { Numeric, Boolean, Text }
@@ -16,7 +16,13 @@ public sealed class ParameterSource
     [JsonRequired] public string Spec { get; set; } = "TEXT";
     [JsonRequired] public ParameterScope Scope { get; set; } = ParameterScope.Type;
     [JsonRequired] public string BuiltInId { get; set; } = "";
-    public override string ToString() => $"{Name} | {Spec} | {Scope} | " + (Kind == ParameterKind.SharedGuid ? SharedGuid.ToString() : Kind == ParameterKind.BuiltIn ? BuiltInId : "lokale Familie (kein GUID-Fallback)");
+    public override string ToString() => $"{Name} | {Spec} | {Scope} | " + (Kind switch
+    {
+        ParameterKind.SharedGuid => SharedGuid.ToString(), ParameterKind.BuiltIn => BuiltInId,
+        ParameterKind.LocalFamily => "lokale Familie (kein GUID-Fallback)",
+        ParameterKind.ByName => "exakter Name (eindeutiger Treffer)",
+        _ => "unbekannte Quelle"
+    });
 }
 public sealed class RuleCondition
 {

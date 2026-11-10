@@ -84,6 +84,14 @@ public static class RevitQuantityReader
     {
         var owner = source.Scope == ParameterScope.Type ? document.GetElement(instance.GetTypeId()) : instance;
         Parameter? parameter = null;
+        var spec = source.Spec switch
+        {
+            "TEXT" => SpecTypeId.String.Text, "YESNO" => SpecTypeId.Boolean.YesNo,
+            "INTEGER" => SpecTypeId.Int.Integer, "NUMBER" => SpecTypeId.Number,
+            "LENGTH" => SpecTypeId.Length, "AREA" => SpecTypeId.Area, "VOLUME" => SpecTypeId.Volume,
+            "ANGLE" => SpecTypeId.Angle, "MASS_DENSITY" => SpecTypeId.MassDensity,
+            _ => throw Invalid(source, "Nicht unterstützte Parameterspezifikation.")
+        };
         if (owner != null)
         {
             switch (source.Kind)
@@ -95,8 +103,18 @@ public static class RevitQuantityReader
                     break;
                 case ParameterKind.LocalFamily:
                     if (owner is not (FamilyInstance or FamilySymbol)) throw Invalid(source, "Lokale Familienquelle ist an diesem Systemelement nicht unterstützt.");
-                    var matches = owner.GetParameters(source.Name).Where(p => !p.IsShared && p.Id.Value > 0).ToList();
-                    if (matches.Count > 1) throw Invalid(source, "Mehrere gleichnamige lokale Parameter; keine eindeutige Quelle.");
+                    var local = owner.GetParameters(source.Name).Where(p => !p.IsShared && p.Id.Value > 0).ToList();
+                    if (local.Count > 1) throw Invalid(source, "Mehrere gleichnamige lokale Parameter; keine eindeutige Quelle.");
+                    parameter = local.SingleOrDefault();
+                    break;
+                case ParameterKind.ByName:
+                    // Explicit language-dependent name lookup across built-in, shared and local
+                    // parameters. On the selected owner, never choose an arbitrary duplicate.
+                    var named = owner.GetParameters(source.Name);
+                    var matches = named.Where(p => p.Definition.GetDataType().Equals(spec)).ToList();
+                    if (matches.Count > 1) throw Invalid(source, "Mehrere Parameter mit diesem Namen und dieser Spezifikation im gewählten Geltungsbereich; keine eindeutige Quelle. Bitte GUID oder BuiltIn-Kennung verwenden.");
+                    if (matches.Count == 0 && named.Count > 0)
+                        throw Invalid(source, "Parametername gefunden, aber die Spezifikation im Modell weicht von der Vorlage ab.");
                     parameter = matches.SingleOrDefault();
                     break;
                 case ParameterKind.BuiltIn:
@@ -110,16 +128,8 @@ public static class RevitQuantityReader
         if (parameter == null)
         {
             if (allowMissingText && source.Spec == "TEXT" && unit.Length == 0) return new(Text: "");
-            throw Invalid(source, "Parameter fehlt oder enthält keinen Wert; kein Namens-/Geltungs-Fallback.");
+            throw Invalid(source, "Parameter fehlt oder enthält keinen Wert im gewählten Geltungsbereich; keine automatische Typ-/Instanz-Ausweichsuche.");
         }
-        var spec = source.Spec switch
-        {
-            "TEXT" => SpecTypeId.String.Text, "YESNO" => SpecTypeId.Boolean.YesNo,
-            "INTEGER" => SpecTypeId.Int.Integer, "NUMBER" => SpecTypeId.Number,
-            "LENGTH" => SpecTypeId.Length, "AREA" => SpecTypeId.Area, "VOLUME" => SpecTypeId.Volume,
-            "ANGLE" => SpecTypeId.Angle, "MASS_DENSITY" => SpecTypeId.MassDensity,
-            _ => throw Invalid(source, "Nicht unterstützte Parameterspezifikation.")
-        };
         if (!parameter.Definition.GetDataType().Equals(spec)) throw Invalid(source, "Parameterspezifikation im Modell weicht von der Vorlage ab.");
         // HasValue is not proof of parameter type: validate existing definitions/storage before classifying absence.
         if (source.Spec == "TEXT")
@@ -139,7 +149,7 @@ public static class RevitQuantityReader
         if (!parameter.HasValue)
         {
             if (allowMissingText && source.Spec == "TEXT") return new(Text: "");
-            throw Invalid(source, "Parameter fehlt oder enthält keinen Wert; kein Namens-/Geltungs-Fallback.");
+            throw Invalid(source, "Parameter fehlt oder enthält keinen Wert im gewählten Geltungsbereich; keine automatische Typ-/Instanz-Ausweichsuche.");
         }
         if (source.Spec == "TEXT") return new(Text: parameter.AsString() ?? "");
         if (source.Spec == "YESNO")

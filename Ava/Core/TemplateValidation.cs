@@ -63,13 +63,13 @@ public static class TemplateValidator
             }
             else
             {
-                if (source.SharedGuid != Guid.Empty) Error("PARAMETER_SOURCE", path, "Lokale / BuiltIn-Quelle darf keine gemeinsame GUID enthalten.");
+                if (source.SharedGuid != Guid.Empty) Error("PARAMETER_SOURCE", path, "Namens- / BuiltIn-Quelle darf keine gemeinsame GUID enthalten.");
                 if (source.Kind == ParameterKind.BuiltIn)
                 {
                     if (source.BuiltInId is not ("ASSEMBLY_CODE" or "ALL_MODEL_TYPE_COMMENTS" or "ALL_MODEL_DESCRIPTION") || source.Scope != ParameterScope.Type || source.Spec != "TEXT")
                         Error("BUILTIN_SOURCE", path, "Unterstützt: ASSEMBLY_CODE, ALL_MODEL_TYPE_COMMENTS, ALL_MODEL_DESCRIPTION, jeweils TEXT am Typ.");
                 }
-                else if (source.BuiltInId.Length > 0) Error("PARAMETER_SOURCE", path, "Lokale Quelle darf keine BuiltIn-ID enthalten.");
+                else if (source.BuiltInId.Length > 0) Error("PARAMETER_SOURCE", path, "Namensquelle darf keine BuiltIn-ID enthalten.");
             }
         }
         if (template.SchemaVersion != 3 || template.ProfileId == Guid.Empty) Error("IDENTITY", "Profil", "Schema oder Profil-ID ungültig.");
@@ -180,7 +180,7 @@ public static class ChecklistBuilder
             new("Prüfumfang", "Unabhängig von vorhandenen BGK-Werten", "Prüfumfang / Kategorien: " + (string.IsNullOrWhiteSpace(template.ReviewScope) ? "NOCH FESTZULEGEN" : template.ReviewScope) + ". Auch Elemente ohne Kennzeichnung einbeziehen; Beschreibung ist noch kein ausführbarer Modellfilter."),
             new("Identifikation", "Alle Elemente im unabhängigen Prüfumfang", "BGK vorhanden, nicht leer und im Katalog: " + template.BgkIdentification),
             new("Identifikation", "Alle Elemente im unabhängigen Prüfumfang", "Typnummer vorhanden, nicht leer und zur BGK passend: " + template.TypeIdentification),
-            new("Lesbarkeit", "Alle erforderlichen Parameter", "GUID bzw. explizite lokale Quelle, Spezifikation und Instanz-/Typ-Geltung prüfen. Formelgesteuert / schreibgeschützt ist zum Lesen zulässig; Definition im TXT beweist keine Modellbindung."),
+            new("Lesbarkeit", "Alle erforderlichen Parameter", "GUID bzw. eindeutigen Namen, Spezifikation und Instanz-/Typ-Geltung prüfen. Formelgesteuert / schreibgeschützt ist zum Lesen zulässig; Definition im TXT beweist keine Modellbindung."),
             new("Abdeckung", "Alle identifizierten Elemente im Prüfumfang", "Fehlende Zuordnung und mehrere passende Regeln getrennt prüfen. Keine automatische Zuordnung aus ähnlichen Nummern; keine Priorität oder implizite Else-Regel.")
         };
         foreach (var rule in template.Mappings)

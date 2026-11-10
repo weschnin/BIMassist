@@ -2,7 +2,7 @@ namespace Autodesk.Revit.DB;
 // Controlled API doubles for source-resolution/conversion policy, not proof of Revit-host execution.
 public record ForgeTypeId(string Value);
 public enum StorageType { None, Integer, Double, String, ElementId }
-public enum BuiltInParameter { INVALID = -1, ASSEMBLY_CODE = -2, ALL_MODEL_TYPE_COMMENTS = -3, ALL_MODEL_DESCRIPTION = -4 }
+public enum BuiltInParameter { INVALID = -1, ASSEMBLY_CODE = -2, ALL_MODEL_TYPE_COMMENTS = -3, ALL_MODEL_DESCRIPTION = -4, HOST_VOLUME_COMPUTED = -5 }
 public enum CategoryType { Model, Annotation }
 public sealed class Category { public CategoryType CategoryType { get; set; } = CategoryType.Model; }
 public static class SpecTypeId
@@ -60,7 +60,7 @@ public class Element
     public Dictionary<BuiltInParameter, Parameter> BuiltIns { get; } = [];
     public Parameter? get_Parameter(Guid guid) => Parameters.SingleOrDefault(p => p.IsShared && p.GUID == guid);
     public Parameter? get_Parameter(BuiltInParameter id) => BuiltIns.GetValueOrDefault(id);
-    public IList<Parameter> GetParameters(string name) => Parameters.Where(p => p.Definition.Name == name).ToList();
+    public IList<Parameter> GetParameters(string name) => Parameters.Concat(BuiltIns.Values).Where(p => p.Definition.Name == name).ToList();
     public ElementId GetTypeId() => TypeId;
 }
 public sealed class FamilyInstance : Element { }
