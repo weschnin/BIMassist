@@ -95,7 +95,7 @@ internal sealed class MappingEditorWindow : Window
             var dialog = new PositionEditorWindow(template, edit ? selected!.Position : null) { Owner = this };
             if (dialog.ShowDialog() == true && dialog.Result is { } result) UpsertPosition(result);
         }
-        positionButtons.Children.Add(EditorUi.Button("Leistungsposition hinzufügen…", () => EditPosition(false)));
+        positionButtons.Children.Add(EditorUi.Button("Leistungsposition(en) hinzufügen…", AddPositionsFromCatalog));
         positionButtons.Children.Add(EditorUi.Button("Position / Menge bearbeiten…", () => EditPosition(true)));
         positionButtons.Children.Add(EditorUi.Button("Position entfernen", () => { if (positions.SelectedItem is PositionRow row) RemovePosition(row.Position.Id); }));
         positions.MouseDoubleClick += (_, _) => { if (positions.SelectedItem is PositionRow) EditPosition(true); };
@@ -111,6 +111,25 @@ internal sealed class MappingEditorWindow : Window
         int index = draft.Positions.FindIndex(p => p.Id == position.Id);
         if (index < 0) draft.Positions.Add(TemplateJson.Copy(position)); else draft.Positions[index] = TemplateJson.Copy(position);
         RefreshPositions();
+    }
+    internal int AddPositions(IEnumerable<string> lvItemIds)
+    {
+        var knownIds = template.LvCatalog.Entries.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        var existingIds = draft.Positions.Select(position => position.LvItemId).ToHashSet(StringComparer.Ordinal);
+        int added = 0;
+        foreach (var id in lvItemIds.Distinct(StringComparer.Ordinal))
+        {
+            if (!knownIds.Contains(id) || !existingIds.Add(id)) continue;
+            draft.Positions.Add(new MappingPosition { LvItemId = id });
+            added++;
+        }
+        if (added > 0) RefreshPositions();
+        return added;
+    }
+    private void AddPositionsFromCatalog()
+    {
+        var dialog = new LvPositionPickerWindow(template) { Owner = this };
+        if (dialog.ShowDialog() == true) AddPositions(dialog.SelectedPositionIds);
     }
     internal void RemovePosition(Guid id) { draft.Positions.RemoveAll(p => p.Id == id); RefreshPositions(); }
     private void RefreshPositions() => positions.ItemsSource = draft.Positions.Select(p => {

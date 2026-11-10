@@ -26,11 +26,11 @@ internal static class Program
             for (int attempt = 0; attempt < 2; attempt++)
             {
                 var untouched = new PositionEditorWindow(t, null);
-                Field<ListBox>(untouched, "lv").SelectedItem = t.LvCatalog.Entries[0];
+                untouched.SelectLvEntry(t.LvCatalog.Entries[0].Id);
                 Field<CheckBox>(untouched, "hasQuantity").IsChecked = true;
                 WithRealizedQuantity(untouched, inner => {
                     Check(inner.Text == "St", "Realized quantity editor did not synchronize its default unit");
-                    Field<ListBox>(untouched, "lv").SelectedItem = t.LvCatalog.Entries[1];
+                    untouched.SelectLvEntry(t.LvCatalog.Entries[1].Id);
                     DrainDispatcher(untouched);
                     var quantity = untouched.BuildPosition().Quantity;
                     Check(quantity is { Unit: "psch", ConstantValue: 1 }, $"Untouched realized default should follow LV St→psch; got {quantity?.Unit}");
@@ -38,7 +38,7 @@ internal static class Program
             }
             Console.WriteLine("PASS untouched realized quantity default follows LV St→psch (twice)");
             var realizedTyped = new PositionEditorWindow(t, null);
-            Field<ListBox>(realizedTyped, "lv").SelectedItem = t.LvCatalog.Entries[0];
+            realizedTyped.SelectLvEntry(t.LvCatalog.Entries[0].Id);
             Field<CheckBox>(realizedTyped, "hasQuantity").IsChecked = true;
             WithRealizedQuantity(realizedTyped, inner => {
                 Field<TextBlock>(realizedTyped, "preview").Text = "stale preview";
@@ -48,7 +48,7 @@ internal static class Program
                 Check(Field<TextBlock>(realizedTyped, "preview").Text == "", "Typing in the realized unit TextBox did not clear preview");
                 Check(realizedTyped.BuildPosition().Quantity!.Unit == "Leistungsmonat", "Realized unit typing did not reach the quantity");
                 SelectKind(realizedTyped, "Formula"); SelectKind(realizedTyped, "Constant");
-                Field<ListBox>(realizedTyped, "lv").SelectedItem = t.LvCatalog.Entries[1];
+                realizedTyped.SelectLvEntry(t.LvCatalog.Entries[1].Id);
                 var tabs = ((DockPanel)realizedTyped.Content).Children.OfType<TabControl>().Single();
                 tabs.SelectedIndex = 0; DrainDispatcher(realizedTyped);
                 tabs.SelectedIndex = 1; DrainDispatcher(realizedTyped);
@@ -57,14 +57,14 @@ internal static class Program
             foreach (bool useFormula in new[] { false, true })
             {
                 var entered = new PositionEditorWindow(t, null);
-                Field<ListBox>(entered, "lv").SelectedItem = t.LvCatalog.Entries[0];
+                entered.SelectLvEntry(t.LvCatalog.Entries[0].Id);
                 Field<CheckBox>(entered, "hasQuantity").IsChecked = true;
                 WithRealizedQuantity(entered, _ => {
                     if (useFormula) SelectKind(entered, "Formula");
                     Field<TextBlock>(entered, "preview").Text = "stale preview";
                     Field<TextBox>(entered, useFormula ? "expression" : "constantValue").Text = useFormula ? "2 * 3" : "2";
                     Check(Field<TextBlock>(entered, "preview").Text == "", "Numeric/formula edit did not clear preview");
-                    Field<ListBox>(entered, "lv").SelectedItem = t.LvCatalog.Entries[1];
+                    entered.SelectLvEntry(t.LvCatalog.Entries[1].Id);
                     SelectKind(entered, useFormula ? "Constant" : "Formula");
                     SelectKind(entered, useFormula ? "Formula" : "Constant"); DrainDispatcher(entered);
                     var value = entered.BuildPosition().Quantity!;
@@ -73,26 +73,26 @@ internal static class Program
             }
             var realizedSaved = new PositionEditorWindow(t, saved);
             WithRealizedQuantity(realizedSaved, _ => {
-                Field<ListBox>(realizedSaved, "lv").SelectedItem = t.LvCatalog.Entries[1];
+                realizedSaved.SelectLvEntry(t.LvCatalog.Entries[1].Id);
                 SelectKind(realizedSaved, "Formula"); SelectKind(realizedSaved, "Constant"); DrainDispatcher(realizedSaved);
                 Check(realizedSaved.BuildPosition().Quantity is { Unit: "St", ConstantValue: 1 }, "Realized saved quantity was relabelled");
             });
             Console.WriteLine("PASS realized inner-TextBox edits, preview invalidation, mode/LV/tab browsing, numeric/formula values and saved units");
             var edit = new PositionEditorWindow(t, saved);
             Check(Field<ComboBox>(edit, "quantityUnit").IsEditable, "Quantity units are still restricted to a fixed picker");
-            Field<ListBox>(edit, "lv").SelectedItem = t.LvCatalog.Entries[1];
+            edit.SelectLvEntry(t.LvCatalog.Entries[1].Id);
             Check(edit.BuildPosition().Quantity is { Unit: "St", ConstantValue: 1 }, "Changing the LV relabelled the saved quantity");
             var accepted = Accept(edit);
             Check(accepted.Id == saved.Id && accepted.LvItemId == "GW_8862428", "Screenshot edit was not accepted with its original position identity");
             var group = new MappingEditorWindow(t, rule); group.UpsertPosition(accepted);
             var month = new PositionEditorWindow(t, null);
-            Field<ListBox>(month, "lv").SelectedItem = t.LvCatalog.Entries[2];
+            month.SelectLvEntry(t.LvCatalog.Entries[2].Id);
             Field<CheckBox>(month, "hasQuantity").IsChecked = true;
             Check(month.BuildPosition().Quantity!.Unit == "Mt", "New LV unit Mt was dropped");
             Field<TextBox>(month, "constantValue").Text = "2";
             group.UpsertPosition(Accept(month));
             var formula = new PositionEditorWindow(t, null);
-            Field<ListBox>(formula, "lv").SelectedItem = t.LvCatalog.Entries[3];
+            formula.SelectLvEntry(t.LvCatalog.Entries[3].Id);
             Field<CheckBox>(formula, "hasQuantity").IsChecked = true;
             SelectKind(formula, "Formula");
             Field<TextBox>(formula, "expression").Text = "Length * 2";
@@ -104,7 +104,7 @@ internal static class Program
             var parameter = new MappingPosition { LvItemId = "month", Quantity = new() { Source = new() { Kind = ParameterKind.LocalFamily, Name = "Count", Spec = "INTEGER", Scope = ParameterScope.Type }, Unit = "St" } };
             group.UpsertPosition(Accept(new PositionEditorWindow(t, parameter)));
             var typed = new PositionEditorWindow(t, null);
-            Field<ListBox>(typed, "lv").SelectedItem = t.LvCatalog.Entries[3]; Field<CheckBox>(typed, "hasQuantity").IsChecked = true;
+            typed.SelectLvEntry(t.LvCatalog.Entries[3].Id); Field<CheckBox>(typed, "hasQuantity").IsChecked = true;
             var units = Field<ComboBox>(typed, "quantityUnit"); units.Text = "freie Einheit";
             SelectKind(typed, "Formula"); SelectKind(typed, "Constant");
             Check(typed.BuildPosition().Quantity!.Unit == "freie Einheit", "Typed unit was lost when quantity mode changed");
@@ -127,7 +127,7 @@ internal static class Program
                 var actual = TemplateJson.Load(args[0]); var before = TemplateJson.Serialize(actual);
                 var actualLv = actual.LvCatalog.Entries.Single(l => l.Id == "GW_8862428");
                 var child = new PositionEditorWindow(actual, actual.Mappings[0].Positions[0]);
-                Field<ListBox>(child, "lv").SelectedItem = actualLv;
+                child.SelectLvEntry(actualLv.Id);
                 var newChild = Accept(child);
                 var actualGroup = new MappingEditorWindow(actual, actual.Mappings[0]); actualGroup.UpsertPosition(newChild);
                 var updated = actualGroup.BuildRule(); actualGroup.Close();

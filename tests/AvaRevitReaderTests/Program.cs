@@ -110,6 +110,18 @@ AbsenceTest("missing numeric quantity or condition stays fatal even with allowMi
     var absent = new ParameterSource { Kind = ParameterKind.LocalFamily, Name = "AbsentNumber", Spec = "NUMBER", Scope = ParameterScope.Instance };
     Reject(() => RevitQuantityReader.Read(document, instance, absent, "1", true), "Missing numeric parameter accepted");
 });
+AbsenceTest("missing instance VOLUME does not fall back to a same-name type value", () =>
+{
+    symbol.Parameters.Add(new("Volumen", SpecTypeId.Volume, 12d, StorageType.Double));
+    var absent = new ParameterSource { Kind = ParameterKind.LocalFamily, Name = "Volumen", Spec = "VOLUME", Scope = ParameterScope.Instance };
+    Reject(() => RevitQuantityReader.Read(document, instance, absent, "m3"), "Missing instance VOLUME fell back to the same-name type parameter");
+});
+AbsenceTest("valueless instance VOLUME stays fatal despite a same-name type value", () =>
+{
+    instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, 0d, StorageType.Double) { HasValue = false });
+    var absent = new ParameterSource { Kind = ParameterKind.LocalFamily, Name = "Volumen", Spec = "VOLUME", Scope = ParameterScope.Instance };
+    Reject(() => RevitQuantityReader.Read(document, instance, absent, "m3"), "Valueless instance VOLUME fell back to the same-name type parameter");
+});
 AbsenceTest("host scope excludes model-category Revit and linked CAD containers but keeps imported copies", () =>
 {
     var host = new Document();
@@ -119,5 +131,5 @@ AbsenceTest("host scope excludes model-category Revit and linked CAD containers 
         "Linked container counted as a host model element or imported copy wrongly excluded");
 });
 if (absenceFailures != 0) Environment.ExitCode = 1;
-Console.WriteLine($"Reader absence/scope regressions: {5 - absenceFailures} passed; {absenceFailures} failed");
+Console.WriteLine($"Reader absence/scope regressions: {7 - absenceFailures} passed; {absenceFailures} failed");
 Console.WriteLine("PASS Revit adapter policy with API doubles: scope, exact GUID/local identity, typed input units, absence, ambiguity and nonfinite/overflow guards (not a Revit-host test)");

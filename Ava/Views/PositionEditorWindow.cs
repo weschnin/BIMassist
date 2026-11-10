@@ -13,8 +13,12 @@ internal sealed class PositionEditorWindow : Window
 {
     private readonly AvaTemplate template;
     private readonly MappingPosition draft;
-    private readonly W.ListBox lv = new();
+    private readonly W.TreeView lvTree = new() { Margin = new Thickness(4) };
     private readonly W.TextBox lvSearch = EditorUi.Input();
+    private readonly W.Button lvExpandAll;
+    private readonly W.Button lvCollapseAll;
+    private readonly W.TextBox lvDetail = new() { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, Height = 180,
+        VerticalScrollBarVisibility = W.ScrollBarVisibility.Auto, Margin = new Thickness(0, 12, 0, 0) };
     private readonly W.CheckBox hasQuantity = new() { Content = "Menge ausdrücklich definieren", Margin = new Thickness(0, 8, 0, 12) };
     private readonly ParameterSourceEditor quantity;
     private readonly W.ComboBox quantityKind;
@@ -27,11 +31,16 @@ internal sealed class PositionEditorWindow : Window
     private readonly W.DataGrid testValues = new() { AutoGenerateColumns = false, CanUserAddRows = false, CanUserDeleteRows = false, MinHeight = 70, MaxHeight = 160 };
     private readonly W.TextBlock preview = EditorUi.Text("");
     private List<PreviewRow> previewRows = [];
+    private bool syncingLvTree;
+    private LvEntry? selectedLv;
+    private readonly Dictionary<string, bool> lvTreeExpansion = new(StringComparer.Ordinal);
     public MappingPosition? Result { get; private set; }
 
     public PositionEditorWindow(AvaTemplate template, MappingPosition? existing)
     {
         this.template = template; draft = existing == null ? new() : TemplateJson.Copy(existing);
+        lvExpandAll = EditorUi.Button("Alles aufklappen", () => ExpandLv(true));
+        lvCollapseAll = EditorUi.Button("Alles zuklappen", () => ExpandLv(false));
         bindings = TemplateJson.Copy(draft.Quantity?.Variables ?? new List<FormulaVariable>());
         Title = existing == null ? "Leistungsposition hinzufügen" : "Leistungsposition / Menge bearbeiten";
         Width = 1050; Height = 850; MinWidth = 850; MinHeight = 620; WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -43,18 +52,37 @@ internal sealed class PositionEditorWindow : Window
         buttons.Children.Add(EditorUi.Button("Abbrechen", () => DialogResult = false));
         var tabs = new W.TabControl(); root.Children.Add(tabs);
         var lvPanel = new W.DockPanel { Margin = new Thickness(12) };
-        var hint = EditorUi.Text("LV-Position anhand OZ oder Leistungstext suchen. Ihre Mengenvorschrift steht im zweiten Tab.");
+        var hint = EditorUi.Text("LV hierarchisch nach Titel und OZ auswählen. Titel dienen der Orientierung; nur eine einzelne OZ kann dieser Leistungsposition zugewiesen werden.");
         W.DockPanel.SetDock(hint, W.Dock.Top); lvPanel.Children.Add(hint);
-        W.DockPanel.SetDock(lvSearch, W.Dock.Top); lvPanel.Children.Add(lvSearch);
-        var detail = new W.TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, Height = 180, VerticalScrollBarVisibility = W.ScrollBarVisibility.Auto, Margin = new Thickness(0, 12, 0, 0) };
-        W.DockPanel.SetDock(detail, W.Dock.Bottom); lvPanel.Children.Add(detail); lvPanel.Children.Add(lv);
-        lvSearch.TextChanged += (_, _) => {
-            var prior = lv.SelectedItem;
-            lv.ItemsSource = template.LvCatalog.Entries.Where(l => (l + " " + l.Id).Contains(lvSearch.Text, StringComparison.OrdinalIgnoreCase)).ToList();
-            if (prior != null && lv.Items.Contains(prior)) lv.SelectedItem = prior;
+        var lvToolbar = new W.WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
+        lvToolbar.Children.Add(lvExpandAll); lvToolbar.Children.Add(lvCollapseAll);
+        lvSearch.ToolTip = "LV nach OZ oder Leistungstext filtern";
+        lvToolbar.Children.Add(lvSearch);
+        W.DockPanel.SetDock(lvToolbar, W.Dock.Top); lvPanel.Children.Add(lvToolbar);
+        W.DockPanel.SetDock(lvDetail, W.Dock.Bottom); lvPanel.Children.Add(lvDetail); lvPanel.Children.Add(lvTree);
+        lvSearch.Width = 380;
+        bool preserveUnit = draft.Quantity != null;
+        bool updatingUnits = false;
+        string lastAssignedUnit = "";
+        lvTree.SelectedItemChanged += (_, _) => {
+            if (syncingLvTree) return;
+            syncingLvTree = true;
+            try
+            {
+                selectedLv = lvTree.SelectedItem is W.TreeViewItem { Tag: CatalogTreeNode node }
+                    && node.Key.StartsWith("item:", StringComparison.Ordinal)
+                    ? template.LvCatalog.Entries.FirstOrDefault(item => item.Id == node.SourceId)
+                    : null;
+                lvDetail.Text = selectedLv is { } selected ? $"{selected.Ordinal} | {selected.Unit} | {selected.Id}\n{selected.Text}\n{selected.Description}" : "";
+                preview.Text = "";
+                RefreshQuantity();
+            }
+            finally { syncingLvTree = false; }
         };
-        lv.SelectionChanged += (_, _) => { detail.Text = lv.SelectedItem is LvEntry item ? $"{item.Ordinal} | {item.Unit} | {item.Id}\n{item.Text}\n{item.Description}" : ""; preview.Text = ""; };
-        lv.ItemsSource = template.LvCatalog.Entries; lv.SelectedItem = template.LvCatalog.Entries.FirstOrDefault(l => l.Id == draft.LvItemId);
+        lvSearch.TextChanged += (_, _) => RefreshLvTree();
+        selectedLv = template.LvCatalog.Entries.FirstOrDefault(l => l.Id == draft.LvItemId);
+        RefreshLvTree();
+        lvDetail.Text = selectedLv is { } initial ? $"{initial.Ordinal} | {initial.Unit} | {initial.Id}\n{initial.Text}\n{initial.Description}" : "";
         tabs.Items.Add(new W.TabItem { Header = "1  Leistungsposition", Content = lvPanel });
         var panel = new W.StackPanel { Margin = new Thickness(12) };
         panel.Children.Add(EditorUi.Text("Die Menge gilt je passendem Element. Auswahl: feste Zahl, Parameterwert oder Kombination aus Zahlen und Parametern als Formel."));
@@ -96,9 +124,6 @@ internal sealed class PositionEditorWindow : Window
             var value = EvaluatePreview(inputs); preview.Text = $"Testrechnung: {value.ToString(CultureInfo.GetCultureInfo("de-DE"))} {quantityUnit.Text} je Element – kein Modellwert";
         })));
         formulaPanel.Children.Add(preview); panel.Children.Add(formulaPanel); RefreshBindings();
-        bool preserveUnit = draft.Quantity != null;
-        bool updatingUnits = false;
-        string lastAssignedUnit = "";
         void RefreshQuantity()
         {
             bool enabled = hasQuantity.IsChecked == true;
@@ -111,13 +136,13 @@ internal sealed class PositionEditorWindow : Window
             if (quantityUnit.Text != lastAssignedUnit && !string.IsNullOrWhiteSpace(quantityUnit.Text)) preserveUnit = true;
             var prior = quantityUnit.Text.Length > 0 ? quantityUnit.Text : draft.Quantity?.Unit;
             // Only an untouched default follows LV selection; never relabel a saved or edited quantity.
-            var selectedUnit = preserveUnit ? prior : (lv.SelectedItem as LvEntry)?.Unit ?? prior;
+            var selectedUnit = preserveUnit ? prior : selectedLv?.Unit ?? prior;
             updatingUnits = true;
             try
             {
                 try { quantityUnit.ItemsSource = kind == QuantityKind.Parameter ? UnitCatalog.ForSpec(quantity.ReadSource().Spec)
                     : new[] { "NUMBER", "LENGTH", "AREA", "VOLUME", "ANGLE", "MASS_DENSITY" }.SelectMany(UnitCatalog.ForSpec)
-                        .Concat(new[] { (lv.SelectedItem as LvEntry)?.Unit ?? "", selectedUnit ?? "" }).Where(u => !string.IsNullOrWhiteSpace(u)).Distinct().ToArray(); }
+                        .Concat(new[] { selectedLv?.Unit ?? "", selectedUnit ?? "" }).Where(u => !string.IsNullOrWhiteSpace(u)).Distinct().ToArray(); }
                 catch (InvalidDataException) { quantityUnit.ItemsSource = Array.Empty<string>(); }
                 quantityUnit.SelectedItem = selectedUnit;
                 quantityUnit.Text = selectedUnit ?? "";
@@ -133,7 +158,6 @@ internal sealed class PositionEditorWindow : Window
         quantityUnit.SelectionChanged += (_, _) => { if (!updatingUnits) QuantityEdited(); };
         // Realizing the editable TextBox also raises TextChanged for the untouched assigned default.
         quantityUnit.AddHandler(W.Primitives.TextBoxBase.TextChangedEvent, new W.TextChangedEventHandler((_, _) => { if (!updatingUnits && quantityUnit.Text != lastAssignedUnit) QuantityEdited(); }));
-        lv.SelectionChanged += (_, _) => RefreshQuantity();
         RefreshQuantity(); tabs.Items.Add(new W.TabItem { Header = "2  Eigene Menge / Formel", Content = EditorUi.Scroll(panel) }); Content = root;
     }
     private void RefreshBindings()
@@ -143,6 +167,65 @@ internal sealed class PositionEditorWindow : Window
         previewRows = bindings.Select(v => new PreviewRow(v.Name, v.Name + " [" + v.Unit + "]", prior.GetValueOrDefault(v.Name, ""), () => preview.Text = "")).ToList();
         testValues.ItemsSource = previewRows; preview.Text = "";
     }
+    private void RefreshLvTree()
+    {
+        syncingLvTree = true;
+        try
+        {
+            lvTree.Items.Clear();
+            W.TreeViewItem? selectedItem = null;
+            W.TreeViewItem Create(CatalogTreeNode node)
+            {
+                var item = new W.TreeViewItem
+                {
+                    Tag = node,
+                    IsExpanded = lvTreeExpansion.GetValueOrDefault(node.Key, true),
+                    Header = new W.TextBlock { Text = node.Label, TextWrapping = TextWrapping.Wrap, MaxWidth = 850,
+                        Margin = new Thickness(3, 4, 3, 4) }
+                };
+                item.Expanded += (_, _) => { if (!syncingLvTree) lvTreeExpansion[node.Key] = true; };
+                item.Collapsed += (_, _) => { if (!syncingLvTree) lvTreeExpansion[node.Key] = false; };
+                foreach (var child in node.Children) item.Items.Add(Create(child));
+                if (node.Key.StartsWith("item:", StringComparison.Ordinal) && node.SourceId == selectedLv?.Id)
+                    selectedItem = item;
+                return item;
+            }
+            foreach (var node in CatalogTreeModel.BuildLv(template, lvSearch.Text)) lvTree.Items.Add(Create(node));
+            if (selectedItem != null) selectedItem.IsSelected = true;
+        }
+        finally { syncingLvTree = false; }
+    }
+    private void ExpandLv(bool expand)
+    {
+        void Apply(W.ItemsControl parent)
+        {
+            foreach (W.TreeViewItem item in parent.Items)
+            {
+                item.IsExpanded = expand;
+                if (item.Tag is CatalogTreeNode node) lvTreeExpansion[node.Key] = expand;
+                Apply(item);
+            }
+        }
+        Apply(lvTree);
+    }
+    internal void SelectLvEntry(string id)
+    {
+        if (!string.IsNullOrWhiteSpace(lvSearch.Text)) lvSearch.Text = "";
+        var target = FindPosition(lvTree, id);
+        if (target == null) throw new InvalidDataException($"LV-Position {id} ist im Katalog nicht vorhanden.");
+        target.IsSelected = true;
+    }
+    private static W.TreeViewItem? FindPosition(W.ItemsControl parent, string id)
+    {
+        foreach (W.TreeViewItem item in parent.Items)
+        {
+            if (item.Tag is CatalogTreeNode node && node.Key.StartsWith("item:", StringComparison.Ordinal) && node.SourceId == id)
+                return item;
+            var child = FindPosition(item, id);
+            if (child != null) { item.IsExpanded = true; return child; }
+        }
+        return null;
+    }
     internal void UpsertVariable(FormulaVariable variable)
     {
         int index = bindings.FindIndex(v => v.Name == variable.Name);
@@ -151,7 +234,7 @@ internal sealed class PositionEditorWindow : Window
     }
     internal MappingPosition BuildPosition()
     {
-        if (lv.SelectedItem is not LvEntry item) throw new InvalidDataException("Eine LV-Position auswählen.");
+        if (selectedLv is not { } item) throw new InvalidDataException("Eine LV-Position auswählen.");
         var result = TemplateJson.Copy(draft); result.LvItemId = item.Id; result.Quantity = null;
         if (hasQuantity.IsChecked == true)
         {

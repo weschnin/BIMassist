@@ -18,16 +18,24 @@ public sealed class AvaTemplateWindow : Window
     private readonly W.TextBlock identity = EditorUi.Text("");
     private readonly W.TextBlock bgkSource = EditorUi.Text("");
     private readonly W.TextBlock typeSource = EditorUi.Text("");
-    private readonly W.TextBlock sources = EditorUi.Text("");
+    private readonly W.TextBlock bgkSourceInfo = EditorUi.Text("");
+    private readonly W.TextBlock lvSourceInfo = EditorUi.Text("");
+    private readonly W.TextBlock parameterSourceInfo = EditorUi.Text("");
+    private readonly W.StackPanel sources = new();
+    private readonly W.TextBlock activeTemplatePath = EditorUi.Text("");
+    private readonly W.Button catalogExpandAll;
+    private readonly W.Button catalogCollapseAll;
     private readonly W.TextBlock status = EditorUi.Text("");
     private readonly W.TreeView mappings = new() { Margin = new Thickness(6) };
     private readonly W.TreeView catalogTree = new() { Margin = new Thickness(6) };
+    private readonly Dictionary<string, bool> catalogTreeExpansion = new(StringComparer.Ordinal);
     private readonly W.DataGrid checklist = Table();
     private readonly W.DataGrid diagnostics = Table();
     private readonly W.DataGrid catalog = Table();
     private readonly W.ComboBox catalogKind = new() { ItemsSource = new[] { "BGK und Typen", "LV-Positionen", "Gemeinsame Parameter" }, SelectedIndex = 0, Width = 240, MinHeight = 30, Margin = new Thickness(0, 0, 10, 8) };
     private readonly W.TextBox catalogSearch = EditorUi.Input();
     private bool refreshing;
+    private bool refreshingCatalogTree;
     private bool shuttingDown;
 
     // Replace only human interactions in STA tests; all real editor/save/Closing paths still run.
@@ -42,6 +50,8 @@ public sealed class AvaTemplateWindow : Window
     public AvaTemplateWindow(AvaWorkspace workspace)
     {
         this.workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
+        catalogExpandAll = EditorUi.Button("Alles aufklappen", () => ExpandCatalogs(true));
+        catalogCollapseAll = EditorUi.Button("Alles zuklappen", () => ExpandCatalogs(false));
         NameScope.SetNameScope(this, new NameScope());
         Title = "AVA-Vorlage / Prüfliste"; Width = 1200; Height = 820; MinWidth = 900; MinHeight = 620;
         ResizeMode = ResizeMode.CanResize; WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -54,6 +64,16 @@ public sealed class AvaTemplateWindow : Window
         toolbar.Children.Add(EditorUi.Button("Speichern unter…", () => Save(true)));
         toolbar.Children.Add(EditorUi.Button("JSON importieren…", () => Open(true)));
         toolbar.Children.Add(EditorUi.Button("JSON exportieren…", Export));
+        activeTemplatePath.Name = "TemplateFilePath"; RegisterName(activeTemplatePath.Name, activeTemplatePath);
+        var templatePathBorder = new W.Border
+        {
+            BorderBrush = System.Windows.Media.Brushes.Gray,
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(8, 3, 8, 3),
+            Margin = new Thickness(0, 0, 0, 8),
+            Child = activeTemplatePath
+        };
+        W.DockPanel.SetDock(templatePathBorder, W.Dock.Top); root.Children.Add(templatePathBorder);
         var notice = EditorUi.Text("Dateibasierter Vorlageneditor · keine Modellprüfung und keine Revit-Schreibzugriffe. Mengenermittlung / Mengenexport erfolgt separat über den Ribbon-Befehl. Die Prüfliste wird aus der Vorlage abgeleitet; sie ist kein bereits ausgeführter Modellcheck.");
         W.DockPanel.SetDock(notice, W.Dock.Top); root.Children.Add(notice);
         workspaceWarning.Name = "WorkspaceWarning"; RegisterName(workspaceWarning.Name, workspaceWarning);
@@ -126,16 +146,28 @@ public sealed class AvaTemplateWindow : Window
         buttons.Children.Add(EditorUi.Button("BGK-XML importieren…", () => ImportCatalog("bgk")));
         buttons.Children.Add(EditorUi.Button("LV X82 importieren…", () => ImportCatalog("lv")));
         buttons.Children.Add(EditorUi.Button("Parameter-TXT importieren…", () => ImportCatalog("parameters")));
+        sources.Children.Add(bgkSourceInfo);
+        var bgkDivider = new W.Separator { Name = "BgkSourceDivider", Margin = new Thickness(0, 2, 0, 2) }; RegisterName(bgkDivider.Name, bgkDivider); sources.Children.Add(bgkDivider);
+        sources.Children.Add(lvSourceInfo);
+        var lvDivider = new W.Separator { Name = "LvSourceDivider", Margin = new Thickness(0, 2, 0, 2) }; RegisterName(lvDivider.Name, lvDivider); sources.Children.Add(lvDivider);
+        sources.Children.Add(parameterSourceInfo);
         W.DockPanel.SetDock(sources, W.Dock.Top); panel.Children.Add(sources);
-        var hierarchyHint = EditorUi.Text("BGK: Baugruppe → Typ. StammLV: LV → Abschnitt → OZ-Nummer / Leistung. Interne Schlüssel und GUIDs werden bei LV-Positionen nicht als Anzeigespalte verwendet.");
+        var hierarchyHint = EditorUi.Text("BGK: Baugruppe → Typ. StammLV: LV → Titel → OZ-Nummer / Leistung. Interne Schlüssel und GUIDs werden bei LV-Positionen nicht als Anzeigespalte verwendet.");
         W.DockPanel.SetDock(hierarchyHint, W.Dock.Top); panel.Children.Add(hierarchyHint);
         var filter = new W.DockPanel(); W.DockPanel.SetDock(filter, W.Dock.Top); panel.Children.Add(filter);
         W.DockPanel.SetDock(catalogKind, W.Dock.Left); filter.Children.Add(catalogKind); filter.Children.Add(catalogSearch);
         catalogSearch.ToolTip = "Katalog durchsuchen – exakte Schlüssel werden nicht verändert.";
         catalogKind.SelectionChanged += (_, _) => RefreshCatalog(); catalogSearch.TextChanged += (_, _) => RefreshCatalog();
+        catalogExpandAll.Name = "CatalogExpandAll"; RegisterName(catalogExpandAll.Name, catalogExpandAll);
+        catalogCollapseAll.Name = "CatalogCollapseAll"; RegisterName(catalogCollapseAll.Name, catalogCollapseAll);
+        var expandButtons = new W.WrapPanel { Margin = new Thickness(0, 0, 0, 5) };
+        expandButtons.Children.Add(catalogExpandAll); expandButtons.Children.Add(catalogCollapseAll);
+        W.DockPanel.SetDock(expandButtons, W.Dock.Top); panel.Children.Add(expandButtons);
         AddColumn(catalog, "Schlüssel / GUID", "Key", 270); AddColumn(catalog, "Typ / OZ / Spezifikation", "Detail", 190); AddColumn(catalog, "Bezeichnung", "Description", 1, true); AddColumn(catalog, "Einheit / Gruppe", "Unit", 110);
         catalogTree.Name = "CatalogTree"; RegisterName(catalogTree.Name, catalogTree);
-        panel.Children.Add(catalogTree); panel.Children.Add(catalog); return panel;
+        var catalogContent = new W.Grid();
+        catalogContent.Children.Add(catalogTree); catalogContent.Children.Add(catalog);
+        panel.Children.Add(catalogContent); return panel;
     }
     private UIElement MappingTab()
     {
@@ -182,13 +214,30 @@ public sealed class AvaTemplateWindow : Window
     {
         var selected = SelectedMapping;
         if (selected?.Rule is not { } rule) { EditorUi.Error(this, new InvalidDataException("Zuerst eine Zuordnung oder ihre Leistungsposition auswählen.")); return; }
-        if (edit && selected.Position == null) return;
-        var dialog = new PositionEditorWindow(editor.Document, edit ? selected.Position : null) { Owner = this };
-        if (dialog.ShowDialog() == true && dialog.Result is { } result) EditorUi.Guard(this, () => {
-            var copy = TemplateJson.Copy(rule); int index = copy.Positions.FindIndex(p => p.Id == result.Id);
-            if (index < 0) copy.Positions.Add(result); else copy.Positions[index] = result;
-            editor.UpsertMapping(copy); Refresh();
-        });
+        if (edit)
+        {
+            if (selected.Position == null) return;
+            var positionDialog = new PositionEditorWindow(editor.Document, selected.Position) { Owner = this };
+            if (positionDialog.ShowDialog() == true && positionDialog.Result is { } edited) EditorUi.Guard(this, () => {
+                var copy = TemplateJson.Copy(rule); int index = copy.Positions.FindIndex(p => p.Id == edited.Id);
+                if (index >= 0) copy.Positions[index] = edited;
+                editor.UpsertMapping(copy); Refresh();
+            });
+            return;
+        }
+        var picker = new LvPositionPickerWindow(editor.Document) { Owner = this };
+        if (picker.ShowDialog() != true) return;
+        var copyRule = AddSelectedPositions(rule, picker.SelectedPositionIds, editor.Document.LvCatalog.Entries.Select(entry => entry.Id));
+        if (copyRule.Positions.Count != rule.Positions.Count) { editor.UpsertMapping(copyRule); Refresh(); }
+    }
+    internal static MappingRule AddSelectedPositions(MappingRule rule, IEnumerable<string> selectedIds, IEnumerable<string> validIds)
+    {
+        var copy = TemplateJson.Copy(rule);
+        var knownIds = validIds.ToHashSet(StringComparer.Ordinal);
+        var existingIds = copy.Positions.Select(position => position.LvItemId).ToHashSet(StringComparer.Ordinal);
+        foreach (var id in selectedIds)
+            if (knownIds.Contains(id) && existingIds.Add(id)) copy.Positions.Add(new MappingPosition { LvItemId = id });
+        return copy;
     }
     internal void RefreshMappings()
     {
@@ -217,6 +266,19 @@ public sealed class AvaTemplateWindow : Window
     {
         void Apply(W.ItemsControl parent) { foreach (W.TreeViewItem item in parent.Items) { item.IsExpanded = expand; Apply(item); } }
         Apply(mappings);
+    }
+    private void ExpandCatalogs(bool expand)
+    {
+        void Apply(W.ItemsControl parent)
+        {
+            foreach (W.TreeViewItem item in parent.Items)
+            {
+                item.IsExpanded = expand;
+                if (item.Tag is CatalogTreeNode node) catalogTreeExpansion[node.Key] = expand;
+                Apply(item);
+            }
+        }
+        Apply(catalogTree);
     }
     private void Open(bool import)
     {
@@ -320,7 +382,10 @@ public sealed class AvaTemplateWindow : Window
             identity.Text = $"Profil-ID: {editor.Document.ProfileId}   |   Schema: {editor.Document.SchemaVersion}   |   Datei: {editor.FilePath ?? "noch nicht gespeichert"}";
             bgkSource.Text = "BGK: " + editor.Document.BgkIdentification; typeSource.Text = "Typnummer: " + editor.Document.TypeIdentification;
             string Describe<T>(string label, Catalog<T> c) => $"{label}: {c.Entries.Count} Einträge | {c.Source.FileName} | {c.Source.Format}\nSHA-256: {c.Source.Sha256}";
-            sources.Text = Describe("BGK", editor.Document.BgkCatalog) + "\n" + Describe("LV", editor.Document.LvCatalog) + "\n" + Describe("Parameter", editor.Document.ParameterCatalog);
+            bgkSourceInfo.Text = Describe("BGK-Quelle", editor.Document.BgkCatalog);
+            lvSourceInfo.Text = Describe("LV-Quelle", editor.Document.LvCatalog);
+            parameterSourceInfo.Text = Describe("Parameter-Quelle", editor.Document.ParameterCatalog);
+            activeTemplatePath.Text = "Aktive AVA-Vorlage: " + (editor.FilePath ?? "noch nicht gespeichert");
             RefreshMappings();
             RefreshCatalog(); RefreshDerived();
             Title = "AVA-Vorlage / Prüfliste – " + editor.Document.Name + (editor.IsDirty ? " *" : "");
@@ -336,25 +401,34 @@ public sealed class AvaTemplateWindow : Window
     private void RefreshCatalog()
     {
         var filter = catalogSearch.Text;
+        catalogExpandAll.IsEnabled = catalogKind.SelectedIndex is 0 or 1;
+        catalogCollapseAll.IsEnabled = catalogKind.SelectedIndex is 0 or 1;
         if (catalogKind.SelectedIndex is 0 or 1)
         {
             catalogTree.Visibility = Visibility.Visible; catalog.Visibility = Visibility.Collapsed;
             var nodes = catalogKind.SelectedIndex == 0
                 ? CatalogTreeModel.BuildBgk(editor.Document, filter)
                 : CatalogTreeModel.BuildLv(editor.Document, filter);
-            catalogTree.Items.Clear();
-            W.TreeViewItem Create(CatalogTreeNode node)
+            refreshingCatalogTree = true;
+            try
             {
-                var item = new W.TreeViewItem
+                catalogTree.Items.Clear();
+                W.TreeViewItem Create(CatalogTreeNode node)
                 {
-                    Tag = node,
-                    Header = new W.TextBlock { Text = node.Label, TextWrapping = TextWrapping.Wrap, MaxWidth = 1000, Margin = new Thickness(3, 4, 3, 4) },
-                    IsExpanded = true
-                };
-                foreach (var child in node.Children) item.Items.Add(Create(child));
-                return item;
+                    var item = new W.TreeViewItem
+                    {
+                        Tag = node,
+                        Header = new W.TextBlock { Text = node.Label, TextWrapping = TextWrapping.Wrap, MaxWidth = 1000, Margin = new Thickness(3, 4, 3, 4) },
+                        IsExpanded = catalogTreeExpansion.GetValueOrDefault(node.Key, true)
+                    };
+                    item.Expanded += (_, _) => { if (!refreshingCatalogTree) catalogTreeExpansion[node.Key] = true; };
+                    item.Collapsed += (_, _) => { if (!refreshingCatalogTree) catalogTreeExpansion[node.Key] = false; };
+                    foreach (var child in node.Children) item.Items.Add(Create(child));
+                    return item;
+                }
+                foreach (var node in nodes) catalogTree.Items.Add(Create(node));
             }
-            foreach (var node in nodes) catalogTree.Items.Add(Create(node));
+            finally { refreshingCatalogTree = false; }
             return;
         }
         catalogTree.Visibility = Visibility.Collapsed; catalog.Visibility = Visibility.Visible;

@@ -76,7 +76,7 @@ internal static class CatalogTreeModel
             var title = category.Elements().Where(element => element.Name == Ns + "OutlineText" || element.Name == Ns + "DetailTxt")
                 .Select(ReadText).FirstOrDefault(text => !string.IsNullOrWhiteSpace(text)) ?? "";
             var node = new CatalogTreeNode("category:" + category.Attribute("ID")?.Value,
-                "Abschnitt " + part + (title.Length == 0 ? "" : " — " + title), (string?)category.Attribute("ID") ?? "");
+                "Titel " + part + (title.Length == 0 ? "" : " — " + title), (string?)category.Attribute("ID") ?? "");
             parent.Children.Add(node);
             foreach (var child in category.Elements(Ns + "BoQBody")) AddBody(child, node, entries);
         }
@@ -111,7 +111,7 @@ internal static class CatalogTreeModel
                 var path = entry.BoqId + "\0" + sectionNumber;
                 if (!pathNodes.TryGetValue(path, out var section))
                 {
-                    section = new("section:" + path, "Abschnitt " + sectionNumber);
+                    section = new("section:" + path, "Titel " + sectionNumber);
                     pathNodes.Add(path, section); parent.Children.Add(section);
                 }
                 parent = section;
@@ -119,6 +119,22 @@ internal static class CatalogTreeModel
             parent.Children.Add(new("item:" + entry.Id, "OZ " + entry.Ordinal + " — " + entry.Text, entry.Id));
         }
         return roots;
+    }
+
+    public static IReadOnlyList<string> GetPositionIds(CatalogTreeNode node)
+    {
+        var ids = new List<string>();
+        void Visit(CatalogTreeNode current)
+        {
+            if (current.Key.StartsWith("item:", StringComparison.Ordinal))
+            {
+                if (!string.IsNullOrEmpty(current.SourceId)) ids.Add(current.SourceId);
+                return;
+            }
+            foreach (var child in current.Children) Visit(child);
+        }
+        Visit(node);
+        return ids.Distinct(StringComparer.Ordinal).ToArray();
     }
 
     private static List<CatalogTreeNode> Filter(IEnumerable<CatalogTreeNode> nodes, string filter)
