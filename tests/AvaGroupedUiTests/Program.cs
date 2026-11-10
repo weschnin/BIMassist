@@ -18,6 +18,7 @@ internal static class Program
             t.LvCatalog.Entries.Add(new("length", "b", ["02"], "02", "Leistung", "", "m"));
             var first = new MappingPosition { LvItemId = "pieces", Quantity = new() { Kind = QuantityKind.Constant, Source = null, ConstantValue = 1, Unit = "St" } };
             var second = new MappingPosition { LvItemId = "length", Quantity = new() { Kind = QuantityKind.Formula, Source = null, Unit = "m", Expression = "2 * AVA_Laenge + 0.5", Variables = [new() { Name = "AVA_Laenge", Source = new() { Kind = ParameterKind.LocalFamily, Name = "AVA_Laenge", Spec = "LENGTH", Scope = ParameterScope.Instance }, Unit = "m" }] } };
+            t.LvCatalog.Entries.Add(new("nested", "b", ["01", "10", "010"], "01.10.010", "Ventil", "Detail", "St"));
             var rule = new MappingRule { BgkKey = "44-40", TypeNumber = "110", Positions = [first] }; t.Mappings.Add(rule);
             var group = new MappingEditorWindow(t, rule); group.UpsertPosition(second);
             Check(group.BuildRule().Positions.Count == 2 && rule.Positions.Count == 1, "child add mutates original/loses sibling");
@@ -41,6 +42,15 @@ internal static class Program
             Field<TextBox>(position, "expression").Text = "AVA_Laenge / 0"; Reject(() => position.EvaluatePreview(new Dictionary<string, decimal> { ["AVA_Laenge"] = 2 }));
             Field<TextBox>(position, "expression").Text = "Unknown + 1"; Reject(() => position.EvaluatePreview(new Dictionary<string, decimal> { ["AVA_Laenge"] = 2 })); position.Close();
             Check(MappingTreeModel.Build(t).Single().Children.Single().Children.Single().Children.Count == 2, "wrong BGK/type/group/position tree");
+            var bgkTree = CatalogTreeModel.BuildBgk(t, "110");
+            Check(bgkTree.Count == 1 && bgkTree[0].Children.Single().Label.Contains("Typ 110"), "BGK source tree does not retain BGK → type hierarchy or filtering");
+            var lvTree = CatalogTreeModel.BuildLv(t);
+            Check(lvTree.Count == 1 && lvTree[0].Children.Any(x => x.Label.Contains("Abschnitt 01")), "LV source tree lacks section hierarchy");
+            var lvSection = lvTree[0].Children.Single(x => x.Label.Contains("Abschnitt 01"));
+            Check(lvSection.Children.Any(x => x.Label.StartsWith("OZ 01 —", StringComparison.Ordinal)), "LV leaves do not show the OZ number");
+            var nestedSection = lvSection.Children.Single(x => x.Label == "Abschnitt 01.10");
+            Check(nestedSection.Children.Single().Label.StartsWith("OZ 01.10.010 —", StringComparison.Ordinal), "Nested LV position does not show its OZ number");
+            Check(!nestedSection.Children.Single().Label.Contains("nested", StringComparison.Ordinal), "LV internal key/GUID leaked into the visible row");
             var temp = Path.Combine(Path.GetTempPath(), "ava-group-ui-" + Guid.NewGuid() + ".json");
             try
             {
@@ -50,6 +60,16 @@ internal static class Program
                 root = (TreeViewItem)tree.Items[0]; type = (TreeViewItem)root.Items[0]; row = (TreeViewItem)type.Items[0];
                 Check(!row.IsExpanded && row.Items.Count == 2, "collapsed state/children lost on refresh");
                 Check((tree.SelectedItem as TreeViewItem)?.Tag is MappingTreeNode node && node.Key == ((MappingTreeNode)type.Tag).Key, "selection lost on refresh");
+                var catalogKind = Field<ComboBox>(main, "catalogKind");
+                var catalogTree = (TreeView)main.FindName("CatalogTree");
+                catalogKind.SelectedIndex = 1; catalogKind.SelectedIndex = 0; Layout(main);
+                Check(((TreeViewItem)catalogTree.Items[0]).Items.Count == 1, "BGK catalog is not displayed as a hierarchy");
+                catalogKind.SelectedIndex = 1; Layout(main);
+                var lvRoot = (TreeViewItem)catalogTree.Items[0];
+                Check(lvRoot.Header is TextBlock rootLabel && rootLabel.Text.StartsWith("LV ", StringComparison.Ordinal), "LV source tree root missing");
+                Check(lvRoot.Items.Count >= 1, "LV category hierarchy not rendered");
+                var category = lvRoot.Items.Cast<TreeViewItem>().Single(x => ((TextBlock)x.Header).Text.Contains("Abschnitt 01"));
+                Check(category.Header is TextBlock categoryLabel && categoryLabel.Text.Contains("Abschnitt"), "LV category node not rendered");
                 if (args.Length > 1) { row.IsExpanded = true; Render(main, args[1], "grouped.png", 2); }
                 main.Close();
             }

@@ -4,6 +4,7 @@ using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using BIMassist.Ava.Core;
+using BIMassist.Ava.Revit;
 using BIMassist.Commands;
 using Microsoft.Win32;
 
@@ -40,6 +41,22 @@ internal static class ExecuteTests
             Equal(TaskDialogResult.No, TaskDialog.Confirmations.Single().DefaultButton);
             Check(File.ReadAllText(f.TemplatePath) == TemplateJson.Serialize(template), "Template mutated");
             Equal(1, Directory.GetFiles(f.Directory, "*.x31").Length);
+        });
+        Test("grouping selection is read from an arbitrary chosen text parameter and rendered like the screenshot", f =>
+        {
+            f.Instance.Parameters.Add(new("Teilbereich", SpecTypeId.String.Text, "Erdgeschoss Nord", StorageType.String));
+            AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.BuildingArea, new("Teilbereich", ParameterScope.Instance)));
+            f.Remember(f.Template()); f.ApproveAndSave();
+            Equal(Result.Succeeded, f.Execute());
+            var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
+            Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).TrimEnd() == "Baubereich oder Gewerk: Erdgeschoss Nord"), "Selected group label missing");
+            Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).TrimEnd() == "Revit-Element-ID: 4294967296"), "Element ID comment missing");
+            Contains("Baubereich nach Parameter „Teilbereich (Instanz)“", TaskDialog.Confirmations.Single().MainContent);
+        });
+        Test("cancelled grouping choice creates no confirmation or X31 file", f =>
+        {
+            AvaGroupingDialog.Choices.Enqueue(null); f.Remember(f.Template()); f.ApproveAndSave();
+            Equal(Result.Cancelled, f.Execute()); f.NoOutput(); Equal(0, TaskDialog.Confirmations.Count); Equal(0, CommonDialog.Shown.Count);
         });
         Test("missing project fails before template or save dialogs", f =>
         {
@@ -173,7 +190,7 @@ internal static class ExecuteTests
             Contains("Keine automatische Umrechnung", confirmation.MainContent); Contains("Menge St / LV-Einheit m", confirmation.ExpandedContent);
             var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToList();
             Check(rows.Any(r => r.Contains("912=")), "Unit mismatch silently converted numeric result");
-            Check(rows.Any(r => r.Contains("Ergebniseinheit: St")), "Original unit absent from explanation");
+            Check(!rows.Any(r => r.Contains("Info:")), "Screenshot-oriented output includes extra explanation rows");
         });
         Test("unit mismatch refusal creates no file", f =>
         {
@@ -239,13 +256,13 @@ internal static class ExecuteTests
             Equal(Result.Succeeded, f.Execute()); Equal(IntPtr.Zero, CommonDialog.Shown.Single().Owner);
             Equal(0, System.Windows.Window.Created);
         });
-        Test("real exported explanation retains document, numeric Id and UniqueId", f =>
+        Test("screenshot-oriented export keeps the numeric Revit ElementId without extra provenance rows", f =>
         {
             f.Remember(f.Template()); f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
             var comments = string.Concat(XDocument.Load(f.Output).Descendants(Ns + "QTakeoff")
-                .Select(e => e.Attribute("Row")!.Value).Where(r => r[12] == '*').Select(r => r[19..69]));
-            Contains("Element 4294967296", comments); Contains("Dokument: " + f.Document.PathName, comments);
-            Contains("UniqueId: actual-element-unique-identity", comments);
+                .Select(e => e.Attribute("Row")!.Value).Where(r => r[12] == '*').Select(r => r[13..69]));
+            Contains("Revit-Element-ID: 4294967296", comments);
+            Check(!comments.Contains("Dokument:", StringComparison.Ordinal) && !comments.Contains("UniqueId:", StringComparison.Ordinal), "Verbose provenance leaked into the California row view");
         });
         Console.WriteLine($"Execute integration with Revit/UI/Win32 doubles and real core/writer: {passed} passed; {failed} failed (not a Revit-host test)");
         if (failed != 0) Environment.ExitCode = 1;
@@ -267,7 +284,7 @@ internal static class ExecuteTests
             System.IO.Directory.CreateDirectory(Directory);
             previousSettings = Environment.GetEnvironmentVariable("BIMASSIST_AVA_WORKSPACE_SETTINGS");
             Environment.SetEnvironmentVariable("BIMASSIST_AVA_WORKSPACE_SETTINGS", Settings);
-            TaskDialog.Reset(); CommonDialog.Reset(); System.Windows.Window.Created = System.Windows.Window.Closed = 0;
+            TaskDialog.Reset(); CommonDialog.Reset(); AvaGroupingDialog.Reset(); System.Windows.Window.Created = System.Windows.Window.Closed = 0;
             var symbol = new FamilySymbol { Id = new(200) };
             symbol.BuiltIns[BuiltInParameter.ASSEMBLY_CODE] = new("BGK", SpecTypeId.String.Text, "001", StorageType.String);
             symbol.BuiltIns[BuiltInParameter.ALL_MODEL_TYPE_COMMENTS] = new("Typ", SpecTypeId.String.Text, "02", StorageType.String);

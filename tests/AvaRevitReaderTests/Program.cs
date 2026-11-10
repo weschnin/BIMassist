@@ -40,6 +40,17 @@ instance.Parameters.RemoveAll(p => p.Definition.Name == "Number"); instance.Para
 Reject(() => RevitQuantityReader.Read(document, instance, number, "1"), "Decimal overflow accepted");
 instance.Parameters.RemoveAll(p => p.Definition.Name == "Number"); instance.Parameters.Add(new("Number", SpecTypeId.Number, 2.5d, StorageType.Double));
 Check(RevitQuantityReader.Read(document, instance, number, "St").Number == 2.5m, "Dimensionless numeric parameter was reinterpreted");
+instance.Parameters.Add(new("Gewerk", SpecTypeId.String.Text, "Rohbau", StorageType.String));
+symbol.Parameters.Add(new("Baubereich", SpecTypeId.String.Text, "Erdgeschoss", StorageType.String));
+var groupingOptions = RevitQuantityReader.GetGroupingParameterOptions(document);
+Check(groupingOptions.Contains(new("Gewerk", ParameterScope.Instance)), "Instance text grouping parameter was not offered");
+Check(groupingOptions.Contains(new("Baubereich", ParameterScope.Type)), "Type text grouping parameter was not offered");
+Check(!groupingOptions.Any(x => x.Name == "Number"), "Numeric parameter was offered for text grouping");
+Check(RevitQuantityReader.ReadGroupingLabels(document, ["100"], new("Gewerk", ParameterScope.Instance))["100"] == "Rohbau", "Instance grouping label changed");
+Check(RevitQuantityReader.ReadGroupingLabels(document, ["100"], new("Baubereich", ParameterScope.Type))["100"] == "Erdgeschoss", "Type grouping label changed");
+Reject(() => RevitQuantityReader.ReadGroupingLabels(document, ["100"], new("Absent", ParameterScope.Instance)), "Missing group label was guessed");
+instance.Parameters.Add(new("BlankGroup", SpecTypeId.String.Text, " ", StorageType.String));
+Reject(() => RevitQuantityReader.ReadGroupingLabels(document, ["100"], new("BlankGroup", ParameterScope.Instance)), "Blank group label was silently accepted");
 var boolean = new ParameterSource { Kind = ParameterKind.LocalFamily, Name = "Flag", Spec = "YESNO", Scope = ParameterScope.Instance };
 instance.Parameters.Add(new("Flag", SpecTypeId.Boolean.YesNo, 1, StorageType.Integer));
 Check(RevitQuantityReader.Read(document, instance, boolean, "").Boolean == true, "YESNO read wrong");

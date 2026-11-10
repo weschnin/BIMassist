@@ -6,7 +6,8 @@ using System.Xml.Linq;
 
 namespace BIMassist.Ava.Core;
 
-public sealed record QuantityTakeoffRow(string LvItemId, decimal Value, string Unit, string Explanation);
+public sealed record QuantityTakeoffRow(string LvItemId, decimal Value, string Unit, string Explanation,
+    string ElementId = "", string? GroupLabel = null, string? GroupKind = null);
 
 /// <summary>Portable DA31/3.3 (2023-01) writer. No Revit API, source-file access, or formula evaluation.</summary>
 public static class X31Writer
@@ -18,8 +19,8 @@ public static class X31Writer
     {
         if (template?.LvCatalog?.Entries == null || template.LvCatalog.Source == null || rows == null || rows.Count == 0)
             throw new InvalidDataException("LV und mindestens eine Mengenzeile sind erforderlich.");
-        // At least one explanation comment AND one numeric line per quantity.
-        if (rows.Count > 9999 * 260 / 2) throw new InvalidDataException("REB-Zeilenadressraum überschritten.");
+        // Every quantity needs at least one numeric address; optional group and element remarks are counted below.
+        if (rows.Count > 9999 * 260) throw new InvalidDataException("REB-Zeilenadressraum überschritten.");
         rows = rows.ToArray();
         var source = LoadSnapshot(template.LvCatalog.Source, out var imported);
         var entries = template.LvCatalog.Entries.ToArray();
@@ -35,16 +36,41 @@ public static class X31Writer
                 entry.Text != original.Text || entry.Description != original.Description)
                 throw new InvalidDataException("LV-Katalog stimmt nicht mit dem unveränderten X82-Snapshot überein.");
         }
-        long requiredLines = 0;
         foreach (var row in rows)
         {
             if (row == null || string.IsNullOrWhiteSpace(row.LvItemId) || !knownItems.Contains(row.LvItemId))
                 throw new InvalidDataException("Unbekannte oder leere LV-Position.");
             CheckText(row.Unit, 40, "Ergebniseinheit", false);
             CheckText(row.Explanation, 4096, "Erläuterung", true);
-            var explanationLength = "Ergebniseinheit: ".Length + row.Unit.Length + "; ".Length + row.Explanation.Length;
-            requiredLines += 1 + (explanationLength + 49) / 50;
-            if (requiredLines > 9999 * 260) throw new InvalidDataException("REB-Zeilenadressraum einschließlich Erläuterungen überschritten.");
+            if (!string.IsNullOrEmpty(row.ElementId)) CheckText(row.ElementId, 100, "Revit-Element-ID", false);
+            if (row.GroupLabel != null)
+            {
+                CheckText(row.GroupLabel, 4096, "Gewerk/Baubereich", false);
+                if (row.GroupKind is not ("Gewerk" or "Baubereich"))
+                    throw new InvalidDataException("Gruppierte Mengenzeilen benötigen den Gruppentyp 'Gewerk' oder 'Baubereich'.");
+            }
+            else if (row.GroupKind != null)
+                throw new InvalidDataException("Gruppentyp ohne Gruppenbezeichnung.");
+        }
+        var rowsByItem = rows.GroupBy(row => row.LvItemId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+        long requiredLines = 0;
+        foreach (var entry in entries)
+        {
+            if (!rowsByItem.TryGetValue(entry.Id, out var itemRows)) continue;
+            foreach (var group in itemRows.GroupBy(row => (row.GroupKind, row.GroupLabel))
+                         .OrderBy(group => group.Key.GroupKind ?? "", StringComparer.Ordinal)
+                         .ThenBy(group => group.Key.GroupLabel ?? "", StringComparer.Ordinal))
+            {
+                if (group.Key.GroupLabel != null)
+                    requiredLines += CommentLineCount("Baubereich oder Gewerk: " + group.Key.GroupLabel);
+                foreach (var row in group)
+                {
+                    if (row.ElementId.Length > 0) requiredLines += CommentLineCount("Revit-Element-ID: " + row.ElementId);
+                    requiredLines++;
+                }
+                if (requiredLines > 9999 * 260) throw new InvalidDataException("REB-Zeilenadressraum einschließlich Gruppen-/Elementerläuterungen überschritten.");
+            }
         }
         var boq = ValidateHierarchy(source);
         var outputBoq = new XElement(Ns + "BoQ", new XAttribute("ID", boq.Attribute("ID")!.Value),
@@ -52,21 +78,28 @@ public static class X31Writer
             Skeleton(boq.Element(SourceNs + "BoQBody")!));
         var items = outputBoq.Descendants(Ns + "Item").ToDictionary(x => x.Attribute("ID")!.Value, StringComparer.Ordinal);
         int index = 0;
-        foreach (var row in rows)
+        foreach (var entry in entries)
         {
-            var item = items[row.LvItemId];
+            if (!rowsByItem.TryGetValue(entry.Id, out var itemRows)) continue;
+            var item = items[entry.Id];
             var determination = item.Element(Ns + "QtyDeterm");
             if (determination == null) item.Add(determination = new XElement(Ns + "QtyDeterm"));
-            // REB 23.003 (2009), 2.2.9: '*' column 13, text columns 14..69.
-            // Prefix EVERY chunk so supplied text cannot become a #Bild directive.
-            var explanation = "Ergebniseinheit: " + row.Unit + "; " + row.Explanation;
-            for (int start = 0; start < explanation.Length; start += 50)
+            foreach (var group in itemRows.GroupBy(row => (row.GroupKind, row.GroupLabel))
+                         .OrderBy(group => group.Key.GroupKind ?? "", StringComparer.Ordinal)
+                         .ThenBy(group => group.Key.GroupLabel ?? "", StringComparer.Ordinal))
             {
-                var chunk = "Info: " + explanation.Substring(start, Math.Min(50, explanation.Length - start));
-                AddLine(determination, new string(' ', 12) + "*" + chunk.PadRight(56), index++);
+                if (group.Key.GroupLabel != null)
+                    AddComment(determination, "Baubereich oder Gewerk: " + group.Key.GroupLabel, ref index);
+                foreach (var row in group)
+                {
+                    // REB 23.003 (2009), 2.2.9: '*' column 13, text columns 14..69.
+                    // Element and grouping labels are ordinary comment lines, not numeric fields.
+                    if (row.ElementId.Length > 0)
+                        AddComment(determination, "Revit-Element-ID: " + row.ElementId, ref index);
+                    var formula = row.Value.ToString("0.############################", CultureInfo.InvariantCulture).Replace('.', ',') + "=";
+                    AddLine(determination, new string(' ', 29) + "91" + formula.PadRight(38), index++);
+                }
             }
-            var formula = row.Value.ToString("0.############################", CultureInfo.InvariantCulture).Replace('.', ',') + "=";
-            AddLine(determination, new string(' ', 29) + "91" + formula.PadRight(38), index++);
         }
         var document = new XDocument(new XDeclaration("1.0", "utf-8", null), new XElement(Ns + "GAEB",
             new XElement(Ns + "GAEBInfo", new XElement(Ns + "Version", "3.3"), new XElement(Ns + "VersDate", "2023-01"),
@@ -231,6 +264,24 @@ public static class X31Writer
     {
         var line = content + FormatAddress(index) + new string(' ', 5);
         determination.Add(new XElement(Ns + "QDetermItem", new XElement(Ns + "QTakeoff", new XAttribute("Row", line))));
+    }
+    private static void AddComment(XElement determination, string text, ref int index)
+    {
+        int start = 0;
+        while (start < text.Length)
+        {
+            var continuation = start == 0 ? "" : "Fortsetzung: ";
+            var length = Math.Min(56 - continuation.Length, text.Length - start);
+            var chunk = continuation + text.Substring(start, length);
+            AddLine(determination, new string(' ', 12) + "*" + chunk.PadRight(56), index++);
+            start += length;
+        }
+    }
+    private static int CommentLineCount(string text)
+    {
+        if (text.Length <= 56) return 1;
+        const int continuationCapacity = 56 - 13; // "Fortsetzung: " is repeated on every later row.
+        return 1 + (text.Length - 56 + continuationCapacity - 1) / continuationCapacity;
     }
 
     private static readonly Lazy<System.Xml.Schema.XmlSchemaSet> Schemas = new(() =>

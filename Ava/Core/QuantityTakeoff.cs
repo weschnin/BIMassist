@@ -9,7 +9,7 @@ namespace BIMassist.Ava.Core;
 public sealed record TakeoffValue(decimal? Number = null, string? Text = null, bool? Boolean = null);
 public sealed record TakeoffElement(string Id, Func<ParameterSource, string, TakeoffValue> Read, string SourceIdentity = "");
 public sealed record TakeoffIssue(string ElementId, string Message);
-public sealed record TakeoffLine(string LvItemId, decimal Value, string Unit, string Explanation);
+public sealed record TakeoffLine(string LvItemId, decimal Value, string Unit, string Explanation, string ElementId = "");
 /// <summary>Rows are ordered by input element, mapping, then position; Errors must block the entire export.
 /// Unmapped counts marked elements without an exact BGK/type rule, not elements whose conditions are false.</summary>
 public sealed record TakeoffResult(IReadOnlyList<TakeoffLine> Rows, IReadOnlyList<TakeoffIssue> Errors,
@@ -132,7 +132,7 @@ public static class QuantityTakeoff
         }
         return new(position.LvItemId, value, quantity.Unit,
             $"Element {elementId}; " + (string.IsNullOrEmpty(sourceIdentity) ? "" : sourceIdentity + "; ") +
-            $"Rule {ruleId}; Position {position.Id}; {expression} = {value.ToString(CultureInfo.InvariantCulture)} {quantity.Unit}");
+            $"Rule {ruleId}; Position {position.Id}; {expression} = {value.ToString(CultureInfo.InvariantCulture)} {quantity.Unit}", elementId);
     }
 
     private readonly record struct ReadKey(ParameterKind Kind, ParameterScope Scope, Guid SharedGuid,

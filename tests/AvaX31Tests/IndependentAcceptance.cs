@@ -87,7 +87,8 @@ internal static class IndependentAcceptance
         Require(result.Rows.Select(x => x.Value).SequenceEqual(new[] { 2m, 250m, 7.5m }), "Independent sibling quantity changed");
         // Refuse to overwrite any user or prior output file.
         Require(!File.Exists(outputPath), "Acceptance artifact exists; choose a fresh scratch output filename");
-        X31Writer.Save(outputPath, template, result.Rows.Select(x => new QuantityTakeoffRow(x.LvItemId, x.Value, x.Unit, x.Explanation)).ToArray());
+        X31Writer.Save(outputPath, template, result.Rows.Select(x => new QuantityTakeoffRow(x.LvItemId, x.Value, x.Unit, x.Explanation,
+            x.ElementId, "Erdgeschoss", "Baubereich")).ToArray());
         var savedBytes = File.ReadAllBytes(outputPath); var exported = Parse(savedBytes); Validate(exported, schemas);
         var originalHierarchy = original.Descendants().Where(IsHierarchy).Select(Describe).ToArray();
         var exportedHierarchy = exported.Descendants().Where(IsHierarchy).Select(Describe).ToArray();
@@ -101,13 +102,15 @@ internal static class IndependentAcceptance
         {
             var lines = exported.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == expected.LvItemId)
                 .Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
-            Require(lines.Where(x => x[12] == '*').All(x => x.Substring(13, 6) == "Info: "), "Unsafe text directive");
-            var comments = string.Concat(lines.Where(x => x[12] == '*').Select(x => x.Substring(19, 50))).TrimEnd();
-            Require(comments == "Ergebniseinheit: " + expected.Unit + "; " + expected.Explanation && comments.Contains(identity), "Explanation or full source identity lost");
+            var comments = lines.Where(x => x[12] == '*').Select(x => x.Substring(13, 56).TrimEnd()).ToArray();
+            Require(comments.Contains("Baubereich oder Gewerk: Erdgeschoss") && comments.Contains("Revit-Element-ID: " + expected.ElementId),
+                "Grouping or element reference does not match the California row layout");
+            Require(!comments.Any(x => x.StartsWith("Info:", StringComparison.Ordinal) || x.Contains("UniqueId:", StringComparison.Ordinal)),
+                "Verbose internal source data leaked into the California row layout");
             var numeric = lines.Single(x => x[12] != '*');
             Require(numeric[..29].All(c => c == ' ') && numeric.Substring(29, 2) == "91", "Unexpected numeric metadata");
             Require(decimal.Parse(numeric.Substring(31, 38).Trim().TrimEnd('='), CultureInfo.GetCultureInfo("de-DE")) == expected.Value, "Literal differs from precomputed decimal");
-            proof.Add("Synthetic quantity: " + expected.LvItemId + " / OZ " + catalog.Entries.Single(x => x.Id == expected.LvItemId).Ordinal + " = " + expected.Value.ToString(CultureInfo.InvariantCulture) + " " + expected.Unit);
+            proof.Add("Synthetic quantity: " + expected.LvItemId + " / OZ " + catalog.Entries.Single(x => x.Id == expected.LvItemId).Ordinal + " = " + expected.Value.ToString(CultureInfo.InvariantCulture) + " " + expected.Unit + "; screenshot-style group + ElementId rows");
         }
         proof.Add("X82 SHA256 " + Hash(sourceBytes) + "; " + catalog.Entries.Count + " item IDs and all original BoQ/category/item hierarchy + OZ attributes + BoQBkdn unchanged");
         proof.Add("OUTPUT " + Path.GetFullPath(outputPath) + "; bytes=" + savedBytes.Length + "; SHA256 " + Hash(savedBytes) + "; fresh official schema valid; " + allRows.Length + " unique REB addresses incl comments");

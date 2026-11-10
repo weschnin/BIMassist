@@ -64,6 +64,14 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                     + "\nKeine Datei erstellt. Verknüpfte Modelle werden nicht ausgewertet.");
                 return Result.Cancelled;
             }
+            var grouping = AvaGroupingDialog.Show(commandData.Application, document);
+            if (grouping == null) return Result.Cancelled;
+            var labels = grouping.Mode == QuantityGroupingMode.Position
+                ? new Dictionary<string, string>(StringComparer.Ordinal)
+                : RevitQuantityReader.ReadGroupingLabels(document, result.Rows.Select(r => r.ElementId), grouping.Parameter!);
+            var exportRows = result.Rows.Select(r => new QuantityTakeoffRow(r.LvItemId, r.Value, r.Unit, r.Explanation,
+                r.ElementId, grouping.Mode == QuantityGroupingMode.Position ? null : labels[r.ElementId],
+                grouping.Mode == QuantityGroupingMode.Position ? null : grouping.GroupKind)).ToList();
             var units = result.Rows.Where(r => template.LvCatalog.Entries.Single(l => l.Id == r.LvItemId).Unit != r.Unit)
                 .Select(r => { var lv = template.LvCatalog.Entries.Single(l => l.Id == r.LvItemId); return lv.Ordinal + ": Menge " + r.Unit + " / LV-Einheit " + lv.Unit; })
                 .Distinct(StringComparer.Ordinal).ToList();
@@ -72,6 +80,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             {
                 MainInstruction = "Mengenermittlung als X31 exportieren?",
                 MainContent = "Projekt: " + document.Title + "\nVorlage: " + template.Name + "\n" + workspace.LastTemplatePath
+                    + "\nGruppierung: " + (grouping.Mode == QuantityGroupingMode.Position ? "nach Leistungspositionen" : grouping.GroupKind + " nach Parameter „" + grouping.Parameter!.DisplayLabel + "“")
                     + "\n\n" + result.Examined + " Modellelemente untersucht; " + result.Rows.Count + " Mengenzeilen."
                     + "\nOhne vollständige Kennzeichnung: " + result.Unmarked + "; ohne BGK-/Typzuordnung: " + result.Unmapped + "."
                     + "\n\nUmfang: alle Modellelement-Instanzen im aktuellen Hauptmodell, keine verknüpften Modelle. Der textuelle Prüfumfang ist kein Kategorienfilter; dies ist keine vollständige Modellprüfung."
@@ -95,7 +104,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             if (string.Equals(outputPath, Path.GetFullPath(workspace.LastTemplatePath!), StringComparison.OrdinalIgnoreCase)
                 || string.Equals(outputPath, Path.GetFullPath(AvaWorkspace.DefaultSettingsPath), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Die X31-Ausgabe darf weder die aktive AVA-Vorlage noch die Arbeitsbereich-Einstellungen überschreiben.");
-            X31Writer.Save(outputPath, template, result.Rows.Select(r => new QuantityTakeoffRow(r.LvItemId, r.Value, r.Unit, r.Explanation)).ToList());
+            X31Writer.Save(outputPath, template, exportRows);
             TaskDialog.Show("AVA – Mengenermittlung", "X31-Datei erstellt und zurückgelesen.\n" + result.Rows.Count + " Mengenzeilen.\n\n" + outputPath
                 + "\n\nDer Import in California ist separat zu prüfen.");
             return Result.Succeeded;

@@ -9,17 +9,75 @@ public static class RevitQuantityReader
 {
     public static IEnumerable<TakeoffElement> Elements(Document document, AvaTemplate template)
     {
-        using var collector = new FilteredElementCollector(document);
-        foreach (var element in collector.WhereElementIsNotElementType())
+        foreach (var element in ModelInstances(document))
         {
-            if (element is RevitLinkInstance or ImportInstance { IsLinked: true }) continue;
-            if (element.Category?.CategoryType != CategoryType.Model) continue;
             var captured = element;
             yield return new TakeoffElement(element.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 (source, unit) => Read(document, captured, source, unit,
                     ReferenceEquals(source, template.BgkIdentification) || ReferenceEquals(source, template.TypeIdentification)),
                 $"Dokument: {(string.IsNullOrWhiteSpace(document.PathName) ? document.Title : document.PathName)}; UniqueId: {element.UniqueId}");
         }
+    }
+
+    public static IReadOnlyList<GroupingParameterOption> GetGroupingParameterOptions(Document document)
+    {
+        var options = new HashSet<GroupingParameterOption>();
+        foreach (var instance in ModelInstances(document))
+        {
+            AddTextParameters(instance, ParameterScope.Instance, options);
+            var type = document.GetElement(instance.GetTypeId());
+            if (type != null) AddTextParameters(type, ParameterScope.Type, options);
+        }
+        return options.OrderBy(option => option.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(option => option.Scope).ToArray();
+    }
+
+    public static IReadOnlyDictionary<string, string> ReadGroupingLabels(Document document,
+        IEnumerable<string> elementIds, GroupingParameterOption option)
+    {
+        if (option == null || string.IsNullOrWhiteSpace(option.Name)) throw new InvalidDataException("Gruppierungsparameter fehlt.");
+        var requested = elementIds.ToHashSet(StringComparer.Ordinal);
+        var labels = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (requested.Count == 0) return labels;
+        foreach (var instance in ModelInstances(document))
+        {
+            var id = instance.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (!requested.Contains(id)) continue;
+            var owner = option.Scope == ParameterScope.Type ? document.GetElement(instance.GetTypeId()) : instance;
+            if (owner == null) throw new InvalidDataException($"Element {id}: der Typ für Gruppierungsparameter '{option.Name}' fehlt.");
+            var matches = owner.GetParameters(option.Name);
+            if (matches.Count != 1)
+                throw new InvalidDataException($"Element {id}: Gruppierungsparameter '{option.Name}' ist im gewählten Geltungsbereich {(matches.Count == 0 ? "nicht vorhanden" : "mehrdeutig")}.");
+            var parameter = matches[0];
+            if (parameter.StorageType != StorageType.String || !parameter.Definition.GetDataType().Equals(SpecTypeId.String.Text))
+                throw new InvalidDataException($"Element {id}: Gruppierungsparameter '{option.Name}' ist kein Textparameter.");
+            if (!parameter.HasValue || string.IsNullOrWhiteSpace(parameter.AsString()))
+                throw new InvalidDataException($"Element {id}: Gruppierungsparameter '{option.Name}' enthält keine Bezeichnung.");
+            var label = parameter.AsString()!;
+            if (label.Any(char.IsControl) || label.Any(char.IsSurrogate) ||
+                label.Any(c => char.GetUnicodeCategory(c) is System.Globalization.UnicodeCategory.Format or System.Globalization.UnicodeCategory.LineSeparator or System.Globalization.UnicodeCategory.ParagraphSeparator))
+                throw new InvalidDataException($"Element {id}: Gruppierungsparameter '{option.Name}' enthält keine einzeilige Bezeichnung.");
+            labels.Add(id, label);
+        }
+        var missing = requested.Except(labels.Keys, StringComparer.Ordinal).OrderBy(id => id, StringComparer.Ordinal).FirstOrDefault();
+        if (missing != null) throw new InvalidDataException($"Modellelement {missing} konnte für die Gruppierung nicht gefunden werden.");
+        return labels;
+    }
+
+    private static IEnumerable<Element> ModelInstances(Document document)
+    {
+        using var collector = new FilteredElementCollector(document);
+        return collector.WhereElementIsNotElementType()
+            .Where(element => element is not (RevitLinkInstance or ImportInstance { IsLinked: true })
+                && element.Category?.CategoryType == CategoryType.Model).ToArray();
+    }
+
+    private static void AddTextParameters(Element owner, ParameterScope scope, HashSet<GroupingParameterOption> options)
+    {
+        foreach (Parameter parameter in owner.Parameters)
+            if (parameter.StorageType == StorageType.String && parameter.Definition.GetDataType().Equals(SpecTypeId.String.Text)
+                && !string.IsNullOrWhiteSpace(parameter.Definition.Name))
+                options.Add(new(parameter.Definition.Name, scope));
     }
 
     public static TakeoffValue Read(Document document, Element instance, ParameterSource source, string unit, bool allowMissingText = false)

@@ -21,6 +21,7 @@ public sealed class AvaTemplateWindow : Window
     private readonly W.TextBlock sources = EditorUi.Text("");
     private readonly W.TextBlock status = EditorUi.Text("");
     private readonly W.TreeView mappings = new() { Margin = new Thickness(6) };
+    private readonly W.TreeView catalogTree = new() { Margin = new Thickness(6) };
     private readonly W.DataGrid checklist = Table();
     private readonly W.DataGrid diagnostics = Table();
     private readonly W.DataGrid catalog = Table();
@@ -126,12 +127,15 @@ public sealed class AvaTemplateWindow : Window
         buttons.Children.Add(EditorUi.Button("LV X82 importieren…", () => ImportCatalog("lv")));
         buttons.Children.Add(EditorUi.Button("Parameter-TXT importieren…", () => ImportCatalog("parameters")));
         W.DockPanel.SetDock(sources, W.Dock.Top); panel.Children.Add(sources);
+        var hierarchyHint = EditorUi.Text("BGK: Baugruppe → Typ. StammLV: LV → Abschnitt → OZ-Nummer / Leistung. Interne Schlüssel und GUIDs werden bei LV-Positionen nicht als Anzeigespalte verwendet.");
+        W.DockPanel.SetDock(hierarchyHint, W.Dock.Top); panel.Children.Add(hierarchyHint);
         var filter = new W.DockPanel(); W.DockPanel.SetDock(filter, W.Dock.Top); panel.Children.Add(filter);
         W.DockPanel.SetDock(catalogKind, W.Dock.Left); filter.Children.Add(catalogKind); filter.Children.Add(catalogSearch);
         catalogSearch.ToolTip = "Katalog durchsuchen – exakte Schlüssel werden nicht verändert.";
         catalogKind.SelectionChanged += (_, _) => RefreshCatalog(); catalogSearch.TextChanged += (_, _) => RefreshCatalog();
         AddColumn(catalog, "Schlüssel / GUID", "Key", 270); AddColumn(catalog, "Typ / OZ / Spezifikation", "Detail", 190); AddColumn(catalog, "Bezeichnung", "Description", 1, true); AddColumn(catalog, "Einheit / Gruppe", "Unit", 110);
-        panel.Children.Add(catalog); return panel;
+        catalogTree.Name = "CatalogTree"; RegisterName(catalogTree.Name, catalogTree);
+        panel.Children.Add(catalogTree); panel.Children.Add(catalog); return panel;
     }
     private UIElement MappingTab()
     {
@@ -331,13 +335,31 @@ public sealed class AvaTemplateWindow : Window
     }
     private void RefreshCatalog()
     {
-        IEnumerable<CatalogRow> rows = catalogKind.SelectedIndex switch
+        var filter = catalogSearch.Text;
+        if (catalogKind.SelectedIndex is 0 or 1)
         {
-            0 => editor.Document.BgkCatalog.Entries.SelectMany(b => b.Types.Count == 0 ? new[] { new CatalogRow(b.Key, "", b.Description, "") } : b.Types.Select(t => new CatalogRow(b.Key, t.Number, b.Description + " / " + t.Description, ""))),
-            1 => editor.Document.LvCatalog.Entries.Select(l => new CatalogRow(l.Id, l.Ordinal, l.Text, l.Unit)),
-            _ => editor.Document.ParameterCatalog.Entries.Select(p => new CatalogRow(p.Guid.ToString(), p.Spec, p.Name, p.Group))
-        };
-        catalog.ItemsSource = rows.Where(r => r.ToString().Contains(catalogSearch.Text, StringComparison.OrdinalIgnoreCase)).ToList();
+            catalogTree.Visibility = Visibility.Visible; catalog.Visibility = Visibility.Collapsed;
+            var nodes = catalogKind.SelectedIndex == 0
+                ? CatalogTreeModel.BuildBgk(editor.Document, filter)
+                : CatalogTreeModel.BuildLv(editor.Document, filter);
+            catalogTree.Items.Clear();
+            W.TreeViewItem Create(CatalogTreeNode node)
+            {
+                var item = new W.TreeViewItem
+                {
+                    Tag = node,
+                    Header = new W.TextBlock { Text = node.Label, TextWrapping = TextWrapping.Wrap, MaxWidth = 1000, Margin = new Thickness(3, 4, 3, 4) },
+                    IsExpanded = true
+                };
+                foreach (var child in node.Children) item.Items.Add(Create(child));
+                return item;
+            }
+            foreach (var node in nodes) catalogTree.Items.Add(Create(node));
+            return;
+        }
+        catalogTree.Visibility = Visibility.Collapsed; catalog.Visibility = Visibility.Visible;
+        var rows = editor.Document.ParameterCatalog.Entries.Select(p => new CatalogRow(p.Guid.ToString(), p.Spec, p.Name, p.Group));
+        catalog.ItemsSource = rows.Where(r => r.ToString().Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
     }
     private static W.DataGrid Table() => new() { AutoGenerateColumns = false, IsReadOnly = true, CanUserAddRows = false, CanUserDeleteRows = false, SelectionMode = W.DataGridSelectionMode.Single, HeadersVisibility = W.DataGridHeadersVisibility.Column, GridLinesVisibility = W.DataGridGridLinesVisibility.Horizontal, Margin = new Thickness(6), EnableRowVirtualization = true };
     private static void AddColumn(W.DataGrid grid, string header, string path, double width, bool star = false)
