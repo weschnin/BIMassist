@@ -15,7 +15,7 @@ public static class AvaGroupingDialog
         {
             Title = "AVA – Gruppierung der Mengenermittlung",
             Width = 540,
-            Height = 360,
+            Height = 410,
             MinWidth = 500,
             ResizeMode = ResizeMode.NoResize,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -37,6 +37,7 @@ public static class AvaGroupingDialog
         var byPosition = new W.RadioButton { Content = "Nach Leistungspositionen (ohne Gewerk-/Bereichsgruppen)", IsChecked = true, Margin = new Thickness(0, 4, 0, 8) };
         var byTrade = new W.RadioButton { Content = "Nach Gewerk", IsEnabled = options.Count > 0, Margin = new Thickness(0, 4, 0, 8) };
         var byArea = new W.RadioButton { Content = "Nach Baubereich", IsEnabled = options.Count > 0, Margin = new Thickness(0, 4, 0, 8) };
+        var byFamilyAndType = new W.RadioButton { Content = "Nach Familienname und Typ", Margin = new Thickness(0, 4, 0, 8) };
         var parameterLabel = new W.TextBlock { Text = "Textparameter mit Gewerk-/Bereichsbezeichnung:", Margin = new Thickness(20, 2, 0, 4), IsEnabled = false };
         var parameters = new W.ComboBox
         {
@@ -63,7 +64,8 @@ public static class AvaGroupingDialog
         byPosition.Checked += (_, _) => RefreshParameterState();
         byTrade.Checked += (_, _) => RefreshParameterState();
         byArea.Checked += (_, _) => RefreshParameterState();
-        panel.Children.Add(byPosition); panel.Children.Add(byTrade); panel.Children.Add(byArea);
+        byFamilyAndType.Checked += (_, _) => RefreshParameterState();
+        panel.Children.Add(byPosition); panel.Children.Add(byTrade); panel.Children.Add(byArea); panel.Children.Add(byFamilyAndType);
         panel.Children.Add(parameterLabel); panel.Children.Add(parameters); panel.Children.Add(unavailable);
 
         var buttons = new W.WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
@@ -74,14 +76,15 @@ public static class AvaGroupingDialog
         {
             var mode = byTrade.IsChecked == true ? QuantityGroupingMode.Trade
                 : byArea.IsChecked == true ? QuantityGroupingMode.BuildingArea : QuantityGroupingMode.Position;
-            if (mode != QuantityGroupingMode.Position && parameters.SelectedItem is not GroupingParameterOption)
+            if (byFamilyAndType.IsChecked == true) mode = QuantityGroupingMode.FamilyAndType;
+            if (mode is QuantityGroupingMode.Trade or QuantityGroupingMode.BuildingArea && parameters.SelectedItem is not GroupingParameterOption)
             {
                 MessageBox.Show(window, "Für die Gruppierung einen Textparameter auswählen.", "AVA", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
             selection = mode == QuantityGroupingMode.Position
                 ? new(mode)
-                : new(mode, (GroupingParameterOption)parameters.SelectedItem);
+                : new(mode, mode is QuantityGroupingMode.Trade or QuantityGroupingMode.BuildingArea ? (GroupingParameterOption)parameters.SelectedItem : null);
             window.DialogResult = true;
         };
         buttons.Children.Add(accept); buttons.Children.Add(cancel); panel.Children.Add(buttons);

@@ -6,6 +6,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using BIMassist.Ava.Core;
 using BIMassist.Ava.Revit;
+using BIMassist.Ava.Views;
 
 namespace BIMassist.Commands;
 
@@ -41,7 +42,26 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                 template = TemplateJson.Load(choose.FileName); TemplateEditor.EnsureValid(template);
                 workspace.Remember(choose.FileName);
             }
-            var result = QuantityTakeoff.Calculate(template, RevitQuantityReader.Elements(document, template));
+            var parameterChoices = new AvaParameterChoiceStore();
+            var documentIdentity = string.IsNullOrWhiteSpace(document.PathName)
+                ? "unsaved:" + document.Title : Path.GetFullPath(document.PathName);
+            var result = QuantityTakeoff.Calculate(template, RevitQuantityReader.Elements(document, template,
+                (element, source, candidates) =>
+                {
+                    var type = document.GetElement(element.GetTypeId());
+                    var key = AvaParameterChoiceStore.Key(documentIdentity, template.ProfileId,
+                        type?.UniqueId ?? element.UniqueId, source);
+                    var remembered = parameterChoices.FindAvailable(key, candidates);
+                    if (remembered != null) return remembered;
+
+                    var dialog = new ParameterChoiceWindow(source.Name, candidates);
+                    var handle = commandData.Application.MainWindowHandle;
+                    if (handle != IntPtr.Zero) new System.Windows.Interop.WindowInteropHelper(dialog).Owner = handle;
+                    if (dialog.ShowDialog() != true || dialog.SelectedIdentity == null)
+                        throw new OperationCanceledException("Parameterauswahl abgebrochen.");
+                    if (dialog.RememberSelection) parameterChoices.Remember(key, dialog.SelectedIdentity);
+                    return dialog.SelectedIdentity;
+                }));
             if (result.Errors.Count > 0)
             {
                 const int errorLimit = 15;
@@ -66,9 +86,12 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             }
             var grouping = AvaGroupingDialog.Show(commandData.Application, document);
             if (grouping == null) return Result.Cancelled;
-            var labels = grouping.Mode == QuantityGroupingMode.Position
-                ? new Dictionary<string, string>(StringComparer.Ordinal)
-                : RevitQuantityReader.ReadGroupingLabels(document, result.Rows.Select(r => r.ElementId), grouping.Parameter!);
+            var labels = grouping.Mode switch
+            {
+                QuantityGroupingMode.Position => new Dictionary<string, string>(StringComparer.Ordinal),
+                QuantityGroupingMode.FamilyAndType => RevitQuantityReader.ReadFamilyAndTypeLabels(document, result.Rows.Select(r => r.ElementId)),
+                _ => RevitQuantityReader.ReadGroupingLabels(document, result.Rows.Select(r => r.ElementId), grouping.Parameter!)
+            };
             var exportRows = result.Rows.Select(r => new QuantityTakeoffRow(r.LvItemId, r.Value, r.Unit, r.Explanation,
                 r.ElementId, grouping.Mode == QuantityGroupingMode.Position ? null : labels[r.ElementId],
                 grouping.Mode == QuantityGroupingMode.Position ? null : grouping.GroupKind)).ToList();
@@ -80,7 +103,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             {
                 MainInstruction = "Mengenermittlung als X31 exportieren?",
                 MainContent = "Projekt: " + document.Title + "\nVorlage: " + template.Name + "\n" + workspace.LastTemplatePath
-                    + "\nGruppierung: " + (grouping.Mode == QuantityGroupingMode.Position ? "nach Leistungspositionen" : grouping.GroupKind + " nach Parameter „" + grouping.Parameter!.DisplayLabel + "“")
+                    + "\nGruppierung: " + (grouping.Mode == QuantityGroupingMode.Position ? "nach Leistungspositionen" : grouping.Mode == QuantityGroupingMode.FamilyAndType ? "nach Familienname und Typ" : grouping.GroupKind + " nach Parameter „" + grouping.Parameter!.DisplayLabel + "“")
                     + "\n\n" + result.Examined + " Modellelemente untersucht; " + result.Rows.Count + " Mengenzeilen."
                     + "\nOhne vollständige Kennzeichnung: " + result.Unmarked + "; ohne BGK-/Typzuordnung: " + result.Unmapped + "."
                     + "\n\nUmfang: alle Modellelement-Instanzen im aktuellen Hauptmodell, keine verknüpften Modelle. Der textuelle Prüfumfang ist kein Kategorienfilter; dies ist keine vollständige Modellprüfung."
@@ -108,6 +131,10 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             TaskDialog.Show("AVA – Mengenermittlung", "X31-Datei erstellt und zurückgelesen.\n" + result.Rows.Count + " Mengenzeilen.\n\n" + outputPath
                 + "\n\nDer Import in California ist separat zu prüfen.");
             return Result.Succeeded;
+        }
+        catch (OperationCanceledException)
+        {
+            return Result.Cancelled;
         }
         catch (Exception ex)
         {

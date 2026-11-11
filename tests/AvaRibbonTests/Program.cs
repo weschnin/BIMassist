@@ -23,14 +23,13 @@ string? root = AppContext.BaseDirectory;
 while (root != null && !File.Exists(Path.Combine(root, "App.cs"))) root = Directory.GetParent(root)?.FullName;
 if (root == null) throw new Exception("Repository root not found.");
 string ribbon = File.ReadAllText(Path.Combine(root, "App.cs"));
-var ava = Regex.Match(ribbon, "new\\s+PulldownButtonData\\(\\s*\"AVA\"\\s*,\\s*\"AVA\"\\s*\\)");
+var bgk = Regex.Match(ribbon, "new\\s+PulldownButtonData\\(\\s*\"BGK\"\\s*,\\s*\"BGK\"\\s*\\)");
 int info = ribbon.IndexOf("new PushButtonData(\"BIMassist Info\"", StringComparison.Ordinal);
-if (!ava.Success || info <= ava.Index) throw new Exception("AVA group must precede Info.");
-string segment = ribbon[ava.Index..info];
-if (Regex.Matches(segment, @"panel\.AddItem\s*\(").Count != 1)
-    throw new Exception("AVA must be the last panel group before Info, without another panel item in between.");
-if (!segment.Contains("BIMassist.Commands.AvaTemplateCommand", StringComparison.Ordinal)
-    || !segment.Contains("Vorlagen verwalten", StringComparison.Ordinal)
-    || !segment.Contains("pulldownGroup.AddPushButton", StringComparison.Ordinal))
-    throw new Exception("Template editor command must be wired inside the AVA menu.");
-Console.WriteLine("PASS AVA ribbon placement and read-only command wiring (test doubles, not Revit runtime)");
+if (!bgk.Success || info <= bgk.Index) throw new Exception("BGK group must precede Info.");
+string segment = ribbon[bgk.Index..info];
+if (segment.Contains("new PulldownButtonData(\"AVA\"", StringComparison.Ordinal)
+    || !segment.Contains("BIMassist.Commands.AvaTemplateCommand", StringComparison.Ordinal)
+    || !segment.Contains("BIMassist.Commands.AvaQuantityTakeoffCommand", StringComparison.Ordinal)
+    || !segment.Contains("Vorlagen verwalten", StringComparison.Ordinal))
+    throw new Exception("AVA template/takeoff commands must be inside BGK, with no obsolete AVA pulldown.");
+Console.WriteLine("PASS BGK ribbon placement and read-only AVA template command wiring (test doubles, not Revit runtime)");

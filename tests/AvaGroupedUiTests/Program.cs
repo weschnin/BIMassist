@@ -28,6 +28,21 @@ internal static class Program
             Check(group.BuildRule().Positions.Count == 2 && group.BuildRule().Positions[1].Id == second.Id, "child edit duplicates identity");
             group.RemovePosition(second.Id); Check(group.BuildRule().Positions.Count == 1, "child removal lost sibling"); group.UpsertPosition(second);
             Field<TextBox>(group, "bgkSearch").Text = "44-40"; Check(group.BuildRule().TypeNumber == "110", "BGK filter clears surviving type");
+            var assignmentTree = Field<TreeView>(group, "bgk");
+            Check(assignmentTree.Items.Cast<TreeViewItem>().Any(root => ((CatalogTreeNode)root.Tag).Children.Count == 1), "Mapping dialog lacks hierarchical BGK/type selection");
+            Field<Button>(group, "bgkExpandAll").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Field<TextBox>(group, "typeSearch").Text = "110";
+            Check(((TreeViewItem)Field<TreeView>(group, "bgk").Items[0]).IsExpanded,
+                "BGK expansion state was lost when the filtered tree refreshed");
+            Field<TextBox>(group, "typeSearch").Text = "";
+            Field<Button>(group, "bgkCollapseAll").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var newAssignment = new MappingEditorWindow(t, null);
+            var assignmentRoot = (TreeViewItem)Field<TreeView>(newAssignment, "bgk").Items[0];
+            ((TreeViewItem)assignmentRoot.Items[0]).IsSelected = true;
+            newAssignment.AddPositions(["pieces"]);
+            Check(newAssignment.BuildRule().BgkKey == "44-40" && newAssignment.BuildRule().TypeNumber == "110",
+                "Selecting a type in the hierarchical BGK tree did not populate the new assignment");
+            newAssignment.Close();
             t.Mappings = [group.BuildRule()]; group.Close(); TemplateEditor.EnsureValid(t);
             var position = new PositionEditorWindow(t, second); Layout(position);
             Check(Field<ListBox>(position, "variables").DisplayMemberPath == "Name", "formula list shows class names instead of parameter names");

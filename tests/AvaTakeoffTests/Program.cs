@@ -5,6 +5,7 @@ internal static class Program
     private static int passed, failed;
     private static void Main()
     {
+        BgkReferenceTransferTests.Run();
         Test("constant positions use no quantity parameter", () =>
         {
             var template = Template();

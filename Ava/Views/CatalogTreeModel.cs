@@ -22,9 +22,9 @@ internal static class CatalogTreeModel
     {
         var roots = template.BgkCatalog.Entries.Select(bgk =>
         {
-            var root = new CatalogTreeNode("bgk:" + bgk.Key, "BGK-Schlüssel " + bgk.Key + " — " + bgk.Description);
+            var root = new CatalogTreeNode("bgk:" + bgk.Key, "BGK-Schlüssel " + bgk.Key + " — " + bgk.Description, bgk.Key);
             foreach (var type in bgk.Types)
-                root.Children.Add(new("typ:" + bgk.Key + ":" + type.Number, "Typ " + type.Number + " — " + type.Description));
+                root.Children.Add(new("typ:" + bgk.Key + ":" + type.Number, "Typ " + type.Number + " — " + type.Description, type.Number));
             return root;
         }).ToList();
         return Filter(roots, filter);
@@ -140,18 +140,37 @@ internal static class CatalogTreeModel
     private static List<CatalogTreeNode> Filter(IEnumerable<CatalogTreeNode> nodes, string filter)
     {
         if (string.IsNullOrWhiteSpace(filter)) return nodes.ToList();
+        var terms = filter.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        return Filter(nodes, terms, new HashSet<int>());
+    }
+
+    private static List<CatalogTreeNode> Filter(IEnumerable<CatalogTreeNode> nodes, string[] terms, HashSet<int> inheritedMatches)
+    {
         var result = new List<CatalogTreeNode>();
         foreach (var source in nodes)
         {
-            var children = Filter(source.Children, filter);
-            if (!source.Label.Contains(filter, StringComparison.OrdinalIgnoreCase) && children.Count == 0) continue;
+            var matches = new HashSet<int>(inheritedMatches);
+            for (var index = 0; index < terms.Length; index++)
+                if (source.Label.Contains(terms[index], StringComparison.OrdinalIgnoreCase)) matches.Add(index);
+            if (matches.Count == terms.Length)
+            {
+                result.Add(Clone(source));
+                continue;
+            }
+            var children = Filter(source.Children, terms, matches);
+            if (children.Count == 0) continue;
             var copy = new CatalogTreeNode(source.Key, source.Label, source.SourceId);
-            if (source.Label.Contains(filter, StringComparison.OrdinalIgnoreCase))
-                foreach (var child in source.Children) copy.Children.Add(child);
-            else copy.Children.AddRange(children);
+            copy.Children.AddRange(children);
             result.Add(copy);
         }
         return result;
+    }
+
+    private static CatalogTreeNode Clone(CatalogTreeNode node)
+    {
+        var copy = new CatalogTreeNode(node.Key, node.Label, node.SourceId);
+        foreach (var child in node.Children) copy.Children.Add(Clone(child));
+        return copy;
     }
 
     private static string ReadText(XElement? element)

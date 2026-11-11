@@ -65,16 +65,20 @@ namespace BIMassist
             try
             {
 
-                // BGK Manager
-
-                btnData = new PushButtonData("BGK-Manager", "BGK-Manager", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.BGKManagerCommandStartup")
+                var bgkGroup = panel.AddItem(new PulldownButtonData("BGK", "BGK")
                 {
-                    ToolTip = "BGK-Manager öffnen",
-                    LongDescription = "Öffnet das BGK-Manager Fenster",
+                    ToolTip = "BGK-Zuordnung, AVA-Vorlagen und Mengenermittlung",
                     Image = GetImageSource("label_16px.png"),
                     LargeImage = GetImageSource("label_24px.png")
-                };
-                panel.AddItem(btnData);
+                }) as PulldownButton ?? throw new InvalidOperationException("Die BGK-Gruppe konnte nicht angelegt werden.");
+                bgkGroup.AddPushButton(new PushButtonData("BGK-Manager", "BGK-Manager", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.BGKManagerCommandStartup")
+                { ToolTip = "BGK-Manager öffnen", LongDescription = "Öffnet das BGK-Manager Fenster", Image = GetImageSource("label_16px.png"), LargeImage = GetImageSource("label_24px.png") });
+                bgkGroup.AddPushButton(new PushButtonData("BGK-Referenzprojekt", "BGK aus Referenzprojekt übernehmen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.BgkTransferFromReferenceCommand")
+                { ToolTip = "BGK-Werte passender Familien und Typen aus einem geöffneten Referenzprojekt übernehmen" });
+                bgkGroup.AddPushButton(new PushButtonData("AVA Vorlagen", "AVA-Vorlagen verwalten", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaTemplateCommand")
+                { ToolTip = "AVA-Vorlagen verwalten", LongDescription = "Bearbeitet portable AVA-Vorlagen und Prüfvorschriften." });
+                bgkGroup.AddPushButton(new PushButtonData("AVA Mengenermittlung", "Mengenermittlung / X31", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaQuantityTakeoffCommand")
+                { ToolTip = "Mengen gemäß gespeicherter AVA-Vorlage ermitteln und als X31 speichern" });
 
                 //Matadata-Funktionen
 
@@ -293,30 +297,6 @@ namespace BIMassist
 
                 panel.AddSeparator();
 
-                // AVA: portable templates, derived checklists and read-only model quantity export.
-                PanelgroupData = new PulldownButtonData("AVA", "AVA")
-                {
-                    ToolTip = "AVA-Vorlagen und Prüfvorschriften",
-                    Image = GetImageSource("doc_16px.png"),
-                    LargeImage = GetImageSource("doc_24px.png"),
-                };
-                pulldownGroup = panel.AddItem(PanelgroupData) as PulldownButton
-                    ?? throw new InvalidOperationException("Die AVA-Gruppe konnte nicht angelegt werden.");
-                btnData = new PushButtonData("AVA Vorlagen", "Vorlagen verwalten",
-                    Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaTemplateCommand")
-                {
-                    ToolTip = "BGK und Typmarkierungen mit LV-Positionen verknüpfen",
-                    LongDescription = "Lädt Stamm-LV, BGK-Struktur und Parameterkatalog. Bearbeitet portable AVA-Vorlagen und erzeugt daraus Prüfvorschriften. Verändert keine Revit-Elemente und führt noch keine Modellprüfung oder X31-Ausgabe aus.",
-                };
-                pulldownGroup.AddPushButton(btnData);
-
-                btnData = new PushButtonData("AVA Mengenermittlung", "Mengenermittlung",
-                    Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaQuantityTakeoffCommand")
-                {
-                    ToolTip = "Mengen gemäß gespeicherter AVA-Vorlage ermitteln und als X31 speichern",
-                    LongDescription = "Wertet BGK, Typen und UND-Bedingungen der zuletzt gespeicherten Vorlage an den Modellelementen im aktuellen Hauptmodell aus. Jede Leistungsposition nutzt ihre eigene Menge. Verknüpfte Modelle sind ausgeschlossen; Fehler verhindern die Ausgabe. Keine Modelländerungen.",
-                };
-                pulldownGroup.AddPushButton(btnData);
 
                 btnData = new PushButtonData("BIMassist Info", "Info", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AboutBimassistCommand")
                 {

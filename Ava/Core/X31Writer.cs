@@ -19,7 +19,7 @@ public static class X31Writer
     {
         if (template?.LvCatalog?.Entries == null || template.LvCatalog.Source == null || rows == null || rows.Count == 0)
             throw new InvalidDataException("LV und mindestens eine Mengenzeile sind erforderlich.");
-        // Every quantity needs at least one numeric address; optional group and element remarks are counted below.
+        // Every quantity needs at least one numeric address; optional grouping remarks are counted below.
         if (rows.Count > 9999 * 260) throw new InvalidDataException("REB-Zeilenadressraum überschritten.");
         rows = rows.ToArray();
         var source = LoadSnapshot(template.LvCatalog.Source, out var imported);
@@ -42,12 +42,12 @@ public static class X31Writer
                 throw new InvalidDataException("Unbekannte oder leere LV-Position.");
             CheckText(row.Unit, 40, "Ergebniseinheit", false);
             CheckText(row.Explanation, 4096, "Erläuterung", true);
-            if (!string.IsNullOrEmpty(row.ElementId)) CheckText(row.ElementId, 100, "Revit-Element-ID", false);
+            if (!string.IsNullOrEmpty(row.ElementId)) CheckText(row.ElementId, 9, "Revit-Element-ID im X31-Bemerkungsfeld (max. 9 Zeichen)", false);
             if (row.GroupLabel != null)
             {
                 CheckText(row.GroupLabel, 4096, "Gewerk/Baubereich", false);
-                if (row.GroupKind is not ("Gewerk" or "Baubereich"))
-                    throw new InvalidDataException("Gruppierte Mengenzeilen benötigen den Gruppentyp 'Gewerk' oder 'Baubereich'.");
+                if (row.GroupKind is not ("Gewerk" or "Baubereich" or "Familie und Typ"))
+                    throw new InvalidDataException("Gruppierte Mengenzeilen benötigen den Gruppentyp 'Gewerk', 'Baubereich' oder 'Familie und Typ'.");
             }
             else if (row.GroupKind != null)
                 throw new InvalidDataException("Gruppentyp ohne Gruppenbezeichnung.");
@@ -63,13 +63,12 @@ public static class X31Writer
                          .ThenBy(group => group.Key.GroupLabel ?? "", StringComparer.Ordinal))
             {
                 if (group.Key.GroupLabel != null)
-                    requiredLines += CommentLineCount("Baubereich oder Gewerk: " + group.Key.GroupLabel);
+                    requiredLines += CommentLineCount(group.Key.GroupKind + ": " + group.Key.GroupLabel);
                 foreach (var row in group)
                 {
-                    if (row.ElementId.Length > 0) requiredLines += CommentLineCount("Revit-Element-ID: " + row.ElementId);
                     requiredLines++;
                 }
-                if (requiredLines > 9999 * 260) throw new InvalidDataException("REB-Zeilenadressraum einschließlich Gruppen-/Elementerläuterungen überschritten.");
+                if (requiredLines > 9999 * 260) throw new InvalidDataException("REB-Zeilenadressraum einschließlich Gruppierungskommentaren überschritten.");
             }
         }
         var boq = ValidateHierarchy(source);
@@ -89,15 +88,14 @@ public static class X31Writer
                          .ThenBy(group => group.Key.GroupLabel ?? "", StringComparer.Ordinal))
             {
                 if (group.Key.GroupLabel != null)
-                    AddComment(determination, "Baubereich oder Gewerk: " + group.Key.GroupLabel, ref index);
+                    AddComment(determination, group.Key.GroupKind + ": " + group.Key.GroupLabel, ref index);
                 foreach (var row in group)
                 {
-                    // REB 23.003 (2009), 2.2.9: '*' column 13, text columns 14..69.
-                    // Element and grouping labels are ordinary comment lines, not numeric fields.
-                    if (row.ElementId.Length > 0)
-                        AddComment(determination, "Revit-Element-ID: " + row.ElementId, ref index);
+                    // REB 23.003 fixed row: columns 14..22 are the nine-character remark field.
+                    // Keep the Revit id on its quantity row; only actual grouping gets a '*' row.
                     var formula = row.Value.ToString("0.############################", CultureInfo.InvariantCulture).Replace('.', ',') + "=";
-                    AddLine(determination, new string(' ', 29) + "91" + formula.PadRight(38), index++);
+                    var remark = row.ElementId.PadRight(9);
+                    AddLine(determination, new string(' ', 13) + remark + new string(' ', 7) + "91" + formula.PadRight(38), index++);
                 }
             }
         }

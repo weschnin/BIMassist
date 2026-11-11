@@ -8,6 +8,24 @@ static void Reject(Action action, string message) { try { action(); } catch (Inv
 var document = new Document(); var instance = new FamilyInstance { Id = new(100), TypeId = new(200) }; var symbol = new FamilySymbol { Id = new(200) };
 document.Elements.AddRange([instance, symbol]);
 var id = Guid.NewGuid();
+var choiceSettings = Path.Combine(Path.GetTempPath(), "BIMassist-AvaParameterChoices-" + Guid.NewGuid().ToString("N") + ".json");
+try
+{
+    var choiceKey = AvaParameterChoiceStore.Key(@"C:\models\host.rvt", Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        "type-uid", new ParameterSource { Kind = ParameterKind.ByName, Name = "Volumen", Spec = "VOLUME", Scope = ParameterScope.Instance });
+    new AvaParameterChoiceStore(choiceSettings).Remember(choiceKey, "BuiltIn:HOST_VOLUME_COMPUTED");
+    var reopenedChoices = new AvaParameterChoiceStore(choiceSettings);
+    Check(reopenedChoices.Find(choiceKey) == "BuiltIn:HOST_VOLUME_COMPUTED",
+        "Remembered parameter choice did not persist across store instances");
+    var available = new[] { new AvaParameterCandidate("BuiltIn:HOST_VOLUME_COMPUTED", "BuiltIn volume", new(Number: 1m)) };
+    Check(reopenedChoices.FindAvailable(choiceKey, available) == "BuiltIn:HOST_VOLUME_COMPUTED"
+        && reopenedChoices.FindAvailable(choiceKey, [new("Id:42", "Replacement", new(Number: 1m))]) == null,
+        "Remembered choices did not validate against the current parameter identities");
+    Check(choiceKey != AvaParameterChoiceStore.Key(@"C:\models\other.rvt", Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        "type-uid", new ParameterSource { Kind = ParameterKind.ByName, Name = "Volumen", Spec = "VOLUME", Scope = ParameterScope.Instance }),
+        "Parameter choice key is not bound to the active project");
+}
+finally { if (File.Exists(choiceSettings)) File.Delete(choiceSettings); }
 var source = new ParameterSource { Kind = ParameterKind.SharedGuid, SharedGuid = id, Name = "Länge", Spec = "LENGTH", Scope = ParameterScope.Instance };
 instance.Parameters.Add(new("Länge", SpecTypeId.Length, 10d, StorageType.Double, id));
 symbol.Parameters.Add(new("Länge", SpecTypeId.Length, 20d, StorageType.Double, id));
@@ -39,14 +57,31 @@ Check(RevitQuantityReader.Read(document, system, namedLength, "m").Number == 0.3
 var byNameVolume = new ParameterSource { Kind = ParameterKind.ByName, Name = "Volumen", Spec = "VOLUME", Scope = ParameterScope.Instance };
 Check(byNameVolume.ToString().Contains("Name", StringComparison.Ordinal) && !byNameVolume.ToString().Contains("lokale Familie", StringComparison.Ordinal),
     "Existing template still describes its named source as strictly local");
+Check(!byNameVolume.ToString().Contains("eindeutiger Treffer", StringComparison.Ordinal),
+    "By-name source description claimed uniqueness before model-level candidates were checked");
 instance.BuiltIns[BuiltInParameter.HOST_VOLUME_COMPUTED] = new("Volumen", SpecTypeId.Volume, 100d, StorageType.Double) { Id = new((long)BuiltInParameter.HOST_VOLUME_COMPUTED) };
 Check(RevitQuantityReader.Read(document, instance, byNameVolume, "m3").Number == 2.8316846592m,
     "Exact-name VOLUME did not read a single built-in instance value");
+instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, 100d, StorageType.Double));
+Check(RevitQuantityReader.Read(document, instance, byNameVolume, "m3").Number == 2.8316846592m,
+    "Equal same-name values were not accepted without prompting");
+instance.Parameters.RemoveAll(p => p.Definition.Name == "Volumen");
 instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, 200d, StorageType.Double));
-try { RevitQuantityReader.Read(document, instance, byNameVolume, "m3"); throw new Exception("Built-in/local duplicate volume was resolved arbitrarily"); }
+var promptedCandidates = 0;
+var chosenValue = RevitQuantityReader.Read(document, instance, byNameVolume, "m3", false, candidates =>
+{
+    promptedCandidates = candidates.Count;
+    Check(candidates.Select(candidate => candidate.Value.Number).SequenceEqual(new decimal?[] { 5.6633693184m, 2.8316846592m }),
+        "Prompt candidate values were not converted to the requested unit");
+    return candidates[1].Identity;
+});
+Check(promptedCandidates == 2 && chosenValue.Number == 2.8316846592m,
+    "Differing duplicate values were not passed to the user's selected candidate");
+try { RevitQuantityReader.Read(document, instance, byNameVolume, "m3"); throw new Exception("Differing duplicate volumes were resolved without a user choice"); }
 catch (InvalidDataException ex)
 {
-    Check(ex.Message.Contains("HOST_VOLUME_COMPUTED", StringComparison.Ordinal)
+    Check(ex.Message.Contains("unterschiedliche Werte", StringComparison.Ordinal)
+        && ex.Message.Contains("HOST_VOLUME_COMPUTED", StringComparison.Ordinal)
         && ex.Message.Contains("2.8316846592", StringComparison.Ordinal)
         && ex.Message.Contains("5.6633693184", StringComparison.Ordinal)
         && ex.Message.Contains("ID 10", StringComparison.Ordinal), "Ambiguous source does not reveal both identities and model values");
@@ -54,7 +89,7 @@ catch (InvalidDataException ex)
 instance.Parameters.RemoveAll(p => p.Definition.Name == "Volumen");
 instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, double.NaN, StorageType.Double));
 try { RevitQuantityReader.Read(document, instance, byNameVolume, "m3"); throw new Exception("Nonfinite duplicate volume accepted"); }
-catch (InvalidDataException ex) { Check(ex.Message.Contains("HOST_VOLUME_COMPUTED") && ex.Message.Contains("nicht endlich"), "Nonfinite duplicate escaped ambiguity report"); }
+catch (InvalidDataException ex) { Check(ex.Message.Contains("Parameterwert ist nicht endlich", StringComparison.Ordinal), "Nonfinite duplicate was not rejected as an invalid quantity"); }
 instance.Parameters.RemoveAll(p => p.Definition.Name == "Volumen");
 instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, 1e-12, StorageType.Double));
 try { RevitQuantityReader.Read(document, instance, byNameVolume, "m3"); throw new Exception("Tiny duplicate volume accepted"); }
@@ -91,6 +126,9 @@ var groupingOptions = RevitQuantityReader.GetGroupingParameterOptions(document);
 Check(groupingOptions.Contains(new("Gewerk", ParameterScope.Instance)), "Instance text grouping parameter was not offered");
 Check(groupingOptions.Contains(new("Baubereich", ParameterScope.Type)), "Type text grouping parameter was not offered");
 Check(!groupingOptions.Any(x => x.Name == "Number"), "Numeric parameter was offered for text grouping");
+symbol.Family.Name = "Rohrfamilie"; symbol.Name = "DN 20";
+Check(RevitQuantityReader.ReadFamilyAndTypeLabels(document, ["100"])["100"] == "Rohrfamilie — DN 20",
+    "Family/type group label did not preserve the exact Revit family and type names");
 Check(RevitQuantityReader.ReadGroupingLabels(document, ["100"], new("Gewerk", ParameterScope.Instance))["100"] == "Rohbau", "Instance grouping label changed");
 Check(RevitQuantityReader.ReadGroupingLabels(document, ["100"], new("Baubereich", ParameterScope.Type))["100"] == "Erdgeschoss", "Type grouping label changed");
 Reject(() => RevitQuantityReader.ReadGroupingLabels(document, ["100"], new("Absent", ParameterScope.Instance)), "Missing group label was guessed");

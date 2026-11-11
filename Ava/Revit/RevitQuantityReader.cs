@@ -7,14 +7,16 @@ namespace BIMassist.Ava.Revit;
 /// <summary>Read-only adapter, called synchronously inside the external command's Revit API context.</summary>
 public static class RevitQuantityReader
 {
-    public static IEnumerable<TakeoffElement> Elements(Document document, AvaTemplate template)
+    public static IEnumerable<TakeoffElement> Elements(Document document, AvaTemplate template,
+        Func<Element, ParameterSource, IReadOnlyList<AvaParameterCandidate>, string?>? chooseAmbiguous = null)
     {
         foreach (var element in ModelInstances(document))
         {
             var captured = element;
             yield return new TakeoffElement(element.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 (source, unit) => Read(document, captured, source, unit,
-                    ReferenceEquals(source, template.BgkIdentification) || ReferenceEquals(source, template.TypeIdentification)),
+                    ReferenceEquals(source, template.BgkIdentification) || ReferenceEquals(source, template.TypeIdentification),
+                    chooseAmbiguous == null ? null : candidates => chooseAmbiguous(captured, source, candidates)),
                 $"Dokument: {(string.IsNullOrWhiteSpace(document.PathName) ? document.Title : document.PathName)}; UniqueId: {element.UniqueId}");
         }
     }
@@ -64,6 +66,24 @@ public static class RevitQuantityReader
         return labels;
     }
 
+    public static IReadOnlyDictionary<string, string> ReadFamilyAndTypeLabels(Document document, IEnumerable<string> elementIds)
+    {
+        var requested = elementIds.ToHashSet(StringComparer.Ordinal);
+        var labels = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var instance in ModelInstances(document))
+        {
+            var id = instance.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (!requested.Contains(id)) continue;
+            var type = document.GetElement(instance.GetTypeId());
+            if (type is not FamilySymbol symbol || string.IsNullOrWhiteSpace(symbol.Family?.Name) || string.IsNullOrWhiteSpace(symbol.Name))
+                throw new InvalidDataException($"Element {id}: Familienname und Typname konnten für die Gruppierung nicht ermittelt werden.");
+            labels.Add(id, symbol.Family.Name + " — " + symbol.Name);
+        }
+        var missing = requested.Except(labels.Keys, StringComparer.Ordinal).OrderBy(id => id, StringComparer.Ordinal).FirstOrDefault();
+        if (missing != null) throw new InvalidDataException($"Modellelement {missing} konnte für die Gruppierung nicht gefunden werden.");
+        return labels;
+    }
+
     private static IEnumerable<Element> ModelInstances(Document document)
     {
         using var collector = new FilteredElementCollector(document);
@@ -80,7 +100,8 @@ public static class RevitQuantityReader
                 options.Add(new(parameter.Definition.Name, scope));
     }
 
-    public static TakeoffValue Read(Document document, Element instance, ParameterSource source, string unit, bool allowMissingText = false)
+    public static TakeoffValue Read(Document document, Element instance, ParameterSource source, string unit, bool allowMissingText = false,
+        Func<IReadOnlyList<AvaParameterCandidate>, string?>? chooseAmbiguous = null)
     {
         var owner = source.Scope == ParameterScope.Type ? document.GetElement(instance.GetTypeId()) : instance;
         Parameter? parameter = null;
@@ -92,6 +113,7 @@ public static class RevitQuantityReader
             "ANGLE" => SpecTypeId.Angle, "MASS_DENSITY" => SpecTypeId.MassDensity,
             _ => throw Invalid(source, "Nicht unterstützte Parameterspezifikation.")
         };
+        List<Parameter>? nameCandidates = null;
         if (owner != null)
         {
             switch (source.Kind)
@@ -112,13 +134,10 @@ public static class RevitQuantityReader
                     // parameters. On the selected owner, never choose an arbitrary duplicate.
                     var named = owner.GetParameters(source.Name);
                     var matches = named.Where(p => p.Definition.GetDataType().Equals(spec)).ToList();
-                    if (matches.Count > 1) throw Invalid(source, "Mehrere Parameter mit diesem Namen und dieser Spezifikation im gewählten Geltungsbereich; keine eindeutige Quelle. "
-                        + "Treffer: " + string.Join("; ", matches.Take(6).Select(p => DescribeCandidate(p, source.Spec)))
-                        + (matches.Count > 6 ? $"; weitere {matches.Count - 6} Treffer" : "")
-                        + ". Bitte anhand der IDs und Werte eine eindeutige Quelle (lokale Familie, GUID oder BuiltIn-Kennung) auswählen; keine automatische Auswahl.");
                     if (matches.Count == 0 && named.Count > 0)
                         throw Invalid(source, "Parametername gefunden, aber die Spezifikation im Modell weicht von der Vorlage ab.");
-                    parameter = matches.SingleOrDefault();
+                    nameCandidates = matches;
+                    parameter = matches.Count == 1 ? matches[0] : null;
                     break;
                 case ParameterKind.BuiltIn:
                     if (!Enum.TryParse<BuiltInParameter>(source.BuiltInId, out var builtIn) || !Enum.IsDefined(builtIn) || builtIn == BuiltInParameter.INVALID)
@@ -126,6 +145,27 @@ public static class RevitQuantityReader
                     parameter = owner.get_Parameter(builtIn);
                     break;
                 default: throw Invalid(source, "Unbekannte Quellenart.");
+            }
+        }
+        if (nameCandidates is { Count: > 1 })
+        {
+            var options = nameCandidates.Select(candidate =>
+            {
+                var value = ReadParameterValue(candidate, source, unit);
+                return new AvaParameterCandidate(CandidateIdentity(candidate),
+                    DescribeCandidate(candidate, source.Spec) + "; Auswahlwert: " + FormatCandidateValue(value, unit), value);
+            }).ToList();
+            if (options.All(option => option.Value == options[0].Value))
+                parameter = nameCandidates[0];
+            else
+            {
+                var choice = chooseAmbiguous?.Invoke(options);
+                int? selected = choice == null ? null : options.FindIndex(option => string.Equals(option.Identity, choice, StringComparison.Ordinal));
+                if (selected is not >= 0)
+                    throw Invalid(source, "Mehrere gleichnamige Parameter haben unterschiedliche Werte. Benutzerentscheidung fehlt oder wurde abgebrochen. "
+                        + "Treffer: " + string.Join("; ", options.Take(6).Select(option => option.Description))
+                        + (options.Count > 6 ? $"; weitere {options.Count - 6} Treffer" : ""));
+                parameter = nameCandidates[selected.Value];
             }
         }
         if (parameter == null)
@@ -154,12 +194,36 @@ public static class RevitQuantityReader
             if (allowMissingText && source.Spec == "TEXT") return new(Text: "");
             throw Invalid(source, "Parameter fehlt oder enthält keinen Wert im gewählten Geltungsbereich; keine automatische Typ-/Instanz-Ausweichsuche.");
         }
-        if (source.Spec == "TEXT") return new(Text: parameter.AsString() ?? "");
+        return ReadParameterValue(parameter, source, unit);
+    }
+
+    private static TakeoffValue ReadParameterValue(Parameter parameter, ParameterSource source, string unit)
+    {
+        if (!parameter.Definition.GetDataType().Equals(source.Spec switch
+        {
+            "TEXT" => SpecTypeId.String.Text, "YESNO" => SpecTypeId.Boolean.YesNo,
+            "INTEGER" => SpecTypeId.Int.Integer, "NUMBER" => SpecTypeId.Number,
+            "LENGTH" => SpecTypeId.Length, "AREA" => SpecTypeId.Area, "VOLUME" => SpecTypeId.Volume,
+            "ANGLE" => SpecTypeId.Angle, "MASS_DENSITY" => SpecTypeId.MassDensity,
+            _ => throw Invalid(source, "Nicht unterstützte Parameterspezifikation.")
+        })) throw Invalid(source, "Parameterspezifikation im Modell weicht von der Vorlage ab.");
+        if (source.Spec == "TEXT")
+        {
+            if (unit.Length != 0 || parameter.StorageType != StorageType.String) throw Invalid(source, "TEXT erwartet eine Zeichenfolge ohne Einheit.");
+            if (!parameter.HasValue) throw Invalid(source, "Parameter enthält keinen Wert.");
+            return new(Text: parameter.AsString() ?? "");
+        }
         if (source.Spec == "YESNO")
         {
+            if (unit.Length != 0 || parameter.StorageType != StorageType.Integer) throw Invalid(source, "YESNO erwartet ganzzahligen Speicher ohne Einheit.");
+            if (!parameter.HasValue) throw Invalid(source, "Parameter enthält keinen Wert.");
             if (parameter.AsInteger() is not (0 or 1)) throw Invalid(source, "YESNO erwartet 0 oder 1 ohne Einheit.");
             return new(Boolean: parameter.AsInteger() == 1);
         }
+        if (!UnitCatalog.Allows(source.Spec, unit)) throw Invalid(source, "Leseneinheit passt nicht zur Parameterspezifikation.");
+        if (parameter.StorageType != (source.Spec == "INTEGER" ? StorageType.Integer : StorageType.Double))
+            throw Invalid(source, "Numerischer Parameter hat nicht den erwarteten Speicher.");
+        if (!parameter.HasValue) throw Invalid(source, "Parameter enthält keinen Wert.");
         if (source.Spec == "INTEGER") return new(Number: parameter.AsInteger());
         double value = parameter.AsDouble();
         if (!double.IsFinite(value)) throw Invalid(source, "Parameterwert ist nicht endlich.");
@@ -182,14 +246,30 @@ public static class RevitQuantityReader
         catch (OverflowException ex) { throw new InvalidDataException(source.Name + ": Parameterwert überschreitet den Dezimalbereich.", ex); }
     }
 
+    private static string FormatCandidateValue(TakeoffValue value, string unit)
+    {
+        if (value.Number is { } number) return number.ToString("G29", System.Globalization.CultureInfo.InvariantCulture) + (unit.Length == 0 ? "" : " " + unit);
+        if (value.Boolean is { } boolean) return boolean ? "Ja" : "Nein";
+        return "„" + (value.Text ?? "") + "“";
+    }
+
+    private static string CandidateIdentity(Parameter parameter)
+    {
+        if (parameter.IsShared) return "Shared:" + parameter.GUID.ToString("D");
+        var id = parameter.Id.Value;
+        if (id < 0 && id >= int.MinValue && Enum.GetName(typeof(BuiltInParameter), (int)id) is string builtIn)
+            return "BuiltIn:" + builtIn;
+        return "Id:" + id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     private static string DescribeCandidate(Parameter parameter, string spec)
     {
         var id = parameter.Id.Value;
         string identity;
-        if (parameter.IsShared) identity = "Gemeinsam GUID " + parameter.GUID;
+        if (parameter.IsShared) identity = "Gemeinsam GUID " + parameter.GUID + " (ID " + id + ")";
         else if (id < 0 && id >= int.MinValue && Enum.GetName(typeof(BuiltInParameter), (int)id) is string builtIn)
-            identity = "BuiltIn " + builtIn;
-        else identity = "Nicht geteilt";
+            identity = "BuiltIn " + builtIn + " (ID " + id + ")";
+        else identity = "Parameter-ID " + id;
         string value = parameter.HasValue ? "Wert vorhanden" : "kein Wert";
         if (parameter.HasValue && spec == "VOLUME" && parameter.StorageType == StorageType.Double)
         {
@@ -207,7 +287,7 @@ public static class RevitQuantityReader
                 catch (ArgumentException) { value = "Wert nicht umrechenbar"; }
             }
         }
-        return $"{identity} (ID {id}, {value})";
+        return $"{identity} ({value})";
     }
 
     private static InvalidDataException Invalid(ParameterSource source, string message) => new(source.Name + " (" + source.Scope + "): " + message);

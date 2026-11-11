@@ -1,6 +1,6 @@
 namespace BIMassist.Ava.Core;
 
-public enum QuantityGroupingMode { Position, Trade, BuildingArea }
+public enum QuantityGroupingMode { Position, Trade, BuildingArea, FamilyAndType }
 
 public sealed record GroupingParameterOption(string Name, ParameterScope Scope)
 {
@@ -14,6 +14,7 @@ public sealed record QuantityGroupingSelection(QuantityGroupingMode Mode, Groupi
     {
         QuantityGroupingMode.Trade => "Gewerk",
         QuantityGroupingMode.BuildingArea => "Baubereich",
+        QuantityGroupingMode.FamilyAndType => "Familie und Typ",
         _ => ""
     };
 }

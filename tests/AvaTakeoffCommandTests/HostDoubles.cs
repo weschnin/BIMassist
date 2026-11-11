@@ -49,7 +49,7 @@ namespace Autodesk.Revit.UI
 }
 namespace System.Windows
 {
-    public sealed class Window
+    public class Window
     {
         public IntPtr NativeOwner { get; set; }
         public static int Created, Closed;
@@ -61,6 +61,27 @@ namespace System.Windows.Interop
 {
     public sealed class WindowInteropHelper(System.Windows.Window window)
     { public IntPtr Owner { get => window.NativeOwner; set => window.NativeOwner = value; } }
+}
+namespace BIMassist.Ava.Views
+{
+    internal sealed class ParameterChoiceWindow : System.Windows.Window
+    {
+        public static string? NextIdentity;
+        public static bool RememberNext;
+        public static int Shown;
+        public string? SelectedIdentity { get; private set; }
+        public bool RememberSelection { get; private set; }
+        public ParameterChoiceWindow(string parameterName, IReadOnlyList<BIMassist.Ava.Core.AvaParameterCandidate> candidates)
+        { _ = parameterName; _ = candidates; }
+        public bool? ShowDialog()
+        {
+            Shown++;
+            SelectedIdentity = NextIdentity;
+            RememberSelection = RememberNext;
+            return SelectedIdentity != null;
+        }
+        public static void Reset() { NextIdentity = null; RememberNext = false; Shown = 0; }
+    }
 }
 namespace Microsoft.Win32
 {

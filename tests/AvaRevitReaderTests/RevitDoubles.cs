@@ -54,6 +54,7 @@ public class Element
 {
     public ElementId Id { get; set; } = new(1);
     public string UniqueId { get; set; } = "test-unique-id";
+    public string Name { get; set; } = "TestType";
     public Category? Category { get; set; } = new();
     public ElementId TypeId { get; set; } = new(2);
     public List<Parameter> Parameters { get; } = [];
@@ -67,7 +68,8 @@ public sealed class FamilyInstance : Element { }
 public sealed class RevitLinkInstance : Element { }
 public sealed class ImportInstance : Element { public bool IsLinked { get; init; } }
 public class ElementType : Element { }
-public sealed class FamilySymbol : ElementType { }
+public sealed class Family { public string Name { get; set; } = "TestFamily"; }
+public sealed class FamilySymbol : ElementType { public Family Family { get; set; } = new(); }
 public sealed class Document
 {
     public string PathName { get; set; } = "";

@@ -42,6 +42,43 @@ internal static class ExecuteTests
             Check(File.ReadAllText(f.TemplatePath) == TemplateJson.Serialize(template), "Template mutated");
             Equal(1, Directory.GetFiles(f.Directory, "*.x31").Length);
         });
+        Test("differing named parameter values prompt once and the opt-in remembered choice is reused", f =>
+        {
+            var template = f.Template();
+            template.Mappings[0].Positions[0].Quantity = new() { Source = new() { Kind = ParameterKind.ByName,
+                Scope = ParameterScope.Instance, Name = "Volumen", Spec = "VOLUME" }, Unit = "m3" };
+            f.Instance.BuiltIns[BuiltInParameter.HOST_VOLUME_COMPUTED] = new("Volumen", SpecTypeId.Volume, 100d, StorageType.Double)
+                { Id = new((long)BuiltInParameter.HOST_VOLUME_COMPUTED) };
+            f.Instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, 200d, StorageType.Double) { Id = new(10) });
+            var source = template.Mappings[0].Positions[0].Quantity!.Source!;
+            var key = AvaParameterChoiceStore.Key(Path.GetFullPath(f.Document.PathName), template.ProfileId, f.Type.UniqueId, source);
+            new AvaParameterChoiceStore(f.ChoiceSettings).Remember(key, "Id:stale-choice");
+            f.Remember(template);
+            BIMassist.Ava.Views.ParameterChoiceWindow.NextIdentity = "BuiltIn:HOST_VOLUME_COMPUTED";
+            BIMassist.Ava.Views.ParameterChoiceWindow.RememberNext = true;
+            f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
+            Equal(1, BIMassist.Ava.Views.ParameterChoiceWindow.Shown);
+            Check(File.Exists(f.ChoiceSettings), "Opt-in parameter choice was not persisted");
+
+            BIMassist.Ava.Views.ParameterChoiceWindow.NextIdentity = null;
+            BIMassist.Ava.Views.ParameterChoiceWindow.RememberNext = false;
+            f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
+            Equal(1, BIMassist.Ava.Views.ParameterChoiceWindow.Shown);
+            Check(File.Exists(f.Output), "Remembered parameter choice did not allow a subsequent export");
+        });
+        Test("cancelling a differing-parameter choice cancels takeoff without producing an X31", f =>
+        {
+            var template = f.Template();
+            template.Mappings[0].Positions[0].Quantity = new() { Source = new() { Kind = ParameterKind.ByName,
+                Scope = ParameterScope.Instance, Name = "Volumen", Spec = "VOLUME" }, Unit = "m3" };
+            f.Instance.BuiltIns[BuiltInParameter.HOST_VOLUME_COMPUTED] = new("Volumen", SpecTypeId.Volume, 100d, StorageType.Double)
+                { Id = new((long)BuiltInParameter.HOST_VOLUME_COMPUTED) };
+            f.Instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, 200d, StorageType.Double) { Id = new(10) });
+            f.Remember(template);
+            Equal(Result.Cancelled, f.Execute());
+            Equal(1, BIMassist.Ava.Views.ParameterChoiceWindow.Shown);
+            Equal(0, TaskDialog.Confirmations.Count); f.NoOutput();
+        });
         Test("grouping selection is read from an arbitrary chosen text parameter and rendered like the screenshot", f =>
         {
             f.Instance.Parameters.Add(new("Teilbereich", SpecTypeId.String.Text, "Erdgeschoss Nord", StorageType.String));
@@ -49,9 +86,24 @@ internal static class ExecuteTests
             f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
             var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
-            Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).TrimEnd() == "Baubereich oder Gewerk: Erdgeschoss Nord"), "Selected group label missing");
-            Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).TrimEnd() == "Revit-Element-ID: 4294967296"), "Element ID comment missing");
+            Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).TrimEnd() == "Baubereich: Erdgeschoss Nord"), "Selected group label missing");
+            Check(rows.Any(r => r[12] != '*' && r.Substring(13, 9).Trim() == "429496"), "Element ID remark missing on the quantity row");
             Contains("Baubereich nach Parameter „Teilbereich (Instanz)“", TaskDialog.Confirmations.Single().MainContent);
+        });
+        Test("family and type grouping uses exact Revit family/type names", f =>
+        {
+            f.Type.Family.Name = "Rohrfamilie"; f.Type.Name = "DN 20";
+            AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.FamilyAndType)); f.Remember(f.Template()); f.ApproveAndSave();
+            Equal(Result.Succeeded, f.Execute());
+            var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
+            Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).TrimEnd() == "Familie und Typ: Rohrfamilie — DN 20"), "Exact family/type grouping comment missing");
+            Check(rows.Any(r => r[12] != '*' && r.Substring(13, 9).Trim() == "429496"), "Element ID remark missing on quantity row");
+            Contains("Gruppierung: nach Familienname und Typ", TaskDialog.Confirmations.Single().MainContent);
+        });
+        Test("X31 export fails closed when a Revit ID exceeds the nine-character REB remark", f =>
+        {
+            f.Instance.Id = new(4294967296); f.Remember(f.Template()); f.ApproveAndSave();
+            Equal(Result.Failed, f.Execute()); Contains("max. 9 Zeichen", f.Message); f.NoOutput();
         });
         Test("cancelled grouping choice creates no confirmation or X31 file", f =>
         {
@@ -96,7 +148,7 @@ internal static class ExecuteTests
                 { Source = new() { Kind = ParameterKind.LocalFamily, Name = "Missing", Spec = "LENGTH", Scope = ParameterScope.Instance }, Unit = "m" } });
             f.Remember(template); f.ApproveAndSave();
             Equal(Result.Failed, f.Execute()); Contains("Keine X31-Datei", f.Message); Contains("Missing", f.Message);
-            Contains("4294967296", f.Message); f.NoOutput(); Equal(0, CommonDialog.Shown.Count); Equal(0, TaskDialog.Confirmations.Count);
+            Contains("429496", f.Message); f.NoOutput(); Equal(0, CommonDialog.Shown.Count); Equal(0, TaskDialog.Confirmations.Count);
         });
         foreach (var defect in new[] { "spec", "storage" })
         Test("actual Execute blocks a valueless wrong-" + defect + " identification even with valid sibling elements", f =>
@@ -256,13 +308,12 @@ internal static class ExecuteTests
             Equal(Result.Succeeded, f.Execute()); Equal(IntPtr.Zero, CommonDialog.Shown.Single().Owner);
             Equal(0, System.Windows.Window.Created);
         });
-        Test("screenshot-oriented export keeps the numeric Revit ElementId without extra provenance rows", f =>
+        Test("screenshot-oriented export keeps Revit ID on the quantity row without extra provenance rows", f =>
         {
             f.Remember(f.Template()); f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
-            var comments = string.Concat(XDocument.Load(f.Output).Descendants(Ns + "QTakeoff")
-                .Select(e => e.Attribute("Row")!.Value).Where(r => r[12] == '*').Select(r => r[13..69]));
-            Contains("Revit-Element-ID: 4294967296", comments);
-            Check(!comments.Contains("Dokument:", StringComparison.Ordinal) && !comments.Contains("UniqueId:", StringComparison.Ordinal), "Verbose provenance leaked into the California row view");
+            var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
+            Equal("429496", rows.Single(r => r[12] != '*').Substring(13, 9).Trim());
+            Check(!rows.Any(r => r[12] == '*'), "Ungrouped quantity gained a separate comment row");
         });
         Console.WriteLine($"Execute integration with Revit/UI/Win32 doubles and real core/writer: {passed} passed; {failed} failed (not a Revit-host test)");
         if (failed != 0) Environment.ExitCode = 1;
@@ -272,20 +323,26 @@ internal static class ExecuteTests
     {
         public string Directory { get; } = Path.Combine(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "hermes", "cache", "scratch"), "bimassist-command-" + Guid.NewGuid().ToString("N"));
         public string Settings => Path.Combine(Directory, "workspace.json");
+        public string ChoiceSettings => Path.Combine(Directory, "parameter-choices.json");
         public string TemplatePath => Path.Combine(Directory, "template.json");
         public string Output => Path.Combine(Directory, "takeoff.x31");
         public Document Document { get; } = new() { Title = "Testprojekt", PathName = @"C:\model\project.rvt" };
-        public FamilyInstance Instance { get; } = new() { Id = new(4294967296), TypeId = new(200), UniqueId = "actual-element-unique-identity" };
+        public FamilyInstance Instance { get; } = new() { Id = new(429496), TypeId = new(200), UniqueId = "actual-element-unique-identity" };
+        public FamilySymbol Type { get; } = new() { Id = new(200), Family = new() { Name = "Sample family" }, Name = "Sample type" };
         public ExternalCommandData Data { get; } = new();
         public string Message = "";
         private readonly string? previousSettings;
+        private readonly string? previousChoiceSettings;
         public Fixture()
         {
             System.IO.Directory.CreateDirectory(Directory);
             previousSettings = Environment.GetEnvironmentVariable("BIMASSIST_AVA_WORKSPACE_SETTINGS");
+            previousChoiceSettings = Environment.GetEnvironmentVariable("BIMASSIST_AVA_PARAMETER_CHOICES");
             Environment.SetEnvironmentVariable("BIMASSIST_AVA_WORKSPACE_SETTINGS", Settings);
-            TaskDialog.Reset(); CommonDialog.Reset(); AvaGroupingDialog.Reset(); System.Windows.Window.Created = System.Windows.Window.Closed = 0;
-            var symbol = new FamilySymbol { Id = new(200) };
+            Environment.SetEnvironmentVariable("BIMASSIST_AVA_PARAMETER_CHOICES", ChoiceSettings);
+            TaskDialog.Reset(); CommonDialog.Reset(); AvaGroupingDialog.Reset(); BIMassist.Ava.Views.ParameterChoiceWindow.Reset();
+            System.Windows.Window.Created = System.Windows.Window.Closed = 0;
+            var symbol = Type;
             symbol.BuiltIns[BuiltInParameter.ASSEMBLY_CODE] = new("BGK", SpecTypeId.String.Text, "001", StorageType.String);
             symbol.BuiltIns[BuiltInParameter.ALL_MODEL_TYPE_COMMENTS] = new("Typ", SpecTypeId.String.Text, "02", StorageType.String);
             Document.Elements.AddRange([Instance, symbol]); Data.Application.ActiveUIDocument = new(Document);
@@ -303,7 +360,12 @@ internal static class ExecuteTests
         public void ApproveAndSave() { TaskDialog.Answers.Enqueue(TaskDialogResult.Yes); CommonDialog.SaveChoices.Enqueue(Output); }
         public Result Execute() => new AvaQuantityTakeoffCommand().Execute(Data, ref Message, new ElementSet());
         public void NoOutput() { Check(!System.IO.Directory.EnumerateFiles(Directory, "*.x31", SearchOption.AllDirectories).Any(), "Unexpected output on failure/cancellation"); }
-        public void Dispose() { Environment.SetEnvironmentVariable("BIMASSIST_AVA_WORKSPACE_SETTINGS", previousSettings); System.IO.Directory.Delete(Directory, true); }
+        public void Dispose()
+        {
+            Environment.SetEnvironmentVariable("BIMASSIST_AVA_WORKSPACE_SETTINGS", previousSettings);
+            Environment.SetEnvironmentVariable("BIMASSIST_AVA_PARAMETER_CHOICES", previousChoiceSettings);
+            System.IO.Directory.Delete(Directory, true);
+        }
     }
     private static void Test(string name, Action<Fixture> action)
     {

@@ -12,18 +12,26 @@ internal sealed class MappingEditorWindow : Window
 {
     private readonly AvaTemplate template;
     private readonly MappingRule draft;
-    private readonly W.ListBox bgk = new();
-    private readonly W.ListBox types = new();
+    private readonly W.TreeView bgk = new();
+    private readonly W.Button bgkExpandAll;
+    private readonly W.Button bgkCollapseAll;
+    private readonly HashSet<string> expandedBgkKeys = new(StringComparer.Ordinal);
     private readonly W.ListBox conditions = new();
     private readonly W.DataGrid positions = new() { AutoGenerateColumns = false, IsReadOnly = true, CanUserAddRows = false, SelectionMode = W.DataGridSelectionMode.Single };
     private readonly W.TextBox bgkSearch = EditorUi.Input();
     private readonly W.TextBox typeSearch = EditorUi.Input();
+    private string selectedBgkKey;
+    private string selectedTypeNumber;
     public MappingRule? Result { get; private set; }
 
     public MappingEditorWindow(AvaTemplate template, MappingRule? existing)
     {
         this.template = template;
         draft = existing == null ? new() : TemplateJson.Copy(existing);
+        selectedBgkKey = draft.BgkKey; selectedTypeNumber = draft.TypeNumber;
+        foreach (var entry in template.BgkCatalog.Entries) expandedBgkKeys.Add("bgk:" + entry.Key);
+        bgkExpandAll = EditorUi.Button("Alles aufklappen", () => ExpandBgk(true)); bgkExpandAll.Name = "BgkExpandAll";
+        bgkCollapseAll = EditorUi.Button("Alles zuklappen", () => ExpandBgk(false)); bgkCollapseAll.Name = "BgkCollapseAll";
         Title = existing == null ? "AVA-Zuordnung hinzufügen" : "AVA-Zuordnung bearbeiten";
         Width = 1140; Height = 800; MinWidth = 880; MinHeight = 600; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         var root = new W.DockPanel { Margin = new Thickness(16) };
@@ -41,30 +49,30 @@ internal sealed class MappingEditorWindow : Window
         var grid = new W.Grid();
         grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        void Column(int index, string label, W.TextBox search, W.ListBox list)
+        void Column(int index, string label, W.TextBox search, UIElement list)
         {
             var panel = new W.DockPanel { Margin = new Thickness(0, 0, 12, 0) }; W.Grid.SetColumn(panel, index);
             var text = EditorUi.Text(label); W.DockPanel.SetDock(text, W.Dock.Top); panel.Children.Add(text);
             W.DockPanel.SetDock(search, W.Dock.Top); panel.Children.Add(search); panel.Children.Add(list); grid.Children.Add(panel);
         }
-        Column(0, "BGK suchen / wählen", bgkSearch, bgk); Column(1, "Typ suchen / wählen", typeSearch, types);
+        var bgkColumn = new W.DockPanel { Margin = new Thickness(0, 0, 12, 0) };
+        var bgkLabel = EditorUi.Text("BGK suchen / wählen"); W.DockPanel.SetDock(bgkLabel, W.Dock.Top); bgkColumn.Children.Add(bgkLabel);
+        W.DockPanel.SetDock(bgkSearch, W.Dock.Top); bgkColumn.Children.Add(bgkSearch);
+        var bgkButtons = new W.WrapPanel(); W.DockPanel.SetDock(bgkButtons, W.Dock.Top); bgkColumn.Children.Add(bgkButtons);
+        bgkButtons.Children.Add(bgkExpandAll); bgkButtons.Children.Add(bgkCollapseAll);
+        bgkColumn.Children.Add(bgk); W.Grid.SetColumn(bgkColumn, 0); grid.Children.Add(bgkColumn);
+        Column(1, "Typ suchen / wählen", typeSearch, new W.TextBlock { Text = "Typen im BGK-Baum auswählen.", Margin = new Thickness(6) });
         selector.Children.Add(grid); tabs.Items.Add(new W.TabItem { Header = "1  BGK / Typ", Content = selector });
-        void FilterTypes()
+        bgkSearch.TextChanged += (_, _) => RefreshBgkTree(); typeSearch.TextChanged += (_, _) => RefreshBgkTree();
+        bgk.SelectedItemChanged += (_, _) =>
         {
-            var prior = types.SelectedItem;
-            types.ItemsSource = (bgk.SelectedItem as BgkEntry)?.Types.Where(t => t.ToString().Contains(typeSearch.Text, StringComparison.OrdinalIgnoreCase)).ToList();
-            if (prior != null && types.Items.Contains(prior)) types.SelectedItem = prior;
-        }
-        bgk.SelectionChanged += (_, _) => FilterTypes(); typeSearch.TextChanged += (_, _) => FilterTypes();
-        bgkSearch.TextChanged += (_, _) => {
-            var priorBgk = bgk.SelectedItem; var priorType = types.SelectedItem;
-            bgk.ItemsSource = template.BgkCatalog.Entries.Where(b => b.ToString().Contains(bgkSearch.Text, StringComparison.OrdinalIgnoreCase)).ToList();
-            if (priorBgk != null && bgk.Items.Contains(priorBgk)) { bgk.SelectedItem = priorBgk; if (priorType != null && types.Items.Contains(priorType)) types.SelectedItem = priorType; }
+            if (bgk.SelectedItem is not W.TreeViewItem { Tag: CatalogTreeNode node }) return;
+            if (node.Children.Count > 0) { selectedBgkKey = node.SourceId; selectedTypeNumber = ""; }
+            else if (W.ItemsControl.ItemsControlFromItemContainer((W.TreeViewItem)bgk.SelectedItem) is W.TreeViewItem parent
+                && parent.Tag is CatalogTreeNode parentNode)
+            { selectedBgkKey = parentNode.SourceId; selectedTypeNumber = node.SourceId; }
         };
-        bgk.ItemsSource = template.BgkCatalog.Entries;
-        bgk.SelectedItem = template.BgkCatalog.Entries.FirstOrDefault(b => b.Key == draft.BgkKey);
-        types.SelectedItem = (bgk.SelectedItem as BgkEntry)?.Types.FirstOrDefault(t => t.Number == draft.TypeNumber);
-
+        RefreshBgkTree();
         var conditionPanel = new W.DockPanel { Margin = new Thickness(12) };
         var conditionHint = EditorUi.Text("Alle Bedingungen gelten gemeinsam für sämtliche Leistungspositionen dieser Zuordnung (UND). Fehlende Eingänge bleiben Fehler, nicht false. Keine Priorität oder Else-Regel zwischen Zuordnungen.");
         W.DockPanel.SetDock(conditionHint, W.Dock.Top); conditionPanel.Children.Add(conditionHint);
@@ -138,9 +146,45 @@ internal sealed class MappingEditorWindow : Window
     }).ToList();
     internal MappingRule BuildRule()
     {
-        if (bgk.SelectedItem is not BgkEntry b || types.SelectedItem is not BgkType t) throw new InvalidDataException("BGK und zugehörigen Typ auswählen.");
+        if (string.IsNullOrWhiteSpace(selectedBgkKey) || string.IsNullOrWhiteSpace(selectedTypeNumber))
+            throw new InvalidDataException("Im BGK-Baum einen Typ unterhalb der Baugruppe auswählen.");
+        var b = template.BgkCatalog.Entries.SingleOrDefault(entry => entry.Key == selectedBgkKey);
+        var t = b?.Types.SingleOrDefault(type => type.Number == selectedTypeNumber);
+        if (b == null || t == null) throw new InvalidDataException("Die gewählte BGK-/Typ-Kombination ist nicht mehr im Katalog enthalten.");
         if (draft.Positions.Count == 0) throw new InvalidDataException("Mindestens eine Leistungsposition hinzufügen.");
         var result = TemplateJson.Copy(draft); result.BgkKey = b.Key; result.TypeNumber = t.Number; return result;
+    }
+    private void RefreshBgkTree()
+    {
+        var nodes = CatalogTreeModel.BuildBgk(template, string.Join(" ", new[] { bgkSearch.Text, typeSearch.Text }.Where(x => !string.IsNullOrWhiteSpace(x))));
+        bgk.Items.Clear();
+        W.TreeViewItem Create(CatalogTreeNode node)
+        {
+            var item = new W.TreeViewItem { Tag = node, Header = new W.TextBlock { Text = node.Label, TextWrapping = TextWrapping.Wrap, MaxWidth = 420 },
+                IsExpanded = expandedBgkKeys.Contains(node.Key) };
+            item.Expanded += (_, _) => expandedBgkKeys.Add(node.Key);
+            item.Collapsed += (_, _) => expandedBgkKeys.Remove(node.Key);
+            foreach (var child in node.Children) item.Items.Add(Create(child));
+            return item;
+        }
+        foreach (var node in nodes) bgk.Items.Add(Create(node));
+        var selected = FindBgkNode(selectedBgkKey, selectedTypeNumber);
+        if (selected != null) selected.IsSelected = true;
+    }
+    private W.TreeViewItem? FindBgkNode(string key, string typeNumber)
+    {
+        foreach (W.TreeViewItem root in bgk.Items)
+            if (root.Tag is CatalogTreeNode bgkNode && bgkNode.SourceId == key)
+                return root.Items.OfType<W.TreeViewItem>().FirstOrDefault(child => child.Tag is CatalogTreeNode typeNode && typeNode.SourceId == typeNumber);
+        return null;
+    }
+    private void ExpandBgk(bool expand)
+    {
+        foreach (W.TreeViewItem root in bgk.Items)
+        {
+            root.IsExpanded = expand;
+            foreach (W.TreeViewItem child in root.Items) child.IsExpanded = expand;
+        }
     }
     private sealed record PositionRow(MappingPosition Position, string Ordinal, string Text, string Quantity);
 }

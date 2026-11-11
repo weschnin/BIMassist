@@ -7,6 +7,7 @@ public enum ParameterScope { Instance, Type }
 public enum ConditionOperator { Equal, NotEqual, Greater, GreaterOrEqual, Less, LessOrEqual }
 public enum OperandKind { Numeric, Boolean, Text }
 public enum QuantityKind { Parameter, Constant, Formula }
+public sealed record AvaParameterCandidate(string Identity, string Description, TakeoffValue Value);
 
 public sealed class ParameterSource
 {
@@ -20,7 +21,7 @@ public sealed class ParameterSource
     {
         ParameterKind.SharedGuid => SharedGuid.ToString(), ParameterKind.BuiltIn => BuiltInId,
         ParameterKind.LocalFamily => "lokale Familie (kein GUID-Fallback)",
-        ParameterKind.ByName => "exakter Name (eindeutiger Treffer)",
+        ParameterKind.ByName => "exakter Name (muss im Modell eindeutig sein)",
         _ => "unbekannte Quelle"
     });
 }
