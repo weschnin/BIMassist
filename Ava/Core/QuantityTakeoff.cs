@@ -86,7 +86,7 @@ public static class QuantityTakeoff
                     try { applies &= Matches(condition, Read(condition.Source, condition.Unit)); }
                     catch (Exception ex) when (ex is InvalidDataException or OverflowException)
                     {
-                        errors.Add(new(element.Id, $"Element {element.Id}; Rule {rule.Id}; Condition {condition.Source}: {ex.Message}"));
+                        errors.Add(new(element.Id, $"Element {element.Id}; {RuleContext(template, rule)}; Condition {condition}:\n{ex.Message}"));
                         applies = false;
                     }
                 }
@@ -97,12 +97,21 @@ public static class QuantityTakeoff
                     try { rows.Add(CalculateLine(element.Id, element.SourceIdentity, rule.Id, position, Read)); }
                     catch (Exception ex) when (ex is InvalidDataException or OverflowException)
                     {
-                        errors.Add(new(element.Id, $"Element {element.Id}; Rule {rule.Id}; Position {position.Id}: {ex.Message}"));
+                        errors.Add(new(element.Id, $"Element {element.Id}; {RuleContext(template, rule, position)}; Position {position.Id}:\n{ex.Message}"));
                     }
                 }
             }
         }
         return new(rows.AsReadOnly(), errors.AsReadOnly(), examined, unmarked, unmapped);
+    }
+
+    private static string RuleContext(AvaTemplate template, MappingRule rule, MappingPosition? position = null)
+    {
+        var ids = (position == null ? rule.Positions : new[] { position }.AsEnumerable())
+            .Select(p => p.LvItemId).Distinct(StringComparer.Ordinal).ToList();
+        var ordinals = ids.Take(6).Select(id => template.LvCatalog.Entries.Single(lv => lv.Id == id).Ordinal);
+        return $"BGK {rule.BgkKey} / Typ {rule.TypeNumber}; LV {string.Join(", ", ordinals)}"
+            + (ids.Count > 6 ? $" (+{ids.Count - 6} weitere)" : "") + $"; Rule {rule.Id}";
     }
 
     private static TakeoffLine CalculateLine(string elementId, string sourceIdentity, Guid ruleId, MappingPosition position,

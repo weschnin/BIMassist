@@ -66,13 +66,14 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             {
                 const int errorLimit = 15;
                 message = "Mengenermittlung abgebrochen: " + result.Errors.Count + " Fehler. Keine X31-Datei erstellt oder ersetzt.\n\n"
+                    + "Vorlage: " + template.Name + " (" + template.Version + ")\n" + workspace.LastTemplatePath + "\n\n"
                     + "Untersuchte Modellelemente: " + result.Examined
                     + "\nOhne vollständige BGK-/Typkennzeichnung: " + result.Unmarked
                     + "\nOhne passende BGK-/Typzuordnung: " + result.Unmapped
                     + "\nErmittelte Mengenzeilen (nicht exportiert): " + result.Rows.Count
                     + "\nVerknüpfte Modelle werden nicht ausgewertet."
                     + "\n\nFehlerdetails (erste " + Math.Min(errorLimit, result.Errors.Count) + " von " + result.Errors.Count + ", maximal " + errorLimit + "):\n"
-                    + string.Join("\n", result.Errors.Take(errorLimit).Select(e => "Element " + e.ElementId + ": " + e.Message))
+                    + string.Join("\n\n", result.Errors.Take(errorLimit).Select(e => e.Message))
                     + (result.Errors.Count > errorLimit ? "\n" + (result.Errors.Count - errorLimit) + " weitere Fehler nicht angezeigt." : "");
                 TaskDialog.Show("AVA – Mengenermittlung", message);
                 return Result.Failed;

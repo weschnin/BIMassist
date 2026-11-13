@@ -178,7 +178,7 @@ public static class RevitQuantityReader
         if (parameter == null)
         {
             if (allowMissingText && source.Spec == "TEXT" && unit.Length == 0) return new(Text: "");
-            throw Invalid(source, "Parameter fehlt oder enthält keinen Wert im gewählten Geltungsbereich; keine automatische Typ-/Instanz-Ausweichsuche.");
+            throw MissingSource(document, instance, source, unit, false);
         }
         if (!parameter.Definition.GetDataType().Equals(spec)) throw Invalid(source, "Parameterspezifikation im Modell weicht von der Vorlage ab.");
         // HasValue is not proof of parameter type: validate existing definitions/storage before classifying absence.
@@ -199,9 +199,35 @@ public static class RevitQuantityReader
         if (!parameter.HasValue)
         {
             if (allowMissingText && source.Spec == "TEXT") return new(Text: "");
-            throw Invalid(source, "Parameter fehlt oder enthält keinen Wert im gewählten Geltungsbereich; keine automatische Typ-/Instanz-Ausweichsuche.");
+            throw MissingSource(document, instance, source, unit, true);
         }
         return ReadParameterValue(parameter, source, unit);
+    }
+
+    private static InvalidDataException MissingSource(Document document, Element instance, ParameterSource source,
+        string unit, bool present)
+    {
+        var reason = present ? "Parameter ist vorhanden, enthält aber keinen Wert."
+            : "Parameter ist im gewählten Geltungsbereich nicht vorhanden.";
+        var findings = new List<string>();
+        foreach (var (owner, scope) in new[] { (instance, "Instanz"), (document.GetElement(instance.GetTypeId()), "Typ") })
+        {
+            if (owner == null) { findings.Add(scope + ": kein Revit-Typ vorhanden"); continue; }
+            var candidates = owner.GetParameters(source.Name);
+            if (candidates.Count == 0) { findings.Add(scope + ": kein gleichnamiger Parameter"); continue; }
+            foreach (var candidate in candidates.Take(6))
+            {
+                string value;
+                try { value = FormatCandidateValue(ReadParameterValue(candidate, source, unit), unit); }
+                catch (Exception ex) when (ex is InvalidDataException or ArgumentException or OverflowException)
+                { value = ex.Message; }
+                findings.Add(scope + ": " + DescribeCandidate(candidate, source.Spec) + "; " + value);
+            }
+            if (candidates.Count > 6) findings.Add(scope + ": weitere " + (candidates.Count - 6) + " gleichnamige Parameter");
+        }
+        return Invalid(source, reason + " Keine automatische Typ-/Instanz-Ausweichsuche."
+            + "\nModellquellen (nur Diagnose, keine Ersatzwerte):\n" + string.Join("\n", findings)
+            + "\nQuelle und Geltungsbereich in der AVA-Vorlage prüfen; einen tatsächlich erforderlichen Wert im Modell pflegen.");
     }
 
     private static TakeoffValue ReadParameterValue(Parameter parameter, ParameterSource source, string unit)
@@ -278,7 +304,8 @@ public static class RevitQuantityReader
             identity = "BuiltIn " + builtIn + " (ID " + id + ")";
         else identity = "Parameter-ID " + id;
         string value = parameter.HasValue ? "Wert vorhanden" : "kein Wert";
-        if (parameter.HasValue && spec == "VOLUME" && parameter.StorageType == StorageType.Double)
+        if (parameter.HasValue && spec == "VOLUME" && parameter.StorageType == StorageType.Double
+            && parameter.Definition.GetDataType().Equals(SpecTypeId.Volume))
         {
             var raw = parameter.AsDouble();
             if (!double.IsFinite(raw)) value = "Wert nicht endlich";

@@ -8,6 +8,28 @@ static void Reject(Action action, string message) { try { action(); } catch (Inv
 var document = new Document(); var instance = new FamilyInstance { Id = new(100), TypeId = new(200) }; var symbol = new FamilySymbol { Id = new(200) };
 document.Elements.AddRange([instance, symbol]);
 var id = Guid.NewGuid();
+// A missing source must reveal evidence, without borrowing the opposite scope's value.
+var dnGuid = Guid.Parse("83af7484-32f1-4f7d-9b79-eab347958b56");
+var dnSource = new ParameterSource { Kind = ParameterKind.SharedGuid, SharedGuid = dnGuid,
+    Name = "AVA_DN", Spec = "LENGTH", Scope = ParameterScope.Type };
+instance.Parameters.Add(new("AVA_DN", SpecTypeId.Length, 625d / 304.8d, StorageType.Double, dnGuid));
+try { RevitQuantityReader.Read(document, instance, dnSource, "mm"); throw new Exception("Missing type DN borrowed the instance value"); }
+catch (InvalidDataException ex)
+{
+    Check(ex.Message.Contains("Parameter ist im gewählten Geltungsbereich nicht vorhanden")
+        && ex.Message.Contains("Instanz: Gemeinsam GUID " + dnGuid)
+        && ex.Message.Contains("625 mm") && ex.Message.Contains("Typ: kein gleichnamiger Parameter")
+        && ex.Message.Contains("nur Diagnose"), "Missing DN does not explain the scope mismatch with exact identity and unit value");
+}
+symbol.Parameters.Add(new("AVA_DN", SpecTypeId.Length, 0d, StorageType.Double, dnGuid) { HasValue = false });
+try { RevitQuantityReader.Read(document, instance, dnSource, "mm"); throw new Exception("Empty type DN borrowed the instance value"); }
+catch (InvalidDataException ex)
+{
+    Check(ex.Message.Contains("Parameter ist vorhanden, enthält aber keinen Wert") && ex.Message.Contains("kein Wert")
+        && ex.Message.Contains("625 mm"), "Empty DN is not distinguished from an absent parameter");
+}
+instance.Parameters.RemoveAll(p => p.Definition.Name == "AVA_DN");
+symbol.Parameters.RemoveAll(p => p.Definition.Name == "AVA_DN");
 var choiceSettings = Path.Combine(Path.GetTempPath(), "BIMassist-AvaParameterChoices-" + Guid.NewGuid().ToString("N") + ".json");
 try
 {
@@ -201,8 +223,10 @@ Check(readElement.SourceIdentity == @"Dokument: C:\models\host.rvt; UniqueId: un
 document.PathName = ""; document.Title = "Ungespeichertes Projekt";
 Check(RevitQuantityReader.Elements(document, template).First().SourceIdentity == "Dokument: Ungespeichertes Projekt; UniqueId: unique-100", "Unsaved document title fallback missing");
 var absenceFailures = 0;
+var absenceRuns = 0;
 void AbsenceTest(string name, Action action)
 {
+    absenceRuns++;
     try { action(); Console.WriteLine("PASS " + name); }
     catch (Exception ex) { absenceFailures++; Console.WriteLine("FAIL " + name + ": " + ex.Message); }
 }
@@ -249,6 +273,64 @@ AbsenceTest("host scope excludes model-category Revit and linked CAD containers 
     Check(RevitQuantityReader.Elements(host, template).Select(e => e.Id).SequenceEqual(new[] { "503", "504" }),
         "Linked container counted as a host model element or imported copy wrongly excluded");
 });
+AbsenceTest("missing shared DN reports a same-name different GUID but never uses it", () =>
+{
+    var host = new Document();
+    var item = new FamilyInstance { Id = new(67941), TypeId = new(70000) };
+    var itemType = new FamilySymbol { Id = item.TypeId };
+    host.Elements.AddRange([item, itemType]);
+    var otherGuid = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    itemType.Parameters.Add(new("AVA_DN", SpecTypeId.Length, 625d / 304.8d, StorageType.Double, otherGuid));
+    try { RevitQuantityReader.Read(host, item, dnSource, "mm"); throw new Exception("Different GUID was used"); }
+    catch (InvalidDataException ex)
+    {
+        Check(ex.Message.Contains(otherGuid.ToString()) && ex.Message.Contains("625 mm")
+            && ex.Message.Contains("nicht vorhanden"), "Diagnostic hid the different shared identity");
+    }
+});
+AbsenceTest("nonfinite opposite-scope DN does not hide the original missing-source error", () =>
+{
+    var host = new Document();
+    var item = new FamilyInstance { Id = new(67941), TypeId = new(70000) };
+    host.Elements.AddRange([item, new FamilySymbol { Id = item.TypeId }]);
+    item.Parameters.Add(new("AVA_DN", SpecTypeId.Length, double.NaN, StorageType.Double, dnGuid));
+    try { RevitQuantityReader.Read(host, item, dnSource, "mm"); throw new Exception("Nonfinite DN accepted"); }
+    catch (InvalidDataException ex)
+    {
+        Check(ex.Message.Contains("nicht vorhanden") && ex.Message.Contains("Parameterwert ist nicht endlich"),
+            "Diagnostic replaced the original error or tried to convert nonfinite DN");
+    }
+});
+AbsenceTest("same-name diagnostics cap candidates per scope and disclose omitted count", () =>
+{
+    var host = new Document();
+    var item = new FamilyInstance { Id = new(67941), TypeId = new(70000) };
+    host.Elements.AddRange([item, new FamilySymbol { Id = item.TypeId }]);
+    for (var index = 0; index < 8; index++)
+        item.Parameters.Add(new("AVA_DN", SpecTypeId.Length, 1d, StorageType.Double) { Id = new(1000 + index) });
+    try { RevitQuantityReader.Read(host, item, dnSource, "mm"); throw new Exception("Missing type DN accepted"); }
+    catch (InvalidDataException ex)
+    {
+        Check(ex.Message.Contains("weitere 2 gleichnamige Parameter") && ex.Message.Contains("Parameter-ID 1005")
+            && !ex.Message.Contains("Parameter-ID 1006"), "Diagnostic bound or omission count is wrong");
+    }
+});
+AbsenceTest("missing volume never describes a same-name length as a cubic-metre value", () =>
+{
+    var host = new Document();
+    var item = new FamilyInstance { Id = new(67941), TypeId = new(70000) };
+    var itemType = new FamilySymbol { Id = item.TypeId };
+    host.Elements.AddRange([item, itemType]);
+    itemType.Parameters.Add(new("Mixed", SpecTypeId.Length, 1d, StorageType.Double));
+    var volume = new ParameterSource { Kind = ParameterKind.SharedGuid, SharedGuid = dnGuid,
+        Name = "Mixed", Spec = "VOLUME", Scope = ParameterScope.Type };
+    try { RevitQuantityReader.Read(host, item, volume, "m3"); throw new Exception("Missing volume accepted a length"); }
+    catch (InvalidDataException ex)
+    {
+        Check(ex.Message.Contains("nicht vorhanden") && ex.Message.Contains("Parameterspezifikation")
+            && !ex.Message.Contains("m3"), "Diagnostic fabricated a volume from a LENGTH parameter: " + ex.Message);
+    }
+});
 if (absenceFailures != 0) Environment.ExitCode = 1;
-Console.WriteLine($"Reader absence/scope regressions: {7 - absenceFailures} passed; {absenceFailures} failed");
+Console.WriteLine($"Reader absence/scope regressions: {absenceRuns - absenceFailures} passed; {absenceFailures} failed");
 Console.WriteLine("PASS Revit adapter policy with API doubles: scope, strict GUID and unique exact-name resolution, typed input units, absence, ambiguity and nonfinite/overflow guards (not a Revit-host test)");

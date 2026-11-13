@@ -142,6 +142,20 @@ internal static class ExecuteTests
             f.Remember(f.Template()); TaskDialog.Answers.Enqueue(TaskDialogResult.Yes); CommonDialog.SaveChoices.Enqueue(null);
             Equal(Result.Cancelled, f.Execute()); f.NoOutput(); Equal(1, CommonDialog.Shown.Count);
         });
+        Test("failed DN condition identifies the active template, BGK, type, LV and expected dimension", f =>
+        {
+            var template = f.Template();
+            template.Mappings[0].Conditions.Add(new() { Source = new() { Kind = ParameterKind.LocalFamily,
+                Name = "AVA_DN", Spec = "LENGTH", Scope = ParameterScope.Type },
+                Operator = ConditionOperator.Equal, Operand = OperandKind.Numeric, Number = 625, Unit = "mm" });
+            f.Remember(template);
+            Equal(Result.Failed, f.Execute()); f.NoOutput();
+            Contains(f.TemplatePath, f.Message); Contains("BGK 001 / Typ 02", f.Message);
+            Contains("LV 0010", f.Message); Contains("AVA_DN Equal 625 mm", f.Message);
+            Contains(template.Mappings[0].Id.ToString(), f.Message);
+            Check(!f.Message.Contains("Element 429496: Element 429496"), "Element prefix is duplicated");
+            Equal(0, CommonDialog.Shown.Count); Equal(0, TaskDialog.Confirmations.Count);
+        });
         Test("one failed quantity blocks all valid sibling rows and never asks to save", f =>
         {
             var template = f.Template(); template.Mappings[0].Positions.Add(new() { LvItemId = "FirstItem", Quantity = new()
