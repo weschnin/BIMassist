@@ -222,7 +222,12 @@ internal static class Program
                 Check(w.ResizeMode == System.Windows.ResizeMode.CanResize && w.MinWidth >= 800, "window layout");
                 w.Measure(new System.Windows.Size(1180, 800)); w.Arrange(new System.Windows.Rect(0, 0, 1180, 800)); w.UpdateLayout();
                 var tabs = (System.Windows.Controls.TabControl)w.FindName("EditorTabs");
-                Check(tabs.Items.Count == 5, "profile/catalog/mapping/checklist/diagnostic tabs");
+                Check(tabs.Items.Count == 7, "profile, three catalog, mapping, checklist and diagnostic tabs");
+                var headers = tabs.Items.Cast<System.Windows.Controls.TabItem>().Select(item => item.Header?.ToString()).ToArray();
+                Check(headers.Any(header => header!.Contains("BGK-Katalog", StringComparison.Ordinal))
+                    && headers.Any(header => header!.Contains("LV-Katalog", StringComparison.Ordinal))
+                    && headers.Any(header => header!.Contains("Parameter-Katalog", StringComparison.Ordinal)),
+                    "catalog types must be separate top-level tabs");
                 Check(w.FindName("ProfileName") is System.Windows.Controls.TextBox, "name editor missing");
                 w.Close();
             });

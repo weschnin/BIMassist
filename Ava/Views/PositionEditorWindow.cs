@@ -82,6 +82,7 @@ internal sealed class PositionEditorWindow : Window
         lvSearch.TextChanged += (_, _) => RefreshLvTree();
         selectedLv = template.LvCatalog.Entries.FirstOrDefault(l => l.Id == draft.LvItemId);
         RefreshLvTree();
+        Loaded += (_, _) => (lvTree.SelectedItem as W.TreeViewItem)?.Focus();
         lvDetail.Text = selectedLv is { } initial ? $"{initial.Ordinal} | {initial.Unit} | {initial.Id}\n{initial.Text}\n{initial.Description}" : "";
         tabs.Items.Add(new W.TabItem { Header = "1  Leistungsposition", Content = lvPanel });
         var panel = new W.StackPanel { Margin = new Thickness(12) };
@@ -179,7 +180,7 @@ internal sealed class PositionEditorWindow : Window
                 var item = new W.TreeViewItem
                 {
                     Tag = node,
-                    IsExpanded = lvTreeExpansion.GetValueOrDefault(node.Key, true),
+                    IsExpanded = lvTreeExpansion.GetValueOrDefault(node.Key, false),
                     Header = new W.TextBlock { Text = node.Label, TextWrapping = TextWrapping.Wrap, MaxWidth = 850,
                         Margin = new Thickness(3, 4, 3, 4) }
                 };
@@ -192,7 +193,11 @@ internal sealed class PositionEditorWindow : Window
                 return item;
             }
             foreach (var node in CatalogTreeModel.BuildLv(template, lvSearch.Text)) lvTree.Items.Add(Create(node));
-            if (selectedItem != null) selectedItem.IsSelected = true;
+            if (selectedLv is { } assigned && selectedItem != null)
+            {
+                selectedItem = FindPosition(lvTree, assigned.Id) ?? selectedItem;
+                selectedItem.IsSelected = true;
+            }
         }
         finally { syncingLvTree = false; }
     }

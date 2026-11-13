@@ -111,7 +111,9 @@ internal sealed class MappingEditorWindow : Window
         positions.Columns.Add(new W.DataGridTextColumn { Header = "Leistung", Binding = new Binding("Text"), Width = new W.DataGridLength(1, W.DataGridLengthUnitType.Star) });
         positions.Columns.Add(new W.DataGridTextColumn { Header = "Eigene Mengenvorschrift", Binding = new Binding("Quantity"), Width = 330 });
         positionPanel.Children.Add(positions); RefreshPositions();
+        if (existing?.Positions.Count > 0) positions.SelectedIndex = 0;
         tabs.Items.Add(new W.TabItem { Header = "3  Leistungspositionen / Mengen", Content = positionPanel });
+        if (existing != null) tabs.SelectedIndex = 2;
         Content = root;
     }
     internal void UpsertPosition(MappingPosition position)

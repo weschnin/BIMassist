@@ -36,6 +36,9 @@ internal static class Program
                 && duplicate.Positions.Single(p => p.LvItemId == "length").Quantity?.Expression == "2 * AVA_Laenge + 0.5",
                 "Duplicating a rule did not preserve its conditions/quantities with independent IDs");
             var group = new MappingEditorWindow(t, rule); group.UpsertPosition(second);
+            Check(((TabControl)((DockPanel)group.Content).Children.OfType<TabControl>().Single()).SelectedIndex == 2
+                && Field<DataGrid>(group, "positions").SelectedIndex == 0,
+                "Opening an existing mapping must focus its assigned positions and select the first one");
             Check(group.BuildRule().Positions.Count == 2 && rule.Positions.Count == 1, "child add mutates original/loses sibling");
             var change = TemplateJson.Copy(second); change.Quantity!.Expression = "3 * AVA_Laenge"; group.UpsertPosition(change);
             Check(group.BuildRule().Positions.Count == 2 && group.BuildRule().Positions[1].Id == second.Id, "child edit duplicates identity");
@@ -71,6 +74,10 @@ internal static class Program
                 "Position editor does not show details for the selected LV position");
             var positionLvRoot = (TreeViewItem)positionLvTree.Items[0];
             var positionLvTitle = positionLvRoot.Items.Cast<TreeViewItem>().First(x => ((TextBlock)x.Header).Text == "01 Baustelleneinrichtung");
+            Check(positionLvRoot.IsExpanded && positionLvTitle.IsExpanded
+                && (positionLvTree.SelectedItem as TreeViewItem)?.Tag is CatalogTreeNode selectedLvNode && selectedLvNode.SourceId == "pieces"
+                && !positionLvRoot.Items.Cast<TreeViewItem>().Single(x => ((TextBlock)x.Header).Text == "02 Weitere Leistungen").IsExpanded,
+                "Editing an assigned LV position must open its collapsed hierarchy path and select the assigned position");
             Field<Button>(hierarchicalPosition, "lvCollapseAll").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(!positionLvTitle.IsExpanded, "Position editor LV collapse-all did not collapse titles");
             Field<Button>(hierarchicalPosition, "lvExpandAll").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -151,51 +158,59 @@ internal static class Program
                 Field<TemplateEditor>(main, "editor").Open(temp);
                 main.GetType().GetMethod("Refresh", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(main, null);
                 Layout(main);
+                var editorTabs = (TabControl)main.FindName("EditorTabs");
+                var headers = editorTabs.Items.Cast<TabItem>().Select(item => item.Header?.ToString()).ToArray();
+                Check(headers.Any(h => h!.Contains("BGK-Katalog", StringComparison.Ordinal))
+                    && headers.Any(h => h!.Contains("LV-Katalog", StringComparison.Ordinal))
+                    && headers.Any(h => h!.Contains("Parameter-Katalog", StringComparison.Ordinal))
+                    && !headers.Any(h => h!.Contains("Quellkataloge", StringComparison.Ordinal)),
+                    "BGK, LV and parameter catalogs must have separate top-level tabs");
                 var tree = (TreeView)main.FindName("MappingsTree"); var root = (TreeViewItem)tree.Items[0]; var type = (TreeViewItem)root.Items[0]; var row = (TreeViewItem)type.Items[0];
                 row.IsExpanded = false; type.IsSelected = true; main.RefreshMappings(); Layout(main);
                 root = (TreeViewItem)tree.Items[0]; type = (TreeViewItem)root.Items[0]; row = (TreeViewItem)type.Items[0];
                 Check(!row.IsExpanded && row.Items.Count == 2, "collapsed state/children lost on refresh");
                 Check((tree.SelectedItem as TreeViewItem)?.Tag is MappingTreeNode node && node.Key == ((MappingTreeNode)type.Tag).Key, "selection lost on refresh");
-                var catalogKind = Field<ComboBox>(main, "catalogKind");
                 var catalogTree = (TreeView)main.FindName("CatalogTree");
-                catalogKind.SelectedIndex = 1; catalogKind.SelectedIndex = 0; Layout(main);
+                editorTabs.SelectedIndex = Array.FindIndex(headers, h => h!.Contains("BGK-Katalog", StringComparison.Ordinal)); Layout(main);
                 Check(((TreeViewItem)catalogTree.Items[0]).Items.Count == 1, "BGK catalog is not displayed as a hierarchy");
                 var bgkRoot = (TreeViewItem)catalogTree.Items[0]; var bgkType = (TreeViewItem)bgkRoot.Items[0];
-                bgkType.IsExpanded = false; ((Button)main.FindName("CatalogExpandAll")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                bgkType.IsExpanded = false; ((Button)main.FindName("BgkCatalogExpandAll")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 Check(bgkType.IsExpanded, "BGK expand-all did not expand types");
-                ((Button)main.FindName("CatalogCollapseAll")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                ((Button)main.FindName("BgkCatalogCollapseAll")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 Check(!bgkType.IsExpanded, "BGK collapse-all did not collapse types");
-                catalogKind.SelectedIndex = 1; Layout(main);
-                var lvRoot = (TreeViewItem)catalogTree.Items[0];
+                editorTabs.SelectedIndex = Array.FindIndex(headers, h => h!.Contains("LV-Katalog", StringComparison.Ordinal)); Layout(main);
+                                var mainLvTree = (TreeView)main.FindName("LvCatalogTree");
+                                                var lvRoot = (TreeViewItem)mainLvTree.Items[0];
                 Check(lvRoot.Header is TextBlock rootLabel && rootLabel.Text.StartsWith("LV ", StringComparison.Ordinal), "LV source tree root missing");
                 Check(lvRoot.Items.Count >= 1, "LV category hierarchy not rendered");
                 var category = lvRoot.Items.Cast<TreeViewItem>().Single(x => ((TextBlock)x.Header).Text == "01 Baustelleneinrichtung");
                 Check(category.Header is TextBlock categoryLabel && categoryLabel.Text == "01 Baustelleneinrichtung", "LV title source short text not rendered");
                 category.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = UIElement.PreviewMouseDownEvent });
-                Check(ReferenceEquals(catalogTree.SelectedItem, category), "Clicking a catalog row did not select it before expansion");
+                Check(ReferenceEquals(mainLvTree.SelectedItem, category), "Clicking a catalog row did not select it before expansion");
                 category.IsExpanded = false;
-                var catalogSearch = Field<TextBox>(main, "catalogSearch");
+                var catalogSearch = Field<TextBox>(main, "lvCatalogSearch");
                 catalogSearch.Text = "02 Leistung";
                 catalogSearch.Text = "";
-                category = ((TreeViewItem)catalogTree.Items[0]).Items.Cast<TreeViewItem>()
+                category = ((TreeViewItem)mainLvTree.Items[0]).Items.Cast<TreeViewItem>()
                     .Single(x => ((TextBlock)x.Header).Text == "01 Baustelleneinrichtung");
                 Check(!category.IsExpanded, "Catalog title expansion state was lost after filtering and refreshing the tree");
                 category.IsExpanded = false;
-                ((Button)main.FindName("CatalogExpandAll")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                ((Button)main.FindName("LvCatalogExpandAll")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 Check(category.IsExpanded, "Catalog expand-all did not expand LV titles");
-                ((Button)main.FindName("CatalogCollapseAll")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                ((Button)main.FindName("LvCatalogCollapseAll")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 Check(!category.IsExpanded, "Catalog collapse-all did not collapse LV titles");
-                Check(main.FindName("CatalogExpandAll") is Button && main.FindName("CatalogCollapseAll") is Button,
-                    "Source catalogs lack expand-all / collapse-all controls");
+                Check(main.FindName("BgkCatalogExpandAll") is Button && main.FindName("BgkCatalogCollapseAll") is Button
+                    && main.FindName("LvCatalogExpandAll") is Button && main.FindName("LvCatalogCollapseAll") is Button,
+                    "BGK and LV catalogs lack independent expand-all / collapse-all controls");
                 Check(main.FindName("TemplateFilePath") is TextBlock pathLabel && pathLabel.Text.Contains(temp, StringComparison.OrdinalIgnoreCase),
                     "Current AVA template path is not shown below the toolbar");
-                Check(main.FindName("BgkSourceDivider") is Separator && main.FindName("LvSourceDivider") is Separator,
-                    "Source metadata sections are not separated by horizontal rules");
+                editorTabs.SelectedIndex = Array.FindIndex(headers, h => h!.Contains("Parameter-Katalog", StringComparison.Ordinal)); Layout(main);
+                Check(main.FindName("ParameterCatalogGrid") is DataGrid, "Parameter catalog is not an independent tab with its own grid");
                 if (args.Length > 1)
                 {
                     row.IsExpanded = true;
                     bool renderCatalog = args[0] == "--render";
-                    if (renderCatalog) ((Button)main.FindName("CatalogExpandAll")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    if (renderCatalog) ((Button)main.FindName("BgkCatalogExpandAll")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Render(main, args[1], renderCatalog ? "catalog.png" : "grouped.png", renderCatalog ? 1 : 2);
                     if (renderCatalog)
                     {
@@ -207,6 +222,7 @@ internal static class Program
                 main.Close();
             }
             finally { if (File.Exists(temp)) File.Delete(temp); }
+            TestValidationNavigation();
             TestBgkSubtreeRemoval();
             if (args.Length > 0 && args[0] != "--render")
             {
@@ -218,6 +234,50 @@ internal static class Program
         catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
     }
     private static void Layout(Window w) { w.Measure(new Size(1200, 850)); w.Arrange(new Rect(0, 0, 1200, 850)); w.UpdateLayout(); }
+    private static void TestValidationNavigation()
+    {
+        var template = new AvaTemplate { ReviewScope = "Flansche" };
+        template.BgkCatalog.Entries.Add(new("44-40", "Flansche", "", [new("110", "Losflansch")]));
+        template.LvCatalog.Entries.Add(new("unquantified", "b", ["01"], "01", "Flansch", "", "St"));
+        var rule = new MappingRule { BgkKey = "44-40", TypeNumber = "110", Positions = [new MappingPosition { LvItemId = "unquantified" }] };
+        template.Mappings.Add(rule);
+        TemplateEditor.EnsureValid(template);
+        var path = Path.Combine(Path.GetTempPath(), "ava-validation-ui-" + Guid.NewGuid() + ".json");
+        try
+        {
+            TemplateJson.Save(path, template);
+            var window = new AvaTemplateWindow();
+            Field<TemplateEditor>(window, "editor").Open(path);
+            window.GetType().GetMethod("Refresh", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null);
+            Layout(window);
+            var diagnostics = Field<DataGrid>(window, "diagnostics");
+            var warning = diagnostics.ItemsSource.Cast<Diagnostic>().Single(d => d.Code == "QUANTITY_MISSING");
+            MappingRule? opened = null;
+            var editorHook = typeof(AvaTemplateWindow).GetProperty("DiagnosticMappingEditor", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            editorHook.SetValue(window, (Func<MappingRule, MappingRule?>)(selected => { opened = selected; return TemplateJson.Copy(selected); }));
+            void DoubleClick(Diagnostic selected)
+            {
+                diagnostics.SelectedItem = selected;
+                diagnostics.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+                    { RoutedEvent = Control.MouseDoubleClickEvent });
+            }
+            DoubleClick(warning);
+            Check(opened?.Id == rule.Id && diagnostics.ItemsSource.Cast<Diagnostic>().Any(d => d.Code == "QUANTITY_MISSING"),
+                "Validation warning double-click did not open its exact mapping or retain an unresolved warning");
+            editorHook.SetValue(window, (Func<MappingRule, MappingRule?>)(selected =>
+            {
+                var corrected = TemplateJson.Copy(selected);
+                corrected.Positions[0].Quantity = new() { Kind = QuantityKind.Constant, Source = null, ConstantValue = 1, Unit = "St" };
+                return corrected;
+            }));
+            DoubleClick(diagnostics.ItemsSource.Cast<Diagnostic>().Single(d => d.Code == "QUANTITY_MISSING"));
+            Check(!diagnostics.ItemsSource.Cast<Diagnostic>().Any(d => d.Code == "QUANTITY_MISSING"),
+                "Validation warning remained after its mapping was corrected and accepted");
+            window.Close();
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
     private static void TestBgkSubtreeRemoval()
     {
         var template = new AvaTemplate();

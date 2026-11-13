@@ -65,9 +65,11 @@ namespace BIMassist
             try
             {
 
-                var bgkGroup = panel.AddItem(new PulldownButtonData("AVA", "AVA")
+                var bgkGroup = panel.AddItem(new PulldownButtonData("AVA", "BGK/GAEB")
                 {
                     ToolTip = "BGK-Zuordnung, AVA-Vorlagen und Mengenermittlung",
+                    Image = GetImageSource("label_16px.png"),
+                    LargeImage = GetImageSource("label_24px.png"),
                 }) as PulldownButton ?? throw new InvalidOperationException("Die BGK-Gruppe konnte nicht angelegt werden.");
                 bgkGroup.AddPushButton(new PushButtonData("BGK-Manager", "BGK-Manager", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.BGKManagerCommandStartup")
                 { ToolTip = "BGK-Manager öffnen", LongDescription = "Öffnet das BGK-Manager Fenster" });

@@ -23,17 +23,19 @@ string? root = AppContext.BaseDirectory;
 while (root != null && !File.Exists(Path.Combine(root, "App.cs"))) root = Directory.GetParent(root)?.FullName;
 if (root == null) throw new Exception("Repository root not found.");
 string ribbon = File.ReadAllText(Path.Combine(root, "App.cs"));
-var ava = Regex.Match(ribbon, "new\\s+PulldownButtonData\\(\\s*\"AVA\"\\s*,\\s*\"AVA\"\\s*\\)");
+var ava = Regex.Match(ribbon, "new\\s+PulldownButtonData\\(\\s*\"AVA\"\\s*,\\s*\"BGK/GAEB\"\\s*\\)");
 int info = ribbon.IndexOf("new PushButtonData(\"BIMassist Info\"", StringComparison.Ordinal);
 if (!ava.Success || info <= ava.Index) throw new Exception("AVA group must precede Info.");
 int nextGroup = ribbon.IndexOf("new PushButtonData(\"Metadaten\"", ava.Index, StringComparison.Ordinal);
 if (nextGroup <= ava.Index || nextGroup >= info) throw new Exception("Metadata ribbon group boundary was not found.");
 string segment = ribbon[ava.Index..nextGroup];
-if (segment.Contains("Image = GetImageSource", StringComparison.Ordinal)
-    || segment.Contains("LargeImage = GetImageSource", StringComparison.Ordinal)
+if (!segment.Contains("Image = GetImageSource(\"label_16px.png\")", StringComparison.Ordinal)
+    || !segment.Contains("LargeImage = GetImageSource(\"label_24px.png\")", StringComparison.Ordinal)
+    || segment.IndexOf("Image = GetImageSource", StringComparison.Ordinal) > segment.IndexOf("new PushButtonData(\"BGK-Manager\"", StringComparison.Ordinal)
+    || segment.IndexOf("LargeImage = GetImageSource", StringComparison.Ordinal) > segment.IndexOf("new PushButtonData(\"BGK-Manager\"", StringComparison.Ordinal)
     || !segment.Contains("new PushButtonData(\"BGK-Manager\", \"BGK-Manager\"", StringComparison.Ordinal)
     || !segment.Contains("BIMassist.Commands.AvaTemplateCommand", StringComparison.Ordinal)
     || !segment.Contains("BIMassist.Commands.AvaQuantityTakeoffCommand", StringComparison.Ordinal)
     || !segment.Contains("Vorlagen verwalten", StringComparison.Ordinal))
-    throw new Exception("AVA commands must be icon-free inside the AVA group with BGK-Manager first.");
+    throw new Exception("BGK/GAEB group must carry the former BGK icon while its commands remain icon-free.");
 Console.WriteLine("PASS AVA ribbon placement, icon-free BGK-Manager entry and read-only AVA template command wiring (test doubles, not Revit runtime)");
