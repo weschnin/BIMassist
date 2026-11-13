@@ -4,11 +4,11 @@ while (root != null && !File.Exists(Path.Combine(root, "App.cs"))) root = Direct
 if (root == null) throw new Exception("Repository not found");
 void Check(bool yes, string message) { if (!yes) throw new Exception(message); }
 var app = File.ReadAllText(Path.Combine(root, "App.cs"));
-var bgk = app.IndexOf("new PulldownButtonData(\"BGK\"", StringComparison.Ordinal);
+var ava = app.IndexOf("new PulldownButtonData(\"AVA\"", StringComparison.Ordinal);
 var info = app.IndexOf("new PushButtonData(\"BIMassist Info\"", StringComparison.Ordinal);
-Check(bgk >= 0 && info > bgk && app[bgk..info].Contains("BIMassist.Commands.AvaQuantityTakeoffCommand")
-    && app[bgk..info].Contains("BIMassist.Commands.BgkTransferFromReferenceCommand")
-    && !app.Contains("new PulldownButtonData(\"AVA\"", StringComparison.Ordinal), "AVA functions are not grouped under BGK or the obsolete AVA group remains");
+Check(ava >= 0 && info > ava && app[ava..info].Contains("BIMassist.Commands.AvaQuantityTakeoffCommand")
+    && app[ava..info].Contains("BIMassist.Commands.BgkTransferFromReferenceCommand")
+    && !app.Contains("new PulldownButtonData(\"BGK\"", StringComparison.Ordinal), "AVA functions are not grouped under AVA or the obsolete BGK group remains");
 var source = File.ReadAllText(Path.Combine(root, "Commands", "AvaQuantityTakeoffCommand.cs"));
 Check(source.Contains("TransactionMode.ReadOnly"), "Takeoff must be read-only");
 Check(!Regex.IsMatch(source, @"new\s+(Transaction|TransactionGroup|SubTransaction)\b"), "Takeoff must not write Revit elements");

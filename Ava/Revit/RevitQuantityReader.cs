@@ -74,10 +74,17 @@ public static class RevitQuantityReader
         {
             var id = instance.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
             if (!requested.Contains(id)) continue;
-            var type = document.GetElement(instance.GetTypeId());
-            if (type is not FamilySymbol symbol || string.IsNullOrWhiteSpace(symbol.Family?.Name) || string.IsNullOrWhiteSpace(symbol.Name))
-                throw new InvalidDataException($"Element {id}: Familienname und Typname konnten für die Gruppierung nicht ermittelt werden.");
-            labels.Add(id, symbol.Family.Name + " — " + symbol.Name);
+            var type = document.GetElement(instance.GetTypeId()) as ElementType;
+            var typeName = string.IsNullOrWhiteSpace(type?.Name) ? instance.Name : type.Name;
+            if (string.IsNullOrWhiteSpace(typeName))
+                throw new InvalidDataException($"Element {id}: Typname konnte für die Gruppierung nicht ermittelt werden.");
+            var familyName = type is FamilySymbol symbol ? symbol.Family?.Name : null;
+            familyName = string.IsNullOrWhiteSpace(familyName) ? instance.Category?.Name : familyName;
+            if (string.IsNullOrWhiteSpace(familyName))
+                throw new InvalidDataException($"Element {id}: Familien- oder Kategoriename konnte für die Gruppierung nicht ermittelt werden.");
+            static string EscapeGroupPart(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal)
+                .Replace("—", "\\—", StringComparison.Ordinal);
+            labels.Add(id, EscapeGroupPart(familyName) + " — " + EscapeGroupPart(typeName));
         }
         var missing = requested.Except(labels.Keys, StringComparer.Ordinal).OrderBy(id => id, StringComparer.Ordinal).FirstOrDefault();
         if (missing != null) throw new InvalidDataException($"Modellelement {missing} konnte für die Gruppierung nicht gefunden werden.");

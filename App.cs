@@ -65,14 +65,12 @@ namespace BIMassist
             try
             {
 
-                var bgkGroup = panel.AddItem(new PulldownButtonData("BGK", "BGK")
+                var bgkGroup = panel.AddItem(new PulldownButtonData("AVA", "AVA")
                 {
                     ToolTip = "BGK-Zuordnung, AVA-Vorlagen und Mengenermittlung",
-                    Image = GetImageSource("label_16px.png"),
-                    LargeImage = GetImageSource("label_24px.png")
                 }) as PulldownButton ?? throw new InvalidOperationException("Die BGK-Gruppe konnte nicht angelegt werden.");
                 bgkGroup.AddPushButton(new PushButtonData("BGK-Manager", "BGK-Manager", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.BGKManagerCommandStartup")
-                { ToolTip = "BGK-Manager öffnen", LongDescription = "Öffnet das BGK-Manager Fenster", Image = GetImageSource("label_16px.png"), LargeImage = GetImageSource("label_24px.png") });
+                { ToolTip = "BGK-Manager öffnen", LongDescription = "Öffnet das BGK-Manager Fenster" });
                 bgkGroup.AddPushButton(new PushButtonData("BGK-Referenzprojekt", "BGK aus Referenzprojekt übernehmen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.BgkTransferFromReferenceCommand")
                 { ToolTip = "BGK-Werte passender Familien und Typen aus einem geöffneten Referenzprojekt übernehmen" });
                 bgkGroup.AddPushButton(new PushButtonData("AVA Vorlagen", "AVA-Vorlagen verwalten", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaTemplateCommand")

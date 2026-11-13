@@ -66,6 +66,8 @@ public static class X31Writer
                     requiredLines += CommentLineCount(group.Key.GroupKind + ": " + group.Key.GroupLabel);
                 foreach (var row in group)
                 {
+                    if (!string.IsNullOrEmpty(row.ElementId))
+                        requiredLines += CommentLineCount("Revit-ElementID: " + row.ElementId);
                     requiredLines++;
                 }
                 if (requiredLines > 9999 * 260) throw new InvalidDataException("REB-Zeilenadressraum einschließlich Gruppierungskommentaren überschritten.");
@@ -91,8 +93,10 @@ public static class X31Writer
                     AddComment(determination, group.Key.GroupKind + ": " + group.Key.GroupLabel, ref index);
                 foreach (var row in group)
                 {
+                    if (!string.IsNullOrEmpty(row.ElementId))
+                        AddComment(determination, "Revit-ElementID: " + row.ElementId, ref index);
                     // REB 23.003 fixed row: columns 14..22 are the nine-character remark field.
-                    // Keep the Revit id on its quantity row; only actual grouping gets a '*' row.
+                    // Keep the Revit id on its quantity row and add a labeled provenance comment row.
                     var formula = row.Value.ToString("0.############################", CultureInfo.InvariantCulture).Replace('.', ',') + "=";
                     var remark = row.ElementId.PadRight(9);
                     AddLine(determination, new string(' ', 13) + remark + new string(' ', 7) + "91" + formula.PadRight(38), index++);

@@ -17,19 +17,17 @@ internal static class MappingTreeModel
 {
     public static List<MappingTreeNode> Build(AvaTemplate template)
     {
-        var result = new List<MappingTreeNode>();
         var lvById = template.LvCatalog.Entries.ToDictionary(l => l.Id, StringComparer.Ordinal);
-        foreach (var bgkGroup in template.Mappings.GroupBy(r => r.BgkKey).OrderBy(g => g.Key, StringComparer.Ordinal))
+        var entries = template.BgkCatalog.Entries.Where(entry => entry.Key != "///")
+            .ToDictionary(entry => entry.Key, StringComparer.Ordinal);
+        var nodes = entries.Values.ToDictionary(bgk => bgk.Key, bgk =>
         {
-            var bgk = template.BgkCatalog.Entries.FirstOrDefault(b => b.Key == bgkGroup.Key);
-            var bgkNode = new MappingTreeNode("bgk:" + bgkGroup.Key, "BGK", bgkGroup.Key + " — " + bgk?.Description);
-            result.Add(bgkNode);
-            foreach (var typeGroup in bgkGroup.GroupBy(r => r.TypeNumber).OrderBy(g => g.Key, StringComparer.Ordinal))
+            var bgkNode = new MappingTreeNode("bgk:" + bgk.Key, "BGK", bgk.Key + " " + bgk.Description);
+            foreach (var type in bgk.Types.OrderBy(type => type.Number, StringComparer.Ordinal))
             {
-                var type = bgk?.Types.FirstOrDefault(t => t.Number == typeGroup.Key);
-                var typeNode = new MappingTreeNode(bgkNode.Key + "/typ:" + typeGroup.Key, "Typ", "Typ " + typeGroup.Key + " — " + type?.Description);
+                var typeNode = new MappingTreeNode(bgkNode.Key + "/typ:" + type.Number, "Typ", "Typ " + type.Number + " — " + type.Description);
                 bgkNode.Children.Add(typeNode);
-                foreach (var rule in typeGroup)
+                foreach (var rule in template.Mappings.Where(rule => rule.BgkKey == bgk.Key && rule.TypeNumber == type.Number))
                 {
                     var conditions = rule.Conditions.Count == 0 ? "Ohne Bedingung" : string.Join(" UND ", rule.Conditions);
                     var ruleNode = new MappingTreeNode("rule:" + rule.Id, "Zuordnung", conditions + $"  ({rule.Positions.Count} Leistungspositionen)", rule);
@@ -38,11 +36,20 @@ internal static class MappingTreeModel
                     {
                         lvById.TryGetValue(position.LvItemId, out var item);
                         ruleNode.Children.Add(new("position:" + rule.Id + ":" + position.Id, "Position",
-                            (item?.Ordinal ?? position.LvItemId) + " — " + item?.Text + "\nMenge: " + (position.Quantity?.ToString() ?? "noch offen"), rule, position));
+                            (item?.Ordinal ?? position.LvItemId) + " " + item?.Text + "\nMenge: " + (position.Quantity?.ToString() ?? "noch offen"), rule, position));
                     }
                 }
             }
+            return bgkNode;
+        }, StringComparer.Ordinal);
+        var result = new List<MappingTreeNode>();
+        foreach (var bgk in entries.Values.OrderBy(entry => entry.Key, StringComparer.Ordinal))
+        {
+            var separator = bgk.Key.LastIndexOf('-');
+            string parentKey = separator > 0 ? bgk.Key[..separator] : "";
+            if (nodes.TryGetValue(parentKey, out var parent)) parent.Children.Add(nodes[bgk.Key]);
+            else result.Add(nodes[bgk.Key]);
         }
-        return result;
+        return result.OrderBy(node => node.Key, StringComparer.Ordinal).ToList();
     }
 }

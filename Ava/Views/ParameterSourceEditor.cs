@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 using BIMassist.Ava.Core;
 using W = System.Windows.Controls;
 
@@ -7,6 +8,14 @@ namespace BIMassist.Ava.Views;
 
 internal static class EditorUi
 {
+    public static void SelectTreeItemOnClick(W.TreeViewItem item)
+    {
+        item.PreviewMouseDown += (_, args) =>
+        {
+            if (args.ChangedButton == MouseButton.Left) item.IsSelected = true;
+        };
+    }
+
     public static W.TextBlock Text(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 7) };
     public static W.Button Button(string text, Action action)
     {

@@ -162,6 +162,7 @@ internal sealed class MappingEditorWindow : Window
         {
             var item = new W.TreeViewItem { Tag = node, Header = new W.TextBlock { Text = node.Label, TextWrapping = TextWrapping.Wrap, MaxWidth = 420 },
                 IsExpanded = expandedBgkKeys.Contains(node.Key) };
+            EditorUi.SelectTreeItemOnClick(item);
             item.Expanded += (_, _) => expandedBgkKeys.Add(node.Key);
             item.Collapsed += (_, _) => expandedBgkKeys.Remove(node.Key);
             foreach (var child in node.Children) item.Items.Add(Create(child));
@@ -173,18 +174,31 @@ internal sealed class MappingEditorWindow : Window
     }
     private W.TreeViewItem? FindBgkNode(string key, string typeNumber)
     {
-        foreach (W.TreeViewItem root in bgk.Items)
-            if (root.Tag is CatalogTreeNode bgkNode && bgkNode.SourceId == key)
-                return root.Items.OfType<W.TreeViewItem>().FirstOrDefault(child => child.Tag is CatalogTreeNode typeNode && typeNode.SourceId == typeNumber);
-        return null;
+        W.TreeViewItem? Search(W.ItemsControl parent)
+        {
+            foreach (W.TreeViewItem item in parent.Items)
+            {
+                if (item.Tag is CatalogTreeNode node && node.Key == "typ:" + key + ":" + typeNumber) return item;
+                var found = Search(item);
+                if (found != null) { item.IsExpanded = true; return found; }
+            }
+            return null;
+        }
+        return Search(bgk);
     }
     private void ExpandBgk(bool expand)
     {
-        foreach (W.TreeViewItem root in bgk.Items)
+        void Apply(W.ItemsControl parent)
         {
-            root.IsExpanded = expand;
-            foreach (W.TreeViewItem child in root.Items) child.IsExpanded = expand;
+            foreach (W.TreeViewItem item in parent.Items)
+            {
+                item.IsExpanded = expand;
+                if (expand) expandedBgkKeys.Add(((CatalogTreeNode)item.Tag).Key);
+                else expandedBgkKeys.Remove(((CatalogTreeNode)item.Tag).Key);
+                Apply(item);
+            }
         }
+        Apply(bgk);
     }
     private sealed record PositionRow(MappingPosition Position, string Ordinal, string Text, string Quantity);
 }

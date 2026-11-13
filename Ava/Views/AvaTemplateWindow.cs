@@ -42,6 +42,7 @@ public sealed class AvaTemplateWindow : Window
     internal Func<MessageBoxResult>? PendingPrompt { get; set; }
     internal Func<string?>? SavePathSelector { get; set; }
     internal Func<int, bool>? DraftPrompt { get; set; }
+    internal Func<string, bool>? RemovalPrompt { get; set; }
     internal Action<Exception>? ErrorReporter { get; set; }
 
     public AvaTemplateWindow() : this(new AvaWorkspace()) { }
@@ -152,7 +153,7 @@ public sealed class AvaTemplateWindow : Window
         var lvDivider = new W.Separator { Name = "LvSourceDivider", Margin = new Thickness(0, 2, 0, 2) }; RegisterName(lvDivider.Name, lvDivider); sources.Children.Add(lvDivider);
         sources.Children.Add(parameterSourceInfo);
         W.DockPanel.SetDock(sources, W.Dock.Top); panel.Children.Add(sources);
-        var hierarchyHint = EditorUi.Text("BGK: Baugruppe → Typ. StammLV: LV → Titel → OZ-Nummer / Leistung. Interne Schlüssel und GUIDs werden bei LV-Positionen nicht als Anzeigespalte verwendet.");
+        var hierarchyHint = EditorUi.Text("BGK: Hauptgruppe → Untergruppe → Typ. StammLV: LV → Titel → Nummer / Leistung. Interne Schlüssel und GUIDs werden bei LV-Positionen nicht als Anzeigespalte verwendet.");
         W.DockPanel.SetDock(hierarchyHint, W.Dock.Top); panel.Children.Add(hierarchyHint);
         var filter = new W.DockPanel(); W.DockPanel.SetDock(filter, W.Dock.Top); panel.Children.Add(filter);
         W.DockPanel.SetDock(catalogKind, W.Dock.Left); filter.Children.Add(catalogKind); filter.Children.Add(catalogSearch);
@@ -178,20 +179,80 @@ public sealed class AvaTemplateWindow : Window
         buttons.Children.Add(EditorUi.Button("Zuordnung hinzufügen…", () => EditMapping(false)));
         buttons.Children.Add(EditorUi.Button("Ausgewählte bearbeiten…", () => EditMapping(true)));
         buttons.Children.Add(EditorUi.Button("Leistungsposition hinzufügen…", () => EditPosition(false)));
-        buttons.Children.Add(EditorUi.Button("Ausgewählte entfernen", () => EditorUi.Guard(this, () => {
-            var selected = SelectedMapping;
-            if (selected?.Rule is not { } rule) return;
-            string question = selected.Position == null ? "Diese Zuordnung mit allen Leistungspositionen entfernen?" : "Diese Leistungsposition aus der Zuordnung entfernen?";
-            if (System.Windows.MessageBox.Show(this, question, "AVA", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-            if (selected.Position == null) editor.RemoveMapping(rule.Id);
-            else { var copy = TemplateJson.Copy(rule); copy.Positions.RemoveAll(p => p.Id == selected.Position.Id); editor.UpsertMapping(copy); }
-            Refresh();
-        })));
+        buttons.Children.Add(EditorUi.Button("Zuordnung duplizieren…", () => EditorUi.Guard(this, DuplicateSelectedMapping)));
+        buttons.Children.Add(EditorUi.Button("Ausgewählte entfernen", () => EditorUi.Guard(this, RemoveSelectedMapping)));
         buttons.Children.Add(EditorUi.Button("Alle aufklappen", () => ExpandMappings(true)));
         buttons.Children.Add(EditorUi.Button("Alle zuklappen", () => ExpandMappings(false)));
         mappings.Name = "MappingsTree"; RegisterName(mappings.Name, mappings);
         mappings.MouseDoubleClick += (_, e) => { if (SelectedMapping?.Rule != null) { if (SelectedMapping.Position != null) EditPosition(true); else EditMapping(true); e.Handled = true; } };
         panel.Children.Add(mappings); return panel;
+    }
+    internal static MappingRule DuplicateMappingRule(MappingRule source)
+    {
+        var copy = TemplateJson.Copy(source);
+        copy.Id = Guid.NewGuid();
+        foreach (var position in copy.Positions) position.Id = Guid.NewGuid();
+        return copy;
+    }
+    private bool ConfirmRemoval(string question) => RemovalPrompt?.Invoke(question)
+        ?? System.Windows.MessageBox.Show(this, question, "AVA", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+    private void RemoveSelectedMapping()
+    {
+        var selected = SelectedMapping;
+        if (selected == null) return;
+        var mappingsToRemove = selected.Kind switch
+        {
+            "BGK" => editor.Document.Mappings.Where(rule => IsWithinBgk(rule.BgkKey, selected.Key["bgk:".Length..])).ToList(),
+            "Typ" => editor.Document.Mappings.Where(rule => IsSameType(rule, selected.Key)).ToList(),
+            "Zuordnung" when selected.Rule != null => [selected.Rule],
+            "Position" when selected.Rule != null && selected.Position != null && selected.Rule.Positions.Count == 1 => [selected.Rule],
+            _ => []
+        };
+        if (mappingsToRemove.Count > 0)
+        {
+            var positionCount = mappingsToRemove.Sum(rule => rule.Positions.Count);
+            var conditionCount = mappingsToRemove.Sum(rule => rule.Conditions.Count);
+            var isSubtree = selected.Kind is "BGK" or "Typ";
+            var question = isSubtree
+                ? $"Alle Elemente unterhalb von '{selected.Label}' einschließlich {conditionCount} Bedingungen, {mappingsToRemove.Count} Zuordnungen, {positionCount} Leistungspositionen und Mengen löschen?"
+                : selected.Kind == "Position"
+                    ? $"Diese Leistungsposition ist die letzte in ihrer Zuordnung. Beim Entfernen werden auch die gesamte Zuordnung, {conditionCount} {(conditionCount == 1 ? "Bedingung" : "Bedingungen")} und ihre Mengenangabe gelöscht. Wirklich fortfahren?"
+                    : "Diese Zuordnung mit allen Bedingungen, Leistungspositionen und Mengen entfernen?";
+            if (!ConfirmRemoval(question)) return;
+            editor.RemoveMappings(mappingsToRemove.Select(rule => rule.Id));
+            Refresh();
+            return;
+        }
+        if (selected.Kind == "Position" && selected.Rule != null && selected.Position != null)
+        {
+            if (!ConfirmRemoval("Diese Leistungsposition einschließlich ihrer Mengenangabe entfernen?")) return;
+            var copy = TemplateJson.Copy(selected.Rule);
+            copy.Positions.RemoveAll(position => position.Id == selected.Position.Id);
+            editor.UpsertMapping(copy);
+            Refresh();
+        }
+    }
+    private static bool IsWithinBgk(string candidate, string selected) =>
+        candidate == selected || candidate.StartsWith(selected + "-", StringComparison.Ordinal);
+    private static bool IsSameType(MappingRule rule, string typeKey)
+    {
+        const string marker = "/typ:";
+        var separator = typeKey.LastIndexOf(marker, StringComparison.Ordinal);
+        if (!typeKey.StartsWith("bgk:", StringComparison.Ordinal) || separator < 0) return false;
+        var bgkKey = typeKey["bgk:".Length..separator];
+        var typeNumber = typeKey[(separator + marker.Length)..];
+        return rule.BgkKey == bgkKey && rule.TypeNumber == typeNumber;
+    }
+    private void DuplicateSelectedMapping()
+    {
+        if (SelectedMapping?.Rule is not { } source) return;
+        var duplicate = DuplicateMappingRule(source);
+        var dialog = new MappingEditorWindow(editor.Document, duplicate) { Owner = this };
+        if (dialog.ShowDialog() == true)
+        {
+            editor.UpsertMapping(dialog.BuildRule());
+            Refresh();
+        }
     }
     private void EditIdentification(bool bgk)
     {
@@ -254,6 +315,7 @@ public sealed class AvaTemplateWindow : Window
             var item = new W.TreeViewItem { Tag = node, IsExpanded = expanded.GetValueOrDefault(node.Key, true),
                 Header = new W.TextBlock { Text = node.Label, TextWrapping = TextWrapping.Wrap, MaxWidth = 980, Margin = new Thickness(3, 5, 3, 5), FontWeight = node.Kind is "BGK" or "Typ" ? FontWeights.SemiBold : FontWeights.Normal },
                 ToolTip = node.Position == null ? node.Rule?.Id.ToString() : "LV-ID: " + node.Position.LvItemId + " | Position: " + node.Position.Id };
+            EditorUi.SelectTreeItemOnClick(item);
             foreach (var child in node.Children) item.Items.Add(Create(child));
             if (node.Key == selected) selection = item;
             return item;
@@ -421,6 +483,7 @@ public sealed class AvaTemplateWindow : Window
                         Header = new W.TextBlock { Text = node.Label, TextWrapping = TextWrapping.Wrap, MaxWidth = 1000, Margin = new Thickness(3, 4, 3, 4) },
                         IsExpanded = catalogTreeExpansion.GetValueOrDefault(node.Key, true)
                     };
+                    EditorUi.SelectTreeItemOnClick(item);
                     item.Expanded += (_, _) => { if (!refreshingCatalogTree) catalogTreeExpansion[node.Key] = true; };
                     item.Collapsed += (_, _) => { if (!refreshingCatalogTree) catalogTreeExpansion[node.Key] = false; };
                     foreach (var child in node.Children) item.Items.Add(Create(child));

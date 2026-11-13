@@ -308,12 +308,12 @@ internal static class ExecuteTests
             Equal(Result.Succeeded, f.Execute()); Equal(IntPtr.Zero, CommonDialog.Shown.Single().Owner);
             Equal(0, System.Windows.Window.Created);
         });
-        Test("screenshot-oriented export keeps Revit ID on the quantity row without extra provenance rows", f =>
+        Test("screenshot-oriented export labels Revit ID in the remark and preserves compact row ID", f =>
         {
             f.Remember(f.Template()); f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
             var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
             Equal("429496", rows.Single(r => r[12] != '*').Substring(13, 9).Trim());
-            Check(!rows.Any(r => r[12] == '*'), "Ungrouped quantity gained a separate comment row");
+            Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).TrimEnd() == "Revit-ElementID: 429496"), "Labeled Revit element remark missing");
         });
         Console.WriteLine($"Execute integration with Revit/UI/Win32 doubles and real core/writer: {passed} passed; {failed} failed (not a Revit-host test)");
         if (failed != 0) Environment.ExitCode = 1;

@@ -23,13 +23,17 @@ string? root = AppContext.BaseDirectory;
 while (root != null && !File.Exists(Path.Combine(root, "App.cs"))) root = Directory.GetParent(root)?.FullName;
 if (root == null) throw new Exception("Repository root not found.");
 string ribbon = File.ReadAllText(Path.Combine(root, "App.cs"));
-var bgk = Regex.Match(ribbon, "new\\s+PulldownButtonData\\(\\s*\"BGK\"\\s*,\\s*\"BGK\"\\s*\\)");
+var ava = Regex.Match(ribbon, "new\\s+PulldownButtonData\\(\\s*\"AVA\"\\s*,\\s*\"AVA\"\\s*\\)");
 int info = ribbon.IndexOf("new PushButtonData(\"BIMassist Info\"", StringComparison.Ordinal);
-if (!bgk.Success || info <= bgk.Index) throw new Exception("BGK group must precede Info.");
-string segment = ribbon[bgk.Index..info];
-if (segment.Contains("new PulldownButtonData(\"AVA\"", StringComparison.Ordinal)
+if (!ava.Success || info <= ava.Index) throw new Exception("AVA group must precede Info.");
+int nextGroup = ribbon.IndexOf("new PushButtonData(\"Metadaten\"", ava.Index, StringComparison.Ordinal);
+if (nextGroup <= ava.Index || nextGroup >= info) throw new Exception("Metadata ribbon group boundary was not found.");
+string segment = ribbon[ava.Index..nextGroup];
+if (segment.Contains("Image = GetImageSource", StringComparison.Ordinal)
+    || segment.Contains("LargeImage = GetImageSource", StringComparison.Ordinal)
+    || !segment.Contains("new PushButtonData(\"BGK-Manager\", \"BGK-Manager\"", StringComparison.Ordinal)
     || !segment.Contains("BIMassist.Commands.AvaTemplateCommand", StringComparison.Ordinal)
     || !segment.Contains("BIMassist.Commands.AvaQuantityTakeoffCommand", StringComparison.Ordinal)
     || !segment.Contains("Vorlagen verwalten", StringComparison.Ordinal))
-    throw new Exception("AVA template/takeoff commands must be inside BGK, with no obsolete AVA pulldown.");
-Console.WriteLine("PASS BGK ribbon placement and read-only AVA template command wiring (test doubles, not Revit runtime)");
+    throw new Exception("AVA commands must be icon-free inside the AVA group with BGK-Manager first.");
+Console.WriteLine("PASS AVA ribbon placement, icon-free BGK-Manager entry and read-only AVA template command wiring (test doubles, not Revit runtime)");

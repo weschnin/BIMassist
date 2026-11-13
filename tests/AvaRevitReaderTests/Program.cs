@@ -129,6 +129,40 @@ Check(!groupingOptions.Any(x => x.Name == "Number"), "Numeric parameter was offe
 symbol.Family.Name = "Rohrfamilie"; symbol.Name = "DN 20";
 Check(RevitQuantityReader.ReadFamilyAndTypeLabels(document, ["100"])["100"] == "Rohrfamilie — DN 20",
     "Family/type group label did not preserve the exact Revit family and type names");
+var wallInstance = new FamilyInstance { Id = new(401), TypeId = new(201), Category = new() { Name = "Wände" } };
+var wallType = new ElementType { Id = new(201), Name = "Grundwand" };
+var wallDocument = new Document(); wallDocument.Elements.AddRange([wallInstance, wallType]);
+Check(RevitQuantityReader.ReadFamilyAndTypeLabels(wallDocument, ["401"])["401"] == "Wände — Grundwand",
+    "Family/type grouping must support model element types without a FamilySymbol");
+var escapedDocument = new Document();
+var escapedPairs = new[]
+{
+    ("A — B", "C"),
+    ("A", "B — C"),
+    ("A\\—B", "C"),
+    ("A", "B\\—C")
+};
+var escapedInstances = escapedPairs.Select((pair, index) => new FamilyInstance { Id = new(410 + index), TypeId = new(510 + index) }).ToArray();
+for (var index = 0; index < escapedPairs.Length; index++)
+{
+    escapedInstances[index].Category = new() { Name = escapedPairs[index].Item1 };
+    escapedDocument.Elements.Add(escapedInstances[index]);
+    escapedDocument.Elements.Add(new ElementType { Id = new(510 + index), Name = escapedPairs[index].Item2 });
+}
+var escapedLabels = RevitQuantityReader.ReadFamilyAndTypeLabels(escapedDocument, escapedInstances.Select(x => x.Id.Value.ToString())).Values.ToArray();
+Check(escapedLabels.Distinct(StringComparer.Ordinal).Count() == escapedPairs.Length,
+    "Escaping of backslashes and em dashes did not keep distinct family/type pairs unique");
+var untyped = new FamilyInstance { Id = new(402), TypeId = new(999), Name = "Freies Element", Category = new() { Name = "Modell" } };
+var untypedDocument = new Document(); untypedDocument.Elements.Add(untyped);
+Check(RevitQuantityReader.ReadFamilyAndTypeLabels(untypedDocument, ["402"])["402"] == "Modell — Freies Element",
+    "Family/type grouping must fall back to the model element name when Revit exposes no ElementType");
+var collisionType = new FamilySymbol { Id = new(202), Family = new() { Name = "A — B" }, Name = "C" };
+var collisionInstance = new FamilyInstance { Id = new(403), TypeId = collisionType.Id, Category = new() { CategoryType = CategoryType.Model } };
+var collisionType2 = new FamilySymbol { Id = new(203), Family = new() { Name = "A" }, Name = "B — C" };
+var collisionInstance2 = new FamilyInstance { Id = new(404), TypeId = collisionType2.Id, Category = new() { CategoryType = CategoryType.Model } };
+var collisionDocument = new Document(); collisionDocument.Elements.AddRange([collisionInstance, collisionType, collisionInstance2, collisionType2]);
+var collisionLabels = RevitQuantityReader.ReadFamilyAndTypeLabels(collisionDocument, ["403", "404"]);
+Check(collisionLabels["403"] != collisionLabels["404"], "Distinct family/type pairs collided in the flattened group label");
 Check(RevitQuantityReader.ReadGroupingLabels(document, ["100"], new("Gewerk", ParameterScope.Instance))["100"] == "Rohbau", "Instance grouping label changed");
 Check(RevitQuantityReader.ReadGroupingLabels(document, ["100"], new("Baubereich", ParameterScope.Type))["100"] == "Erdgeschoss", "Type grouping label changed");
 Reject(() => RevitQuantityReader.ReadGroupingLabels(document, ["100"], new("Absent", ParameterScope.Instance)), "Missing group label was guessed");

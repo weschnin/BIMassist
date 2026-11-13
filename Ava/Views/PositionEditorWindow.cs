@@ -183,6 +183,7 @@ internal sealed class PositionEditorWindow : Window
                     Header = new W.TextBlock { Text = node.Label, TextWrapping = TextWrapping.Wrap, MaxWidth = 850,
                         Margin = new Thickness(3, 4, 3, 4) }
                 };
+                EditorUi.SelectTreeItemOnClick(item);
                 item.Expanded += (_, _) => { if (!syncingLvTree) lvTreeExpansion[node.Key] = true; };
                 item.Collapsed += (_, _) => { if (!syncingLvTree) lvTreeExpansion[node.Key] = false; };
                 foreach (var child in node.Children) item.Items.Add(Create(child));

@@ -4,7 +4,7 @@ public record ForgeTypeId(string Value);
 public enum StorageType { None, Integer, Double, String, ElementId }
 public enum BuiltInParameter { INVALID = -1, ASSEMBLY_CODE = -2, ALL_MODEL_TYPE_COMMENTS = -3, ALL_MODEL_DESCRIPTION = -4, HOST_VOLUME_COMPUTED = -5 }
 public enum CategoryType { Model, Annotation }
-public sealed class Category { public CategoryType CategoryType { get; set; } = CategoryType.Model; }
+public sealed class Category { public CategoryType CategoryType { get; set; } = CategoryType.Model; public string Name { get; set; } = "Model"; }
 public static class SpecTypeId
 {
     public static ForgeTypeId Length = new("LENGTH"), Area = new("AREA"), Volume = new("VOLUME"), Angle = new("ANGLE"), Number = new("NUMBER"), MassDensity = new("MASS_DENSITY");

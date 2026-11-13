@@ -20,13 +20,25 @@ internal static class CatalogTreeModel
 
     public static List<CatalogTreeNode> BuildBgk(AvaTemplate template, string filter = "")
     {
-        var roots = template.BgkCatalog.Entries.Select(bgk =>
+        var entries = template.BgkCatalog.Entries
+            .Where(bgk => bgk.Key != "///")
+            .ToDictionary(bgk => bgk.Key, StringComparer.Ordinal);
+        var nodes = entries.Values.ToDictionary(bgk => bgk.Key, bgk =>
         {
-            var root = new CatalogTreeNode("bgk:" + bgk.Key, "BGK-Schlüssel " + bgk.Key + " — " + bgk.Description, bgk.Key);
+            var root = new CatalogTreeNode("bgk:" + bgk.Key, bgk.Key + " " + bgk.Description, bgk.Key);
             foreach (var type in bgk.Types)
                 root.Children.Add(new("typ:" + bgk.Key + ":" + type.Number, "Typ " + type.Number + " — " + type.Description, type.Number));
             return root;
-        }).ToList();
+        }, StringComparer.Ordinal);
+        var roots = new List<CatalogTreeNode>();
+        foreach (var bgk in entries.Values.OrderBy(entry => entry.Key, StringComparer.Ordinal))
+        {
+            var separator = bgk.Key.LastIndexOf('-');
+            string parentKey = separator > 0 ? bgk.Key[..separator] : "";
+            if (nodes.TryGetValue(parentKey, out var parent)) parent.Children.Add(nodes[bgk.Key]);
+            else roots.Add(nodes[bgk.Key]);
+        }
+        roots = roots.OrderBy(node => node.Key, StringComparer.Ordinal).ToList();
         return Filter(roots, filter);
     }
 
@@ -85,7 +97,7 @@ internal static class CatalogTreeModel
         {
             var id = (string?)item.Attribute("ID") ?? "";
             if (!entries.TryGetValue(id, out var entry)) continue;
-            parent.Children.Add(new("item:" + id, "OZ " + entry.Ordinal + " — " + entry.Text, id));
+            parent.Children.Add(new("item:" + id, entry.Ordinal + " " + entry.Text, id));
         }
     }
 
@@ -116,7 +128,7 @@ internal static class CatalogTreeModel
                 }
                 parent = section;
             }
-            parent.Children.Add(new("item:" + entry.Id, "OZ " + entry.Ordinal + " — " + entry.Text, entry.Id));
+            parent.Children.Add(new("item:" + entry.Id, entry.Ordinal + " " + entry.Text, entry.Id));
         }
         return roots;
     }

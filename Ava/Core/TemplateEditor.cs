@@ -37,6 +37,12 @@ public sealed class TemplateEditor
         if (index < 0) p.Mappings.Add(TemplateJson.Copy(rule)); else p.Mappings[index] = TemplateJson.Copy(rule);
     });
     public void RemoveMapping(Guid id) => Change(p => p.Mappings.RemoveAll(m => m.Id == id));
+    public void RemoveMappings(IEnumerable<Guid> ids)
+    {
+        var selected = ids.ToHashSet();
+        if (selected.Count == 0) return;
+        Change(p => p.Mappings.RemoveAll(mapping => selected.Contains(mapping.Id)));
+    }
     public void SetIdentification(bool bgk, ParameterSource source) => Change(p =>
     {
         if (bgk) p.BgkIdentification = TemplateJson.Copy(source); else p.TypeIdentification = TemplateJson.Copy(source);

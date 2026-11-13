@@ -105,6 +105,7 @@ internal sealed class LvPositionPickerWindow : Window
     private W.TreeViewItem CreateItem(CatalogTreeNode node)
     {
         var item = new W.TreeViewItem { Tag = node, IsExpanded = !collapsedNodeKeys.Contains(node.Key) };
+        EditorUi.SelectTreeItemOnClick(item);
         item.Collapsed += (_, _) => collapsedNodeKeys.Add(node.Key);
         item.Expanded += (_, _) => collapsedNodeKeys.Remove(node.Key);
         var header = new W.StackPanel { Orientation = W.Orientation.Horizontal };
