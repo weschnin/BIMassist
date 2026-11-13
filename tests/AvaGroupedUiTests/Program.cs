@@ -241,6 +241,8 @@ internal static class Program
         template.LvCatalog.Entries.Add(new("unquantified", "b", ["01"], "01", "Flansch", "", "St"));
         var rule = new MappingRule { BgkKey = "44-40", TypeNumber = "110", Positions = [new MappingPosition { LvItemId = "unquantified" }] };
         template.Mappings.Add(rule);
+        template.Mappings.Add(new MappingRule { BgkKey = "44-40", TypeNumber = "110", Positions =
+            [new MappingPosition { LvItemId = "unquantified", Quantity = new() { Kind = QuantityKind.Constant, Source = null, ConstantValue = 1, Unit = "St" } }] });
         TemplateEditor.EnsureValid(template);
         var path = Path.Combine(Path.GetTempPath(), "ava-validation-ui-" + Guid.NewGuid() + ".json");
         try
@@ -273,6 +275,11 @@ internal static class Program
             DoubleClick(diagnostics.ItemsSource.Cast<Diagnostic>().Single(d => d.Code == "QUANTITY_MISSING"));
             Check(!diagnostics.ItemsSource.Cast<Diagnostic>().Any(d => d.Code == "QUANTITY_MISSING"),
                 "Validation warning remained after its mapping was corrected and accepted");
+            editorHook.SetValue(window, (Func<MappingRule, MappingRule?>)(selected => { opened = selected; return TemplateJson.Copy(selected); }));
+            opened = null;
+            DoubleClick(diagnostics.ItemsSource.Cast<Diagnostic>().Single(d => d.Code == "MULTIPLE_RULES"));
+            Check(opened != null && opened.BgkKey == rule.BgkKey && opened.TypeNumber == rule.TypeNumber,
+                "Group-level duplicate-rule warning did not open one exact affected mapping");
             window.Close();
         }
         finally { if (File.Exists(path)) File.Delete(path); }

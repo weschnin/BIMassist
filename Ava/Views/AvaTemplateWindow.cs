@@ -288,8 +288,11 @@ public sealed class AvaTemplateWindow : Window
     {
         int start = diagnostic.Path.IndexOf('[');
         int end = start >= 0 ? diagnostic.Path.IndexOf(']', start + 1) : -1;
-        if (start < 0 || end < 0 || !Guid.TryParse(diagnostic.Path[(start + 1)..end], out var ruleId)) return;
-        var rule = editor.Document.Mappings.SingleOrDefault(candidate => candidate.Id == ruleId);
+        MappingRule? rule = null;
+        if (start >= 0 && end >= 0 && Guid.TryParse(diagnostic.Path[(start + 1)..end], out var ruleId))
+            rule = editor.Document.Mappings.SingleOrDefault(candidate => candidate.Id == ruleId);
+        else if (diagnostic.Code == "MULTIPLE_RULES")
+            rule = editor.Document.Mappings.FirstOrDefault(candidate => diagnostic.Path == $"({candidate.BgkKey}, {candidate.TypeNumber})");
         if (rule == null) return;
         MappingRule? result;
         if (DiagnosticMappingEditor != null) result = DiagnosticMappingEditor(rule);
