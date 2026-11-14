@@ -55,9 +55,13 @@ internal static class Program
             QuantityFormula.Validate("1/0", Array.Empty<string>());
             QuantityFormula.Validate("x + [x]", new[] { "x" });
             QuantityFormula.Validate("x + X + [Overall Height]", new[] { "X", "Overall Height", "x" });
+            try { QuantityFormula.Validate("1 + Volumen foo", new[] { "Volumen" }); throw new Exception("Trailing formula text was accepted."); }
+            catch (InvalidDataException ex) when (ex.Message.Contains("simple names may be bare", StringComparison.Ordinal)) { }
             Reject(() => QuantityFormula.Validate("x", Array.Empty<string>()));
             Reject(() => QuantityFormula.Validate("x", new[] { "X" }));
             Reject(() => QuantityFormula.Validate("x", new[] { "x", "unused" }));
+            try { QuantityFormula.Validate("Volumen", Array.Empty<string>()); throw new Exception("Missing formula binding was accepted."); }
+            catch (InvalidDataException ex) when (ex.Message.Contains("Parameter hinzufügen", StringComparison.Ordinal)) { }
             Reject(() => QuantityFormula.Validate("1", new[] { "unused" }));
             Reject(() => QuantityFormula.Validate("x", new[] { "x", "x" }));
             foreach (var invalid in new[] { "", " ", " x", "x ", "[x]", "x]", null! })

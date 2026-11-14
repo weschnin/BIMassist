@@ -141,7 +141,7 @@ public static class TemplateValidator
                             if (!UnitCatalog.AllowsQuantityUnit(source.Spec, quantity.Unit, quantity.AllowCustomUnit))
                                 Error("QUANTITY_UNIT", path, quantity.AllowCustomUnit
                                     ? "Freie Einheit nur für NUMBER/INTEGER; Wert wird dabei ohne Umrechnung übernommen."
-                                    : "Mengeneinheit passt nicht zur Parameterspezifikation.");
+                                    : $"Mengeneinheit '{quantity.Unit}' passt nicht zur Parameterspezifikation {source.Spec}. Zulässig: {string.Join(", ", UnitCatalog.ForSpec(source.Spec))}. Für eine Formel mit Umrechnung bitte die Quelleneinheit und Ergebniseinheit getrennt festlegen.");
                         }
                     }
                     else if (quantity.Kind == QuantityKind.Constant)

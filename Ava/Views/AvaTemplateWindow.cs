@@ -162,6 +162,14 @@ public sealed class AvaTemplateWindow : Window
         var sourceInfo = kind switch { "bgk" => bgkSourceInfo, "lv" => lvSourceInfo, _ => parameterSourceInfo };
         var sourceLabel = kind switch { "bgk" => "BGK-Quelle", "lv" => "LV-Quelle", _ => "Parameter-Quelle" };
         buttons.Children.Add(EditorUi.Button(kind switch { "bgk" => "BGK-XML importieren…", "lv" => "LV X82 importieren…", _ => "Parameter-TXT importieren…" }, () => ImportCatalog(kind)));
+        if (kind == "bgk")
+        {
+            buttons.Children.Add(EditorUi.Button("BGK hinzufügen…", AddBgkEntry));
+            buttons.Children.Add(EditorUi.Button("BGK bearbeiten…", EditSelectedBgk));
+            buttons.Children.Add(EditorUi.Button("BGK / Typ entfernen…", RemoveSelectedBgk));
+            buttons.Children.Add(EditorUi.Button("Vorlage mit BGK-Katalog exportieren…", Export));
+            buttons.Children.Add(EditorUi.Text("Der Export erzeugt eine vollständige portable AVA-JSON-Vorlage einschließlich des bearbeiteten BGK-Katalogs, nicht eine separate BGK-XML-Datei."));
+        }
         sourceInfo.Margin = new Thickness(4);
         W.DockPanel.SetDock(sourceInfo, W.Dock.Top); panel.Children.Add(sourceInfo);
         var divider = new W.Separator { Margin = new Thickness(0, 2, 0, 2) };
@@ -481,6 +489,60 @@ public sealed class AvaTemplateWindow : Window
             replace(); Refresh();
         });
     }
+    private void AddBgkEntry()
+    {
+        var dialog = new BgkEntryEditorWindow(null) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.Result is not { } entry) return;
+        EditorUi.Guard(this, () =>
+        {
+            editor.ReplaceBgk(BgkCatalogEditor.Add(editor.Document.BgkCatalog, entry));
+            Refresh();
+        });
+    }
+    private void EditSelectedBgk()
+    {
+        if (bgkCatalogTree.SelectedItem is not W.TreeViewItem { Tag: CatalogTreeNode selected })
+        { EditorUi.Error(this, new InvalidDataException("Zuerst eine BGK oder einen Typ im BGK-Katalog auswählen.")); return; }
+        string key = selected.Key.StartsWith("bgk:", StringComparison.Ordinal) ? selected.SourceId
+            : selected.Key.StartsWith("typ:", StringComparison.Ordinal) ? selected.Key["typ:".Length..selected.Key.LastIndexOf(':')] : "";
+        var current = editor.Document.BgkCatalog.Entries.SingleOrDefault(entry => entry.Key == key);
+        if (current == null) return;
+        var dialog = new BgkEntryEditorWindow(current) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.Result is not { } updated) return;
+        EditorUi.Guard(this, () =>
+        {
+            editor.ReplaceBgk(BgkCatalogEditor.Update(editor.Document.BgkCatalog, key, updated, editor.Document.Mappings));
+            Refresh();
+        });
+    }
+    private void RemoveSelectedBgk()
+    {
+        if (bgkCatalogTree.SelectedItem is not W.TreeViewItem { Tag: CatalogTreeNode selected })
+        { EditorUi.Error(this, new InvalidDataException("Zuerst eine BGK oder einen Typ im BGK-Katalog auswählen.")); return; }
+        bool isType = selected.Key.StartsWith("typ:", StringComparison.Ordinal);
+        string bgkKey = isType ? selected.Key["typ:".Length..selected.Key.LastIndexOf(':')] : selected.SourceId;
+        string? typeNumber = isType ? selected.SourceId : null;
+        var subtree = editor.Document.BgkCatalog.Entries.Where(entry => entry.Key == bgkKey
+            || typeNumber == null && entry.Key.StartsWith(bgkKey + "-", StringComparison.Ordinal)).ToList();
+        var keySet = subtree.Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);
+        var referenced = editor.Document.Mappings.Where(rule => keySet.Contains(rule.BgkKey)
+            && (typeNumber == null || rule.TypeNumber == typeNumber)).ToList();
+        if (referenced.Count > 0)
+        {
+            EditorUi.Error(this, new InvalidDataException($"Löschen nicht möglich: {referenced.Count} Zuordnung(en) verwenden diesen BGK-/Typ-Schlüssel. Entfernen Sie zuerst die betroffenen Zuordnungen; Mengenregeln werden nicht stillschweigend gelöscht."));
+            return;
+        }
+        int typeCount = typeNumber == null ? subtree.Sum(entry => entry.Types.Count) : 1;
+        string subject = typeNumber == null
+            ? $"BGK-Unterbaum „{selected.Label}“ mit {subtree.Count} BGK-Einträgen und {typeCount} Typen"
+            : "Typ „" + selected.Label + "“";
+        if (!ConfirmRemoval(subject + " aus dem Katalog entfernen?")) return;
+        EditorUi.Guard(this, () =>
+        {
+            editor.ReplaceBgk(BgkCatalogEditor.Remove(editor.Document.BgkCatalog, bgkKey, typeNumber, editor.Document.Mappings));
+            Refresh();
+        });
+    }
     private static Action Prepared<T>(T parsed, Action<T> setter) => () => setter(parsed);
     private void ReportError(Exception ex) { if (ErrorReporter != null) ErrorReporter(ex); else EditorUi.Error(this, ex); }
     private void MarkTitle() => Title = "AVA-Vorlage / Prüfliste – " + editor.Document.Name + (editor.IsDirty ? " *" : "");
@@ -492,7 +554,9 @@ public sealed class AvaTemplateWindow : Window
             profileName.Text = editor.Document.Name; profileVersion.Text = editor.Document.Version; reviewScope.Text = editor.Document.ReviewScope;
             identity.Text = $"Profil-ID: {editor.Document.ProfileId}   |   Schema: {editor.Document.SchemaVersion}   |   Datei: {editor.FilePath ?? "noch nicht gespeichert"}";
             bgkSource.Text = "BGK: " + editor.Document.BgkIdentification; typeSource.Text = "Typnummer: " + editor.Document.TypeIdentification;
-            string Describe<T>(string label, Catalog<T> c) => $"{label}: {c.Entries.Count} Einträge | {c.Source.FileName} | {c.Source.Format}\nSHA-256: {c.Source.Sha256}";
+            string Describe<T>(string label, Catalog<T> c) => c.Source.Format == "BIMassist manuell bearbeitet"
+                ? $"{label}: {c.Entries.Count} Einträge | manuell bearbeitet aus {c.Source.FileName} | kein gültiger Hash für die ursprüngliche Quelldatei"
+                : $"{label}: {c.Entries.Count} Einträge | {c.Source.FileName} | {c.Source.Format}\nSHA-256: {c.Source.Sha256}";
             bgkSourceInfo.Text = Describe("BGK-Quelle", editor.Document.BgkCatalog);
             lvSourceInfo.Text = Describe("LV-Quelle", editor.Document.LvCatalog);
             parameterSourceInfo.Text = Describe("Parameter-Quelle", editor.Document.ParameterCatalog);

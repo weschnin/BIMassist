@@ -283,12 +283,17 @@ internal static class Program
                 string settings = Path.Combine(directory, "copy-settings.json"), working = Template("copy-working.json", "Original");
                 var workspace = new AvaWorkspace(settings); workspace.Remember(working); var window = Window(workspace);
                 string imported = Template("portable.json", "Imported"), exported = Path.Combine(directory, "exported.json");
+                var importedDocument = TemplateJson.Load(imported);
+                importedDocument.BgkCatalog = new(new("manual", "BIMassist manuell bearbeitet", ""), [new("01-10", "Bearbeitete BGK", "", [new("100", "Bearbeiteter Typ")])]);
+                TemplateJson.Save(imported, importedDocument);
                 byte[] original = File.ReadAllBytes(working), source = File.ReadAllBytes(imported);
                 Check(Call<bool>(window, "OpenPath", imported, true), "import failed");
                 var editor = Field<TemplateEditor>(window, "editor");
                 Check(editor.FilePath == null && editor.IsDirty && workspace.LastTemplatePath == working, "import hijacked working source path or marked copy clean");
                 Call<object?>(window, "ExportPath", exported);
                 Check(TemplateJson.Load(exported).Name == "Imported" && editor.FilePath == null && editor.IsDirty, "export changed editing state");
+                Check(TemplateJson.Load(exported).BgkCatalog.Entries.Single().Types.Single().Description == "Bearbeiteter Typ",
+                    "portable export did not include the edited BGK catalog snapshot");
                 Check(new AvaWorkspace(settings).LastTemplatePath == working && File.ReadAllBytes(working).SequenceEqual(original) && File.ReadAllBytes(imported).SequenceEqual(source), "copy operation overwrote source or persisted copy path");
                 Hook(window, "PendingPrompt", (Func<MessageBoxResult>)(() => MessageBoxResult.No)); window.Close();
             });

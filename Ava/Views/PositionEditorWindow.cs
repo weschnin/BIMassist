@@ -101,7 +101,7 @@ internal sealed class PositionEditorWindow : Window
         panel.Children.Add(EditorUi.Text("Standardmäßig muss die Leseeinheit eines Parameters zu seiner Revit-Spezifikation passen. Für NUMBER/INTEGER kann eine freie Einheit ausdrücklich freigegeben werden: Der Zahlenwert wird dann unverändert und ohne Umrechnung mit dieser Einheit interpretiert. Nur verwenden, wenn dies fachlich stimmt. LV-Auswahl und Mengenvorschrift bleiben unabhängig; abweichende Einheiten lösen keine automatische Umrechnung aus."));
         expression.Text = draft.Quantity?.Expression ?? ""; expression.MinHeight = 60; expression.AcceptsReturn = true; expression.TextWrapping = TextWrapping.Wrap;
         EditorUi.Field(formulaPanel, "Formel: +, −, *, / und Klammern; z. B. 2 * AVA_Laenge + 0.5", expression);
-        formulaPanel.Children.Add(EditorUi.Text("Parameternamen mit Leerzeichen in [Klammern] schreiben. Jeder verwendete Name wird unten ausdrücklich einer Quelle und Eingabeeinheit zugeordnet. Die Formel rechnet mit diesen Zahlenwerten; Ergebniseinheit manuell festlegen. Keine automatische Umrechnung oder Dimensionsprüfung."));
+        formulaPanel.Children.Add(EditorUi.Text("Jeder Parameter muss zuerst über 'Parameter hinzufügen…' einer Revit-Quelle und Eingabeeinheit zugeordnet werden. Einfache Namen ohne Leerzeichen dürfen direkt stehen (Volumen); Namen mit Leerzeichen müssen in [Klammern] stehen. 'Name in Formel einfügen' setzt den ausgewählten Namen ein. Keine automatische Umrechnung: Eingabe- und Ergebniseinheit müssen fachlich stimmen; eine Volumenmenge wird nicht allein durch Eingabe von 'Volumen' zu kg."));
         var variableButtons = new W.WrapPanel(); formulaPanel.Children.Add(variableButtons);
         void EditVariable(bool edit)
         {
@@ -153,6 +153,7 @@ internal sealed class PositionEditorWindow : Window
                 : "Einheit der Menge / Formelergebnis";
             formulaPanel.Visibility = kind == QuantityKind.Formula ? Visibility.Visible : Visibility.Collapsed; formulaPanel.IsEnabled = enabled;
             quantityUnit.IsEnabled = enabled;
+            quantityUnit.IsEditable = kind != QuantityKind.Parameter || allowCustomUnit.IsChecked == true;
             // Editable ComboBox.Text can change before its inner TextBox is realized or raises a routed event.
             if (quantityUnit.Text != lastAssignedUnit && !string.IsNullOrWhiteSpace(quantityUnit.Text)) preserveUnit = true;
             var prior = quantityUnit.Text.Length > 0 ? quantityUnit.Text : draft.Quantity?.Unit;

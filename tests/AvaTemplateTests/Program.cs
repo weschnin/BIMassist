@@ -116,12 +116,40 @@ internal static class Program
             });
             Test("Quantity validates source read units independently of LV metadata", () => {
                 var p = ValidTemplate(); p.Mappings[0].Positions[0].Quantity!.Unit = "m";
-                Check(TemplateValidator.Validate(p).Any(d => d.Code == "QUANTITY_UNIT" && d.Severity == DiagnosticSeverity.Error), "Number in metres accepted");
+                var mismatch = TemplateValidator.Validate(p).Single(d => d.Code == "QUANTITY_UNIT" && d.Severity == DiagnosticSeverity.Error);
+                Check(mismatch.Message.Contains("NUMBER", StringComparison.Ordinal) && mismatch.Message.Contains("St", StringComparison.Ordinal) && mismatch.Message.Contains("m", StringComparison.Ordinal), "unit error does not state source spec, entered unit, and allowed units");
                 p.Mappings[0].Positions[0].Quantity!.Source!.Spec = "LENGTH";
                 var diagnostics = TemplateValidator.Validate(p);
                 Check(diagnostics.Any(d => d.Code == "LV_UNIT" && d.Severity == DiagnosticSeverity.Warning), "independent length/piece unit hint missing");
                 Check(!diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error), "LV metadata blocked a valid typed read");
                 TemplateEditor.EnsureValid(p);
+                var wrongVolumeUnit = ValidTemplate();
+                wrongVolumeUnit.Mappings[0].Positions[0].Quantity!.Source!.Spec = "VOLUME";
+                wrongVolumeUnit.Mappings[0].Positions[0].Quantity!.Unit = "kg";
+                var volumeError = TemplateValidator.Validate(wrongVolumeUnit).Single(d => d.Code == "QUANTITY_UNIT");
+                Check(volumeError.Message.Contains("VOLUME", StringComparison.Ordinal) && volumeError.Message.Contains("kg", StringComparison.Ordinal)
+                    && volumeError.Message.Contains("m3", StringComparison.Ordinal), "volume/kg validation error does not explain exact mismatch and allowed units");
+            });
+            Test("BGK catalog add, edit, export roundtrip and safe remove", () => {
+                var stamp = new SourceStamp("bgk.xml", "Baugruppe XML", new string('a', 64));
+                var source = new Catalog<BgkEntry>(stamp, [new("01-10", "Bestand", "Los", [new("100", "Vorhanden"), new("200", "Unbenutzt")])]);
+                var added = BgkCatalogEditor.Add(source, new("02-10", "Neu", "", [new("010", "Neuer Typ")]));
+                Check(added.Entries.Count == 2 && added.Source.Format == "BIMassist manuell bearbeitet" && added.Source.Sha256.Length == 0, "added BGK not marked as manually edited or entries missing");
+                var edited = BgkCatalogEditor.Update(added, "01-10", new("01-10", "Geändert", "Kategorie", [new("100", "Umbenannt"), new("200", "Unbenutzt")]), []);
+                var roundtrip = TemplateJson.Deserialize(TemplateJson.Serialize(new AvaTemplate { BgkCatalog = edited }));
+                Check(roundtrip.BgkCatalog.Entries.Single(entry => entry.Key == "01-10").Types[0].Description == "Umbenannt", "edited BGK details missing from portable template export");
+                var used = new MappingRule { BgkKey = "01-10", TypeNumber = "100" };
+                Reject(() => BgkCatalogEditor.Remove(edited, "01-10", "100", [used]));
+                Reject(() => BgkCatalogEditor.Update(edited, "01-10", new("01-10", "Geändert", "Kategorie", [new("200", "Unbenutzt")]), [used]));
+                var removedType = BgkCatalogEditor.Remove(edited, "01-10", "200", [used]);
+                Check(removedType.Entries.Single(entry => entry.Key == "01-10").Types.Count == 1, "unreferenced type was not removed");
+                var removedBranch = BgkCatalogEditor.Remove(added, "02-10", null, []);
+                Check(removedBranch.Entries.Count == 1, "unreferenced BGK branch was not removed");
+                Reject(() => BgkCatalogEditor.Update(added, "02-10", new("///", "Unsichtbar", "", []), []));
+                var nested = new Catalog<BgkEntry>(stamp, [new("01", "Root", "", []), new("01-10", "Branch", "", []), new("01-10-20", "Leaf", "", [new("30", "Nested type")])]);
+                Check(BgkCatalogEditor.Remove(nested, "01", null, []).Entries.Count == 0, "removing a parent did not remove its complete nested BGK branch");
+                Reject(() => BgkCatalogEditor.Remove(nested, "01", null, [new MappingRule { BgkKey = "01-10-20", TypeNumber = "30" }]));
+                Reject(() => BgkCatalogEditor.Add(added, new("02-10", "Duplikat", "", [])));
             });
             Test("Explicit built-in volume is allowed only as instance VOLUME", () => {
                 var p = ValidTemplate(); var src = p.Mappings[0].Positions[0].Quantity!.Source!;

@@ -20,6 +20,20 @@ internal static class Program
             t.LvCatalog.Entries.Add(new("length", "b", ["02"], "02", "Leistung", "", "m"));
             var first = new MappingPosition { LvItemId = "pieces", Quantity = new() { Kind = QuantityKind.Constant, Source = null, ConstantValue = 1, Unit = "St" } };
             var second = new MappingPosition { LvItemId = "length", Quantity = new() { Kind = QuantityKind.Formula, Source = null, Unit = "m", Expression = "2 * AVA_Laenge + 0.5", Variables = [new() { Name = "AVA_Laenge", Source = new() { Kind = ParameterKind.LocalFamily, Name = "AVA_Laenge", Spec = "LENGTH", Scope = ParameterScope.Instance }, Unit = "m" }] } };
+            var bgkDialog = new BgkEntryEditorWindow(new("44-40", "Flansche", "", [new("110", "Losflansch")])) ;
+            var bgkDialogErrors = new List<Exception>(); bgkDialog.ErrorReporter = bgkDialogErrors.Add;
+            var addType = Field<Button>(bgkDialog, "addTypeButton");
+            addType.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Field<TextBox>(bgkDialog, "typeNumber").Text = "110"; addType.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Field<TextBox>(bgkDialog, "typeNumber").Text = "120"; addType.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Field<Button>(bgkDialog, "updateTypeButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Field<Button>(bgkDialog, "removeTypeButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(bgkDialogErrors.Count == 4 && Field<DataGrid>(bgkDialog, "types").Items.Count == 2,
+                "BGK type editor did not guard blank/duplicate additions and missing update/remove selections");
+            var reservedBgkDialog = new BgkEntryEditorWindow(null) { ErrorReporter = bgkDialogErrors.Add };
+            Field<TextBox>(reservedBgkDialog, "key").Text = "///"; Field<TextBox>(reservedBgkDialog, "description").Text = "Reserved";
+            Field<Button>(reservedBgkDialog, "saveButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(bgkDialogErrors.Count == 5 && reservedBgkDialog.Result == null, "reserved invisible BGK key was accepted");
             t.LvCatalog.Entries.Add(new("nested", "b", ["01", "10", "010"], "01.10.010", "Ventil", "Detail", "St"));
             t.LvCatalog = CatalogWithTitleSnapshot(t.LvCatalog.Entries);
             var rule = new MappingRule { BgkKey = "44-40", TypeNumber = "110", Positions = [first] }; t.Mappings.Add(rule);
@@ -63,6 +77,8 @@ internal static class Program
             var position = new PositionEditorWindow(t, second); Layout(position);
             Check(Field<ListBox>(position, "variables").DisplayMemberPath == "Name", "formula list shows class names instead of parameter names");
             Check(Field<DataGrid>(position, "testValues").Columns[0].MinWidth >= 200, "formula input name column can collapse in scroll layout");
+            Check(Field<StackPanel>(position, "formulaPanel").Children.OfType<TextBlock>().Any(text => text.Text.Contains("Parameter hinzufügen", StringComparison.Ordinal)
+                && text.Text.Contains("keine automatische Umrechnung", StringComparison.OrdinalIgnoreCase)), "formula editor does not explain variable binding and unit semantics");
             Check(position.BuildPosition().Quantity!.Variables.Single().Source.Name == "AVA_Laenge", "formula binding lost");
             Check(position.EvaluatePreview(new Dictionary<string, decimal> { ["AVA_Laenge"] = 2 }) == 4.5m, "arithmetic incorrect");
             var manualUnitPosition = new PositionEditorWindow(t, new MappingPosition { LvItemId = "pieces", Quantity = new()
@@ -85,6 +101,16 @@ internal static class Program
             Check(!Field<CheckBox>(dimensionalPosition, "allowCustomUnit").IsEnabled,
                 "manual-unit configuration was enabled for a dimensional Revit parameter");
             dimensionalPosition.Close();
+            var volumePosition = new PositionEditorWindow(t, new MappingPosition { LvItemId = "length", Quantity = new()
+            {
+                Source = new() { Kind = ParameterKind.LocalFamily, Name = "Volumen", Spec = "VOLUME", Scope = ParameterScope.Instance },
+                Unit = "kg"
+            } });
+            Layout(volumePosition);
+            Check(!Field<ComboBox>(volumePosition, "quantityUnit").IsEditable
+                && !((IEnumerable<string>)Field<ComboBox>(volumePosition, "quantityUnit").ItemsSource!).Contains("kg"),
+                "dimensioned parameter unit editor still permits a manually typed incompatible unit");
+            volumePosition.Close();
             var hierarchicalPosition = new PositionEditorWindow(t, first); Layout(hierarchicalPosition);
             var positionLvTree = Field<TreeView>(hierarchicalPosition, "lvTree");
             Check(positionLvTree.Items.Cast<TreeViewItem>().Any(x => ((TextBlock)x.Header).Text.StartsWith("LV ", StringComparison.Ordinal)),
@@ -192,6 +218,9 @@ internal static class Program
                 Check((tree.SelectedItem as TreeViewItem)?.Tag is MappingTreeNode node && node.Key == ((MappingTreeNode)type.Tag).Key, "selection lost on refresh");
                 var catalogTree = (TreeView)main.FindName("CatalogTree");
                 editorTabs.SelectedIndex = Array.FindIndex(headers, h => h!.Contains("BGK-Katalog", StringComparison.Ordinal)); Layout(main);
+                var bgkActions = ((DockPanel)editorTabs.SelectedContent).Children.OfType<WrapPanel>().First().Children.OfType<Button>().Select(button => button.Content?.ToString()).ToArray();
+                Check(new[] { "BGK hinzufügen…", "BGK bearbeiten…", "BGK / Typ entfernen…", "Vorlage mit BGK-Katalog exportieren…" }.All(label => bgkActions.Contains(label)),
+                    "BGK catalog CRUD and portable-template export actions are not available");
                 Check(((TreeViewItem)catalogTree.Items[0]).Items.Count == 1, "BGK catalog is not displayed as a hierarchy");
                 var bgkRoot = (TreeViewItem)catalogTree.Items[0]; var bgkType = (TreeViewItem)bgkRoot.Items[0];
                 bgkType.IsExpanded = false; ((Button)main.FindName("BgkCatalogExpandAll")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

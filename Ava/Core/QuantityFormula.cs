@@ -30,7 +30,7 @@ public static class QuantityFormula
             if (!required.Contains(name)) throw new InvalidDataException($"Unused binding '{name}'.");
         }
         foreach (var name in required)
-            if (!bound.Contains(name)) throw new InvalidDataException($"Missing binding '{name}'.");
+            if (!bound.Contains(name)) throw new InvalidDataException($"Missing binding '{name}'. Add it with 'Parameter hinzufügen…' and bind it to the intended Revit source; the formula name must match exactly.");
     }
 
     /// <summary>Evaluates decimal arithmetic; negative results are not clamped. Extra values are ignored.</summary>
@@ -104,7 +104,13 @@ public static class QuantityFormula
         {
             Expression();
             SkipWhitespace();
-            if (position != text.Length) throw Error("Unexpected token.");
+            if (position != text.Length)
+            {
+                var message = position < text.Length && char.IsLetter(text[position])
+                    ? "Unexpected text. Declare each parameter name with 'Parameter hinzufügen…'; simple names may be bare and names containing spaces must use [Name] (use 'Name in Formel einfügen')."
+                    : "Unexpected token.";
+                throw Error(message);
+            }
             return instructions;
         }
 
