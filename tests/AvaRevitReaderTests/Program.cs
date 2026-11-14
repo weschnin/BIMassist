@@ -87,6 +87,37 @@ system.Parameters.Add(new("GemeinsamSystem", SpecTypeId.Length, 2d, StorageType.
 Check(RevitQuantityReader.Read(document, system,
     new() { Kind = ParameterKind.ByName, Name = "GemeinsamSystem", Spec = "LENGTH", Scope = ParameterScope.Instance }, "m").Number == 0.6096m,
     "Universal name lookup did not resolve a shared parameter on a system-family instance");
+// Revit gives piping diameter a piping-specific spec, not the generic Length spec used by the template.
+var pipeDiameter = new ParameterSource { Kind = ParameterKind.ByName, Name = "Durchmesser", Spec = "LENGTH", Scope = ParameterScope.Instance };
+system.Parameters.Add(new("Durchmesser", SpecTypeId.PipeSize, 100d / 304.8d, StorageType.Double));
+Check(RevitQuantityReader.Read(document, system, pipeDiameter, "mm").Number == 100m,
+    "Piping-size diameter did not satisfy the 100 mm LENGTH condition");
+var sharedPipeGuid = Guid.NewGuid();
+system.Parameters.Add(new("SharedPipe", SpecTypeId.PipeSize, 100d / 304.8d, StorageType.Double, sharedPipeGuid));
+Check(RevitQuantityReader.Read(document, system, new()
+    { Kind = ParameterKind.SharedGuid, SharedGuid = sharedPipeGuid, Name = "SharedPipe", Spec = "LENGTH", Scope = ParameterScope.Instance }, "mm").Number == 100m,
+    "Shared piping-size length rejected despite an exact GUID");
+system.BuiltIns[BuiltInParameter.RBS_PIPE_DIAMETER_PARAM] = new("BuiltInPipe", SpecTypeId.PipeSize,
+    100d / 304.8d, StorageType.Double);
+Check(RevitQuantityReader.Read(document, system, new()
+    { Kind = ParameterKind.BuiltIn, BuiltInId = "RBS_PIPE_DIAMETER_PARAM", Name = "BuiltInPipe", Spec = "LENGTH", Scope = ParameterScope.Instance }, "mm").Number == 100m,
+    "Legacy BuiltIn piping-size length rejected despite exact identifier");
+system.Parameters.Add(new("Durchmesser", SpecTypeId.Length, 114.3d / 304.8d, StorageType.Double));
+Reject(() => RevitQuantityReader.Read(document, system, pipeDiameter, "mm"),
+    "Same-name PipeSize and Length values were arbitrarily resolved");
+system.Parameters.RemoveAll(p => p.Definition.Name == "Durchmesser" && p.Definition.GetDataType().Equals(SpecTypeId.Length));
+system.Parameters.RemoveAll(p => p.Definition.Name == "Durchmesser");
+system.Parameters.Add(new("Durchmesser", SpecTypeId.PipeDimension, 100d / 304.8d, StorageType.Double));
+Check(RevitQuantityReader.Read(document, system, pipeDiameter, "mm").Number == 100m,
+    "Piping-dimension diameter did not satisfy the 100 mm LENGTH condition");
+system.Parameters.RemoveAll(p => p.Definition.Name == "Durchmesser");
+system.Parameters.Add(new("Durchmesser", SpecTypeId.Area, 100d, StorageType.Double));
+try { RevitQuantityReader.Read(document, system, pipeDiameter, "mm"); throw new Exception("Area accepted as pipe diameter"); }
+catch (InvalidDataException ex)
+{
+    Check(ex.Message.Contains("AREA", StringComparison.Ordinal), "Mismatch omitted actual Revit spec: " + ex.Message);
+}
+system.Parameters.RemoveAll(p => p.Definition.Name == "Durchmesser");
 var byNameVolume = new ParameterSource { Kind = ParameterKind.ByName, Name = "Volumen", Spec = "VOLUME", Scope = ParameterScope.Instance };
 Check(byNameVolume.ToString().Contains("Systemfamilie", StringComparison.Ordinal)
     && !byNameVolume.ToString().Contains("lokale Familie", StringComparison.Ordinal),

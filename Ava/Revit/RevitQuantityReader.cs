@@ -159,7 +159,7 @@ public static class RevitQuantityReader
                         }
                         try
                         {
-                            if (candidate.Definition.GetDataType().Equals(spec))
+                            if (MatchesSpec(candidate, source.Spec, spec))
                                 matches.Add((candidate, identity.Key, identity.Description));
                         }
                         catch (Exception ex) when (IsCandidateDiagnosticException(ex))
@@ -179,7 +179,8 @@ public static class RevitQuantityReader
                             + FormatCandidateDiagnostics(inspectionFailures));
                     }
                     if (matches.Count == 0 && named.Count > 0)
-                        throw Invalid(source, "Parametername gefunden, aber die Spezifikation im Modell weicht von der Vorlage ab.");
+                        throw Invalid(source, "Parametername gefunden, aber die Spezifikation im Modell weicht von der Vorlage ab. "
+                            + "Modellspezifikation(en): " + ActualSpecs(named));
                     nameCandidates = matches;
                     parameter = matches.Count == 1 ? matches[0].Parameter : null;
                     break;
@@ -233,7 +234,8 @@ public static class RevitQuantityReader
             if (allowMissingText && source.Spec == "TEXT" && unit.Length == 0) return new(Text: "");
             throw MissingSource(document, instance, source, unit, false);
         }
-        if (!parameter.Definition.GetDataType().Equals(spec)) throw Invalid(source, "Parameterspezifikation im Modell weicht von der Vorlage ab.");
+        if (!MatchesSpec(parameter, source.Spec, spec))
+            throw Invalid(source, "Parameterspezifikation im Modell weicht von der Vorlage ab. Modellspezifikation: " + ActualSpecs([parameter]));
         // HasValue is not proof of parameter type: validate existing definitions/storage before classifying absence.
         if (source.Spec == "TEXT")
         {
@@ -280,16 +282,39 @@ public static class RevitQuantityReader
             + "\nQuelle und Geltungsbereich in der AVA-Vorlage prüfen; einen tatsächlich erforderlichen Wert im Modell pflegen.");
     }
 
+    private static string ActualSpecs(IEnumerable<Parameter> candidates)
+    {
+        var list = candidates.ToList();
+        var specs = list.Take(MaxCandidateDiagnostics).Select(parameter =>
+        {
+            try { return BoundCandidateDiagnostic(parameter.Definition.GetDataType().TypeId); }
+            catch (Exception ex) when (IsCandidateDiagnosticException(ex)) { return "nicht lesbar: " + FormatCandidateException(ex); }
+        });
+        return string.Join(", ", specs) + (list.Count > MaxCandidateDiagnostics
+            ? $" (weitere {list.Count - MaxCandidateDiagnostics} gleichnamige Parameter)" : "");
+    }
+
+    private static bool MatchesSpec(Parameter parameter, string sourceSpec, ForgeTypeId expected)
+    {
+        var actual = parameter.Definition.GetDataType();
+        // Piping diameter/size are physical lengths in Revit, but their discipline-specific
+        // specs differ from generic Length. No other spec is implicitly reinterpreted.
+        return actual.Equals(expected) || (sourceSpec == "LENGTH"
+            && (actual.Equals(SpecTypeId.PipeSize) || actual.Equals(SpecTypeId.PipeDimension)));
+    }
+
     private static TakeoffValue ReadParameterValue(Parameter parameter, ParameterSource source, string unit)
     {
-        if (!parameter.Definition.GetDataType().Equals(source.Spec switch
+        var expected = source.Spec switch
         {
             "TEXT" => SpecTypeId.String.Text, "YESNO" => SpecTypeId.Boolean.YesNo,
             "INTEGER" => SpecTypeId.Int.Integer, "NUMBER" => SpecTypeId.Number,
             "LENGTH" => SpecTypeId.Length, "AREA" => SpecTypeId.Area, "VOLUME" => SpecTypeId.Volume,
             "ANGLE" => SpecTypeId.Angle, "MASS_DENSITY" => SpecTypeId.MassDensity,
             _ => throw Invalid(source, "Nicht unterstützte Parameterspezifikation.")
-        })) throw Invalid(source, "Parameterspezifikation im Modell weicht von der Vorlage ab.");
+        };
+        if (!MatchesSpec(parameter, source.Spec, expected))
+            throw Invalid(source, "Parameterspezifikation im Modell weicht von der Vorlage ab. Modellspezifikation: " + ActualSpecs([parameter]));
         if (source.Spec == "TEXT")
         {
             if (unit.Length != 0 || parameter.StorageType != StorageType.String) throw Invalid(source, "TEXT erwartet eine Zeichenfolge ohne Einheit.");

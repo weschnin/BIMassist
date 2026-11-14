@@ -1,13 +1,13 @@
 namespace Autodesk.Revit.DB;
 // Controlled API doubles for source-resolution/conversion policy, not proof of Revit-host execution.
-public record ForgeTypeId(string Value);
+public record ForgeTypeId(string Value) { public string TypeId => Value; }
 public enum StorageType { None, Integer, Double, String, ElementId }
-public enum BuiltInParameter { INVALID = -1, ASSEMBLY_CODE = -2, ALL_MODEL_TYPE_COMMENTS = -3, ALL_MODEL_DESCRIPTION = -4, HOST_VOLUME_COMPUTED = -5 }
+public enum BuiltInParameter { INVALID = -1, ASSEMBLY_CODE = -2, ALL_MODEL_TYPE_COMMENTS = -3, ALL_MODEL_DESCRIPTION = -4, HOST_VOLUME_COMPUTED = -5, RBS_PIPE_DIAMETER_PARAM = -6 }
 public enum CategoryType { Model, Annotation }
 public sealed class Category { public CategoryType CategoryType { get; set; } = CategoryType.Model; public string Name { get; set; } = "Model"; }
 public static class SpecTypeId
 {
-    public static ForgeTypeId Length = new("LENGTH"), Area = new("AREA"), Volume = new("VOLUME"), Angle = new("ANGLE"), Number = new("NUMBER"), MassDensity = new("MASS_DENSITY");
+    public static ForgeTypeId Length = new("LENGTH"), PipeSize = new("PIPE_SIZE"), PipeDimension = new("PIPE_DIMENSION"), Area = new("AREA"), Volume = new("VOLUME"), Angle = new("ANGLE"), Number = new("NUMBER"), MassDensity = new("MASS_DENSITY");
     public static class String { public static ForgeTypeId Text = new("TEXT"); }
     public static class Boolean { public static ForgeTypeId YesNo = new("YESNO"); }
     public static class Int { public static ForgeTypeId Integer = new("INTEGER"); }
