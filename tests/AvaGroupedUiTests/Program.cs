@@ -216,6 +216,20 @@ internal static class Program
                 root = (TreeViewItem)tree.Items[0]; type = (TreeViewItem)root.Items[0]; row = (TreeViewItem)type.Items[0];
                 Check(!row.IsExpanded && row.Items.Count == 2, "collapsed state/children lost on refresh");
                 Check((tree.SelectedItem as TreeViewItem)?.Tag is MappingTreeNode node && node.Key == ((MappingTreeNode)type.Tag).Key, "selection lost on refresh");
+                var mappedRule = Field<TemplateEditor>(main, "editor").Document.Mappings.Single();
+                var updatedBgk = BgkCatalogEditor.Update(Field<TemplateEditor>(main, "editor").Document.BgkCatalog,
+                    "44-40", new("44-40", "Flansche aktualisiert", "", [new("110", "Losflansch aktualisiert")]),
+                    Field<TemplateEditor>(main, "editor").Document.Mappings);
+                Field<TemplateEditor>(main, "editor").ReplaceBgk(updatedBgk);
+                main.GetType().GetMethod("Refresh", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(main, null); Layout(main);
+                root = (TreeViewItem)tree.Items[0]; type = (TreeViewItem)root.Items[0]; row = (TreeViewItem)type.Items[0];
+                Check(((MappingTreeNode)root.Tag).Label == "44-40 Flansche aktualisiert"
+                    && ((MappingTreeNode)type.Tag).Label == "Typ 110 — Losflansch aktualisiert"
+                    && ((MappingTreeNode)row.Tag).Rule is { } refreshedRule
+                    && refreshedRule.Id == mappedRule.Id && refreshedRule.BgkKey == mappedRule.BgkKey
+                    && refreshedRule.TypeNumber == mappedRule.TypeNumber
+                    && refreshedRule.Positions.Select(p => p.Id).SequenceEqual(mappedRule.Positions.Select(p => p.Id)),
+                    "editing BGK descriptions did not refresh mapped labels while preserving the existing mapping and its positions");
                 var catalogTree = (TreeView)main.FindName("CatalogTree");
                 editorTabs.SelectedIndex = Array.FindIndex(headers, h => h!.Contains("BGK-Katalog", StringComparison.Ordinal)); Layout(main);
                 var bgkActions = ((DockPanel)editorTabs.SelectedContent).Children.OfType<WrapPanel>().First().Children.OfType<Button>().Select(button => button.Content?.ToString()).ToArray();
