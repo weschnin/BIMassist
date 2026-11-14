@@ -121,6 +121,9 @@ instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, 200d, StorageType.Doub
 var volumeBuiltIn = new ParameterSource { Kind = ParameterKind.BuiltIn, Name = "Volumen", BuiltInId = "HOST_VOLUME_COMPUTED", Spec = "VOLUME", Scope = ParameterScope.Instance };
 Check(RevitQuantityReader.Read(document, instance, volumeBuiltIn, "m3").Number == 2.8316846592m,
     "Explicit built-in volume was not read while a same-name local volume coexists");
+var numericBuiltIn = new ParameterSource { Kind = volumeBuiltIn.Kind, Name = volumeBuiltIn.Name, BuiltInId = "-5", Spec = volumeBuiltIn.Spec, Scope = volumeBuiltIn.Scope };
+Reject(() => RevitQuantityReader.Read(document, instance, numericBuiltIn, "m3"),
+    "Numeric enum value was accepted as a BuiltIn identifier instead of its stable named ID");
 instance.Parameters.RemoveAll(p => p.Definition.Name == "Volumen");
 instance.Parameters.Add(new("Volumen", SpecTypeId.String.Text, "other", StorageType.String));
 Check(RevitQuantityReader.Read(document, instance, byNameVolume, "m3").Number == 2.8316846592m,

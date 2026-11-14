@@ -147,7 +147,8 @@ public static class RevitQuantityReader
                     parameter = matches.Count == 1 ? matches[0] : null;
                     break;
                 case ParameterKind.BuiltIn:
-                    if (!Enum.TryParse<BuiltInParameter>(source.BuiltInId, out var builtIn) || !Enum.IsDefined(builtIn) || builtIn == BuiltInParameter.INVALID)
+                    if (!BuiltInParameterCatalog.IsValid(source.BuiltInId, typeof(BuiltInParameter))
+                        || !Enum.TryParse<BuiltInParameter>(source.BuiltInId, out var builtIn))
                         throw Invalid(source, "Unbekannte BuiltIn-ID.");
                     parameter = owner.get_Parameter(builtIn);
                     break;

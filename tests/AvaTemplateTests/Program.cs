@@ -7,6 +7,7 @@ using BIMassist.Ava.Core;
 
 internal static class Program
 {
+    private enum TestBuiltInParameter { INVALID = -1, ASSEMBLY_CODE = 1, ALL_MODEL_TYPE_COMMENTS = 2, ALL_MODEL_DESCRIPTION = 3, HOST_VOLUME_COMPUTED = 4, UNVERIFIED_LENGTH = 5, NUM_BUILTIN_PARAMETERS = 6 }
     private static int passed;
     [STAThread]
     private static int Main(string[] args)
@@ -97,6 +98,18 @@ internal static class Program
                 Check(codes.Contains("BGK_REFERENCE") && codes.Contains("LV_REFERENCE") && codes.Contains("PARAMETER_REFERENCE"), "unknown references accepted");
                 p = ValidTemplate(); p.Mappings[0].TypeNumber = "missing"; Check(TemplateValidator.Validate(p).Any(d => d.Code == "TYPE_REFERENCE"), "unknown type accepted");
             });
+            Test("Unknown BuiltIn scope and specification remain explicitly unverified", () => {
+                var p = ValidTemplate();
+                var quantity = p.Mappings[0].Positions[0].Quantity!;
+                quantity.Source = new() { Kind = ParameterKind.BuiltIn, BuiltInId = "UNVERIFIED_LENGTH", Name = "Length", Spec = "LENGTH", Scope = ParameterScope.Type };
+                quantity.Unit = "m";
+                var diagnostic = TemplateValidator.Validate(p, typeof(TestBuiltInParameter)).Single(item => item.Code == "BUILTIN_POLICY_UNVERIFIED");
+                Check(diagnostic.Severity == DiagnosticSeverity.Warning
+                    && diagnostic.Message.Contains("Spezifikation", StringComparison.Ordinal)
+                    && diagnostic.Message.Contains("Geltung", StringComparison.Ordinal)
+                    && diagnostic.Message.Contains("nicht bestätigt", StringComparison.Ordinal),
+                    "an unmapped BuiltIn was presented as fully validated instead of requiring a model read check");
+            });
             Test("Local NUMBER is not silently replaced by shared INTEGER", () => {
                 var p = ValidTemplate();
                 p.ParameterCatalog.Entries.Add(new(Guid.NewGuid(), "AVA_Anzahl", "INTEGER", "1"));
@@ -169,6 +182,9 @@ internal static class Program
                 builtinList.SelectedItem = "HOST_VOLUME_COMPUTED";
                 Check(freshEditor.ReadSource().Scope == ParameterScope.Instance, "Selecting built-in instance volume retained type scope");
             });
+            Test("BuiltIn sources do not advertise unsupported MATERIAL reads", () =>
+                Check(!BuiltInParameterCatalog.Specifications.Contains("MATERIAL", StringComparer.Ordinal),
+                    "MATERIAL is offered for BuiltIn quantity sources although the Revit reader cannot read it"));
             Test("Missing quantity warning identifies the exact LV position", () => {
                 var p = ValidTemplate(); p.Mappings[0].Positions[0].Quantity = null;
                 p.LvCatalog.Entries.Add(new("id2", "b", ["09", "25", "0110"], "09.25.0110", "Rohrbogen", "", "St"));

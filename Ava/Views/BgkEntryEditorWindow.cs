@@ -25,7 +25,7 @@ internal sealed class BgkEntryEditorWindow : Window
     internal BgkEntry? Result { get; private set; }
     internal Action<Exception>? ErrorReporter { get; set; }
 
-    internal BgkEntryEditorWindow(BgkEntry? existing)
+    internal BgkEntryEditorWindow(BgkEntry? existing, string? selectedTypeNumber = null)
     {
         editing = existing != null;
         Title = editing ? "BGK-Eintrag bearbeiten" : "BGK-Eintrag hinzufügen";
@@ -43,7 +43,9 @@ internal sealed class BgkEntryEditorWindow : Window
         panel.Children.Add(EditorUi.Text("Typnummern dieser BGK"));
         types.Columns.Add(new W.DataGridTextColumn { Header = "Typnummer", Binding = new System.Windows.Data.Binding("Number"), Width = 150 });
         types.Columns.Add(new W.DataGridTextColumn { Header = "Typbezeichnung", Binding = new System.Windows.Data.Binding("Description"), Width = new W.DataGridLength(1, W.DataGridLengthUnitType.Star) });
-        types.ItemsSource = typeRows; types.SelectionChanged += (_, _) => LoadSelectedType(); panel.Children.Add(types);
+        types.ItemsSource = typeRows; types.SelectionChanged += (_, _) => LoadSelectedType();
+        if (!string.IsNullOrEmpty(selectedTypeNumber)) types.SelectedItem = typeRows.FirstOrDefault(type => type.Number == selectedTypeNumber);
+        panel.Children.Add(types);
         EditorUi.Field(panel, "Typnummer (bei vorhandenen Typen unveränderlicher Schlüssel)", typeNumber);
         EditorUi.Field(panel, "Typbezeichnung", typeDescription);
         var typeButtons = new W.WrapPanel(); panel.Children.Add(typeButtons);
@@ -87,6 +89,8 @@ internal sealed class BgkEntryEditorWindow : Window
 
     private void Save()
     {
+        if (selectedType != null) UpdateType();
+        else if (!string.IsNullOrWhiteSpace(typeNumber.Text)) AddType();
         if (string.IsNullOrWhiteSpace(key.Text) || string.IsNullOrWhiteSpace(description.Text))
             throw new InvalidDataException("BGK-Schlüssel und Beschreibung sind erforderlich.");
         if (!editing && key.Text == "///")

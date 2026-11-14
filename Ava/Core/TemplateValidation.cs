@@ -39,7 +39,9 @@ public static class UnitCatalog
 
 public static class TemplateValidator
 {
-    public static IReadOnlyList<Diagnostic> Validate(AvaTemplate template)
+    public static IReadOnlyList<Diagnostic> Validate(AvaTemplate template) => Validate(template, null);
+
+    internal static IReadOnlyList<Diagnostic> Validate(AvaTemplate template, Type? builtInEnumType)
     {
         var result = new List<Diagnostic>();
         void Error(string code, string path, string message) => result.Add(new(DiagnosticSeverity.Error, code, path, message));
@@ -69,12 +71,17 @@ public static class TemplateValidator
                 if (source.SharedGuid != Guid.Empty) Error("PARAMETER_SOURCE", path, "Namens- / BuiltIn-Quelle darf keine gemeinsame GUID enthalten.");
                 if (source.Kind == ParameterKind.BuiltIn)
                 {
-                    bool textOnType = source.BuiltInId is ("ASSEMBLY_CODE" or "ALL_MODEL_TYPE_COMMENTS" or "ALL_MODEL_DESCRIPTION")
-                        && source.Scope == ParameterScope.Type && source.Spec == "TEXT";
-                    bool volumeOnInstance = source.BuiltInId == "HOST_VOLUME_COMPUTED"
-                        && source.Scope == ParameterScope.Instance && source.Spec == "VOLUME";
-                    if (!textOnType && !volumeOnInstance)
-                        Error("BUILTIN_SOURCE", path, "Unterstützt: ASSEMBLY_CODE, ALL_MODEL_TYPE_COMMENTS, ALL_MODEL_DESCRIPTION (TEXT am Typ) oder HOST_VOLUME_COMPUTED (VOLUME an Instanz).");
+                    if (!BuiltInParameterCatalog.IsValid(source.BuiltInId, builtInEnumType))
+                        Error("BUILTIN_SOURCE", path, "Unbekannte BuiltIn-Kennung: " + source.BuiltInId);
+                    if (!BuiltInParameterCatalog.Specifications.Contains(source.Spec, StringComparer.Ordinal))
+                        Error("BUILTIN_SOURCE", path, "Nicht unterstützte Spezifikation für BuiltIn-Kennung: " + source.Spec);
+                    if (BuiltInParameterCatalog.TryGetKnownPolicy(source.BuiltInId, out var expectedSpec, out var expectedScope))
+                    {
+                        if (source.Scope != expectedScope || source.Spec != expectedSpec)
+                            Error("BUILTIN_SOURCE", path, $"{source.BuiltInId} erfordert {expectedSpec} an {expectedScope}.");
+                    }
+                    else if (BuiltInParameterCatalog.IsValid(source.BuiltInId, builtInEnumType))
+                        Warn("BUILTIN_POLICY_UNVERIFIED", path, "Für diese BuiltIn-Kennung sind Spezifikation und Geltung nicht vorab hinterlegt. Die Mengenermittlung prüft die tatsächliche Spezifikation und Verfügbarkeit im gewählten Instanz-/Typbereich; ob dieser Bereich der fachlich beabsichtigten Revit-Geltung entspricht, ist damit nicht bestätigt.");
                 }
                 else if (source.BuiltInId.Length > 0) Error("PARAMETER_SOURCE", path, "Namensquelle darf keine BuiltIn-ID enthalten.");
             }

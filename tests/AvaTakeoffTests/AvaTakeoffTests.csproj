@@ -10,6 +10,7 @@
     <Compile Include="../../Ava/Core/AvaTemplate.cs" Link="Core/AvaTemplate.cs" />
     <Compile Include="../../Ava/Core/CatalogReaders.cs" Link="Core/CatalogReaders.cs" />
     <Compile Include="../../Ava/Core/TemplateValidation.cs" Link="Core/TemplateValidation.cs" />
+    <Compile Include="../../Ava/Core/BuiltInParameterCatalog.cs" Link="Core/BuiltInParameterCatalog.cs" />
     <Compile Include="../../Ava/Core/TemplateEditor.cs" Link="Core/TemplateEditor.cs" />
     <Compile Include="../../Ava/Core/TemplateJson.cs" Link="Core/TemplateJson.cs" />
     <Compile Include="../../Ava/Core/QuantityFormula.cs" Link="Core/QuantityFormula.cs" />

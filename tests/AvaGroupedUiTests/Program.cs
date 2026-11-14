@@ -9,6 +9,8 @@ using BIMassist.Ava.Views;
 
 internal static class Program
 {
+    private enum TestBuiltInParameter { INVALID = -1, ASSEMBLY_CODE = 1, LENGTH_TEST_PARAMETER = 2, NUM_BUILTIN_PARAMETERS = 3 }
+
     [STAThread]
     private static int Main(string[] args)
     {
@@ -30,6 +32,40 @@ internal static class Program
             Field<Button>(bgkDialog, "removeTypeButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(bgkDialogErrors.Count == 4 && Field<DataGrid>(bgkDialog, "types").Items.Count == 2,
                 "BGK type editor did not guard blank/duplicate additions and missing update/remove selections");
+            var saveTypeDialog = new BgkEntryEditorWindow(new("44-40", "Flansche", "", [new("110", "Alter Text")]));
+            Field<DataGrid>(saveTypeDialog, "types").SelectedIndex = 0;
+            Field<TextBox>(saveTypeDialog, "typeDescription").Text = "Direkt mit Speichern übernommen";
+            try { typeof(BgkEntryEditorWindow).GetMethod("Save", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(saveTypeDialog, null); }
+            catch (TargetInvocationException ex) when (ex.InnerException is InvalidOperationException) { }
+            Check(saveTypeDialog.Result?.Types.Single().Description == "Direkt mit Speichern übernommen",
+                "BGK dialog Save dropped the selected type description when the separate apply button was not pressed");
+            var builtInCtor = typeof(ParameterSourceEditor).GetConstructor(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                null, [typeof(IReadOnlyList<SharedParameter>), typeof(ParameterSource), typeof(Type)], null);
+            Check(builtInCtor != null, "parameter source editor does not support enumerating the complete Revit BuiltIn enum");
+            if (builtInCtor != null)
+            {
+                var sources = (ParameterSourceEditor)builtInCtor.Invoke([Array.Empty<SharedParameter>(),
+                    new ParameterSource { Kind = ParameterKind.BuiltIn, BuiltInId = "LENGTH_TEST_PARAMETER", Spec = "LENGTH" }, typeof(TestBuiltInParameter)]);
+                var identifiers = ((IEnumerable<string>)Field<ComboBox>(sources, "builtIn").ItemsSource!).ToArray();
+                Check(identifiers.Contains("LENGTH_TEST_PARAMETER") && !identifiers.Contains("INVALID")
+                    && !identifiers.Contains("NUM_BUILTIN_PARAMETERS")
+                    && Field<ComboBox>(sources, "builtIn").IsTextSearchEnabled
+                    && Field<ComboBox>(sources, "builtIn").MaxDropDownHeight >= 300,
+                    "BuiltIn selector does not show searchable complete enum choices with the non-parameter sentinels excluded");
+                Check(Field<ComboBox>(sources, "builtInSpec").ItemsSource is IEnumerable<string> specs && specs.Contains("LENGTH"),
+                    "BuiltIn selector does not expose the expected Revit parameter specification");
+                Check(BuiltInParameterCatalog.IsValid("LENGTH_TEST_PARAMETER", typeof(TestBuiltInParameter)),
+                    "a defined runtime BuiltIn enum member is rejected by template validation");
+                Check(!BuiltInParameterCatalog.IsValid("1", typeof(TestBuiltInParameter))
+                    && !BuiltInParameterCatalog.IsValid("2", typeof(TestBuiltInParameter)),
+                    "numeric enum values were accepted as BuiltIn names and could resolve differently across Revit versions");
+                Check(sources.ReadSource() is { Kind: ParameterKind.BuiltIn, BuiltInId: "LENGTH_TEST_PARAMETER", Name: "LENGTH_TEST_PARAMETER", Spec: "LENGTH", Scope: ParameterScope.Type },
+                    "BuiltIn editing did not preserve the selected identifier, explicit specification, and scope");
+                var preselectedTypeDialog = new BgkEntryEditorWindow(new("44-40", "Flansche", "", [new("110", "Losflansch")]), "110");
+                Check(Field<DataGrid>(preselectedTypeDialog, "types").SelectedItem is BgkType { Number: "110" }
+                    && Field<TextBox>(preselectedTypeDialog, "typeDescription").Text == "Losflansch",
+                    "opening a type node did not preselect its type text for immediate editing");
+            }
             var reservedBgkDialog = new BgkEntryEditorWindow(null) { ErrorReporter = bgkDialogErrors.Add };
             Field<TextBox>(reservedBgkDialog, "key").Text = "///"; Field<TextBox>(reservedBgkDialog, "description").Text = "Reserved";
             Field<Button>(reservedBgkDialog, "saveButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -204,6 +240,17 @@ internal static class Program
                 Field<TemplateEditor>(main, "editor").Open(temp);
                 main.GetType().GetMethod("Refresh", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(main, null);
                 Layout(main);
+                var bgkEditPrompt = typeof(AvaTemplateWindow).GetProperty("BgkEditPrompt", BindingFlags.NonPublic | BindingFlags.Instance);
+                Check(bgkEditPrompt != null, "BGK tree does not expose the direct edit interaction for its double-click handler");
+                if (bgkEditPrompt != null)
+                {
+                    int editOpens = 0;
+                    bgkEditPrompt.SetValue(main, (Func<BgkEntry, BgkEntry?>)(entry => { editOpens++; return entry; }));
+                    var bgkTreeForDoubleClick = Field<TreeView>(main, "bgkCatalogTree");
+                    var bgkItem = (TreeViewItem)bgkTreeForDoubleClick.Items[0]; bgkItem.IsSelected = true;
+                    bgkTreeForDoubleClick.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = Control.MouseDoubleClickEvent });
+                    Check(editOpens == 1, "double-clicking a BGK catalog entry did not open its editor");
+                }
                 var editorTabs = (TabControl)main.FindName("EditorTabs");
                 var headers = editorTabs.Items.Cast<TabItem>().Select(item => item.Header?.ToString()).ToArray();
                 Check(headers.Any(h => h!.Contains("BGK-Katalog", StringComparison.Ordinal))

@@ -49,6 +49,7 @@ internal sealed class ParameterSourceEditor : W.StackPanel
     private readonly W.ComboBox shared;
     private readonly W.ComboBox spec;
     private readonly W.ComboBox builtIn;
+    private readonly W.ComboBox builtInSpec;
     private readonly W.TextBox name;
     private readonly W.TextBox search;
     private readonly W.StackPanel sharedPanel = new();
@@ -59,7 +60,7 @@ internal sealed class ParameterSourceEditor : W.StackPanel
     private readonly IReadOnlyList<SharedParameter> catalog;
     public event Action? SourceChanged;
 
-    public ParameterSourceEditor(IReadOnlyList<SharedParameter> catalog, ParameterSource initial)
+    public ParameterSourceEditor(IReadOnlyList<SharedParameter> catalog, ParameterSource initial, Type? builtInEnumType = null)
     {
         this.catalog = catalog;
         kind = EditorUi.Choice(new[] { (ParameterKind.SharedGuid, "Gemeinsamer Parameter – exakte GUID"), (ParameterKind.LocalFamily, "Lokaler Familienparameter – exakter Name + Spezifikation"), (ParameterKind.BuiltIn, "Revit BuiltIn – explizite Kennung"), (ParameterKind.ByName, "Parameter nach Name – eindeutig, Instanz/Typ + Spezifikation") }, initial.Kind);
@@ -77,20 +78,34 @@ internal sealed class ParameterSourceEditor : W.StackPanel
         nameHint = EditorUi.Text("Liest einen einzigen Treffer mit diesem Namen und dieser Spezifikation aus der gewählten Instanz bzw. dem Typ – gemeinsam, lokal oder eingebaut. Bei mehreren passenden Treffern bricht die Mengenermittlung ab; dann eine eindeutige lokale, GUID- oder BuiltIn-Quelle wählen. Eingebaute Namen hängen von der Revit-Sprache ab. Verfügbarkeit im Modell wird hier nicht geprüft.");
         localPanel.Children.Add(localHint);
         localPanel.Children.Add(nameHint);
-        builtIn = new W.ComboBox { ItemsSource = new[] { "ASSEMBLY_CODE", "ALL_MODEL_TYPE_COMMENTS", "ALL_MODEL_DESCRIPTION", "HOST_VOLUME_COMPUTED" }, SelectedItem = initial.BuiltInId, MinHeight = 30, Margin = new Thickness(0, 0, 0, 8) };
+        var builtInChoices = BuiltInParameterCatalog.GetNames(builtInEnumType).ToList();
+        if (!string.IsNullOrWhiteSpace(initial.BuiltInId) && !builtInChoices.Contains(initial.BuiltInId, StringComparer.Ordinal))
+            builtInChoices.Add(initial.BuiltInId);
+        builtIn = new W.ComboBox
+        {
+            ItemsSource = builtInChoices,
+            SelectedItem = initial.BuiltInId,
+            IsTextSearchEnabled = true,
+            MaxDropDownHeight = 420,
+            MinHeight = 30,
+            Margin = new Thickness(0, 0, 0, 8)
+        };
         EditorUi.Field(builtInPanel, "BuiltIn-Kennung (Text am Typ oder Volumen an Instanz)", builtIn);
+        builtInSpec = new W.ComboBox { ItemsSource = BuiltInParameterCatalog.Specifications, SelectedItem = initial.Spec, MinHeight = 30, Margin = new Thickness(0, 0, 0, 8) };
+        EditorUi.Field(builtInPanel, "Erwartete Spezifikation (muss zur Revit-Definition passen)", builtInSpec);
+        builtInPanel.Children.Add(EditorUi.Text("Die Liste enthält die BuiltIn-IDs der geladenen Revit-Version. Spezifikation und Geltung sind bei nicht vordefinierten Kennungen ausdrücklich passend zur tatsächlichen Revit-Definition einzustellen."));
         Children.Add(sharedPanel); Children.Add(localPanel); Children.Add(builtInPanel);
         EditorUi.Field(this, "Geltung / Lesequelle", scope);
         kind.SelectionChanged += (_, _) => { RefreshVisibility(); SourceChanged?.Invoke(); };
         shared.SelectionChanged += (_, _) => SourceChanged?.Invoke();
         spec.SelectionChanged += (_, _) => SourceChanged?.Invoke();
+        builtInSpec.SelectionChanged += (_, _) => SourceChanged?.Invoke();
         scope.SelectionChanged += (_, _) => SourceChanged?.Invoke();
         name.TextChanged += (_, _) => SourceChanged?.Invoke();
         builtIn.SelectionChanged += (_, _) =>
         {
-            if (builtIn.SelectedItem is string id)
-                scope.SelectedItem = scope.Items.OfType<W.ComboBoxItem>().Single(item => (ParameterScope)item.Tag ==
-                    (id == "HOST_VOLUME_COMPUTED" ? ParameterScope.Instance : ParameterScope.Type));
+            ApplyKnownBuiltInPolicy();
+            RefreshVisibility();
             SourceChanged?.Invoke();
         };
         search.TextChanged += (_, _) => {
@@ -98,7 +113,14 @@ internal sealed class ParameterSourceEditor : W.StackPanel
             shared.ItemsSource = catalog.Where(p => p.ToString().Contains(search.Text, StringComparison.OrdinalIgnoreCase)).ToList();
             if (selected != null && shared.Items.Contains(selected)) shared.SelectedItem = selected;
         };
+        ApplyKnownBuiltInPolicy();
         RefreshVisibility();
+    }
+    private void ApplyKnownBuiltInPolicy()
+    {
+        if (builtIn.SelectedItem is not string id || !BuiltInParameterCatalog.TryGetKnownPolicy(id, out var expectedSpec, out var expectedScope)) return;
+        builtInSpec.SelectedItem = expectedSpec;
+        scope.SelectedItem = scope.Items.OfType<W.ComboBoxItem>().Single(item => (ParameterScope)item.Tag == expectedScope);
     }
     private void RefreshVisibility()
     {
@@ -108,6 +130,8 @@ internal sealed class ParameterSourceEditor : W.StackPanel
         localHint.Visibility = value == ParameterKind.LocalFamily ? Visibility.Visible : Visibility.Collapsed;
         nameHint.Visibility = value == ParameterKind.ByName ? Visibility.Visible : Visibility.Collapsed;
         builtInPanel.Visibility = value == ParameterKind.BuiltIn ? Visibility.Visible : Visibility.Collapsed;
+        scope.IsEnabled = value != ParameterKind.BuiltIn
+            || builtIn.SelectedItem is not string id || !BuiltInParameterCatalog.TryGetKnownPolicy(id, out _, out _);
     }
     public ParameterSource ReadSource()
     {
@@ -121,9 +145,10 @@ internal sealed class ParameterSourceEditor : W.StackPanel
         if (value == ParameterKind.BuiltIn)
         {
             if (builtIn.SelectedItem is not string id) throw new InvalidDataException("BuiltIn-Kennung auswählen.");
+            if (builtInSpec.SelectedItem is not string selectedBuiltInSpec) throw new InvalidDataException("Spezifikation für die BuiltIn-Kennung auswählen.");
             return new() { Kind = value, BuiltInId = id,
-                Name = id switch { "ASSEMBLY_CODE" => "Baugruppenkennzeichen", "ALL_MODEL_TYPE_COMMENTS" => "Typnummer", "HOST_VOLUME_COMPUTED" => "Volumen", _ => "Beschreibung" },
-                Spec = id == "HOST_VOLUME_COMPUTED" ? "VOLUME" : "TEXT", Scope = selectedScope };
+                Name = id switch { "ASSEMBLY_CODE" => "Baugruppenkennzeichen", "ALL_MODEL_TYPE_COMMENTS" => "Typnummer", "ALL_MODEL_DESCRIPTION" => "Beschreibung", "HOST_VOLUME_COMPUTED" => "Volumen", _ => id },
+                Spec = selectedBuiltInSpec, Scope = selectedScope };
         }
         if (string.IsNullOrWhiteSpace(name.Text) || spec.SelectedItem is not string selectedSpec) throw new InvalidDataException("Exakten Parameternamen und Spezifikation angeben.");
         return new() { Kind = value, Name = name.Text, Spec = selectedSpec, Scope = selectedScope };

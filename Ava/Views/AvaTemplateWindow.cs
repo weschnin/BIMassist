@@ -49,6 +49,7 @@ public sealed class AvaTemplateWindow : Window
     internal Func<int, bool>? DraftPrompt { get; set; }
     internal Func<string, bool>? RemovalPrompt { get; set; }
     internal Func<MappingRule, MappingRule?>? DiagnosticMappingEditor { get; set; }
+    internal Func<BgkEntry, BgkEntry?>? BgkEditPrompt { get; set; }
     internal Action<Exception>? ErrorReporter { get; set; }
 
     public AvaTemplateWindow() : this(new AvaWorkspace()) { }
@@ -193,7 +194,16 @@ public sealed class AvaTemplateWindow : Window
             var tree = kind == "bgk" ? bgkCatalogTree : lvCatalogTree;
             string treeName = kind == "bgk" ? "CatalogTree" : "LvCatalogTree";
             tree.Name = treeName; RegisterName(tree.Name, tree);
-            if (kind == "bgk") panel.Children.Add(tree);
+            if (kind == "bgk")
+            {
+                tree.MouseDoubleClick += (_, e) =>
+                {
+                    if (tree.SelectedItem is W.TreeViewItem { Tag: CatalogTreeNode node }
+                        && (node.Key.StartsWith("bgk:", StringComparison.Ordinal) || node.Key.StartsWith("typ:", StringComparison.Ordinal)))
+                    { EditSelectedBgk(); e.Handled = true; }
+                };
+                panel.Children.Add(tree);
+            }
             else
             {
                 var hierarchyHint = EditorUi.Text("StammLV: LV → Titel → Nummer / Leistung. Interne Schlüssel und GUIDs werden nicht als Anzeigespalte verwendet.");
@@ -507,8 +517,16 @@ public sealed class AvaTemplateWindow : Window
             : selected.Key.StartsWith("typ:", StringComparison.Ordinal) ? selected.Key["typ:".Length..selected.Key.LastIndexOf(':')] : "";
         var current = editor.Document.BgkCatalog.Entries.SingleOrDefault(entry => entry.Key == key);
         if (current == null) return;
-        var dialog = new BgkEntryEditorWindow(current) { Owner = this };
-        if (dialog.ShowDialog() != true || dialog.Result is not { } updated) return;
+        BgkEntry? updated;
+        if (BgkEditPrompt != null) updated = BgkEditPrompt(current);
+        else
+        {
+            string? selectedTypeNumber = selected.Key.StartsWith("typ:", StringComparison.Ordinal) ? selected.SourceId : null;
+            var dialog = new BgkEntryEditorWindow(current, selectedTypeNumber) { Owner = this };
+            if (dialog.ShowDialog() != true) return;
+            updated = dialog.Result;
+        }
+        if (updated == null) return;
         EditorUi.Guard(this, () =>
         {
             editor.ReplaceBgk(BgkCatalogEditor.Update(editor.Document.BgkCatalog, key, updated, editor.Document.Mappings));
