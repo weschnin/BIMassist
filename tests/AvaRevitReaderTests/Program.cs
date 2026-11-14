@@ -61,11 +61,16 @@ source.SharedGuid = id; source.Spec = "AREA"; Reject(() => RevitQuantityReader.R
 source.Spec = "LENGTH"; source.Name = "Wrong name"; Reject(() => RevitQuantityReader.Read(document, instance, source, "m"), "Wrong shared name accepted");
 source.Name = "Länge"; Reject(() => RevitQuantityReader.Read(document, instance, source, "psch"), "Invalid read unit accepted");
 var local = new ParameterSource { Kind = ParameterKind.LocalFamily, Name = "Länge", Spec = "LENGTH", Scope = ParameterScope.Instance };
-Reject(() => RevitQuantityReader.Read(document, instance, local, "m"), "Legacy local source borrowed shared instance value");
+Check(RevitQuantityReader.Read(document, instance, local, "m").Number == 3.048m,
+    "A legacy name source did not resolve the sole same-named shared parameter");
 var namedLength = new ParameterSource { Kind = ParameterKind.ByName, Name = "Länge", Spec = "LENGTH", Scope = ParameterScope.Instance };
 Check(RevitQuantityReader.Read(document, instance, namedLength, "m").Number == 3.048m, "Exact-name source did not read the sole shared instance value");
 instance.Parameters.Add(new("Länge", SpecTypeId.Length, 2d, StorageType.Double));
-Check(RevitQuantityReader.Read(document, instance, local, "m").Number == 0.6096m, "Legacy local source lost its value to same-name shared parameter");
+Check(RevitQuantityReader.Read(document, instance, local, "m", false,
+    candidates => candidates.Single(candidate => candidate.Identity == "Id:10").Identity).Number == 0.6096m,
+    "Legacy name source did not allow the user to select a local value over a same-name shared parameter");
+Reject(() => RevitQuantityReader.Read(document, instance, local, "m"),
+    "Different same-name local/shared values were resolved without user confirmation");
 Reject(() => RevitQuantityReader.Read(document, instance, namedLength, "m"), "Same-name local/shared instances were resolved arbitrarily");
 instance.Parameters.RemoveAll(p => p.Definition.Name == "Länge" && p.IsShared);
 Check(RevitQuantityReader.Read(document, instance, local, "m").Number == 0.6096m, "Exact-name local family read wrong");
@@ -74,11 +79,18 @@ Reject(() => RevitQuantityReader.Read(document, instance, local, "m"), "Ambiguou
 var system = new Element { Id = new(300), TypeId = new(200) };
 Reject(() => RevitQuantityReader.Read(document, system, local, "m"), "Missing named source accepted system instance");
 system.Parameters.Add(new("Länge", SpecTypeId.Length, 1d, StorageType.Double));
-Reject(() => RevitQuantityReader.Read(document, system, local, "m"), "Legacy local source accepted system instance");
+Check(RevitQuantityReader.Read(document, system, local, "m").Number == 0.3048m,
+    "A legacy name source did not resolve a same-named parameter on a system-family instance");
 Check(RevitQuantityReader.Read(document, system, namedLength, "m").Number == 0.3048m, "Exact name on system instance was not read");
+var systemSharedGuid = Guid.NewGuid();
+system.Parameters.Add(new("GemeinsamSystem", SpecTypeId.Length, 2d, StorageType.Double, systemSharedGuid));
+Check(RevitQuantityReader.Read(document, system,
+    new() { Kind = ParameterKind.ByName, Name = "GemeinsamSystem", Spec = "LENGTH", Scope = ParameterScope.Instance }, "m").Number == 0.6096m,
+    "Universal name lookup did not resolve a shared parameter on a system-family instance");
 var byNameVolume = new ParameterSource { Kind = ParameterKind.ByName, Name = "Volumen", Spec = "VOLUME", Scope = ParameterScope.Instance };
-Check(byNameVolume.ToString().Contains("Name", StringComparison.Ordinal) && !byNameVolume.ToString().Contains("lokale Familie", StringComparison.Ordinal),
-    "Existing template still describes its named source as strictly local");
+Check(byNameVolume.ToString().Contains("Systemfamilie", StringComparison.Ordinal)
+    && !byNameVolume.ToString().Contains("lokale Familie", StringComparison.Ordinal),
+    "Named source description does not reflect universal family/system-family/shared lookup");
 Check(!byNameVolume.ToString().Contains("eindeutiger Treffer", StringComparison.Ordinal),
     "By-name source description claimed uniqueness before model-level candidates were checked");
 instance.BuiltIns[BuiltInParameter.HOST_VOLUME_COMPUTED] = new("Volumen", SpecTypeId.Volume, 100d, StorageType.Double) { Id = new((long)BuiltInParameter.HOST_VOLUME_COMPUTED) };
@@ -107,6 +119,58 @@ catch (InvalidDataException ex)
         && ex.Message.Contains("2.8316846592", StringComparison.Ordinal)
         && ex.Message.Contains("5.6633693184", StringComparison.Ordinal)
         && ex.Message.Contains("ID 10", StringComparison.Ordinal), "Ambiguous source does not reveal both identities and model values");
+}
+instance.Parameters.RemoveAll(p => p.Definition.Name == "Volumen");
+instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, 200d, StorageType.Double) { HasValue = false });
+try { RevitQuantityReader.Read(document, instance, byNameVolume, "m3"); throw new Exception("Valueless duplicate parameter was not diagnosed"); }
+catch (InvalidDataException ex)
+{
+    Check(ex.Message.Contains("Mehrere gleichnamige Parameter", StringComparison.Ordinal)
+        && ex.Message.Contains("HOST_VOLUME_COMPUTED", StringComparison.Ordinal)
+        && ex.Message.Contains("ID 10", StringComparison.Ordinal)
+        && ex.Message.Contains("kein Wert", StringComparison.Ordinal),
+        "Valueless duplicate did not report every candidate identity and value state");
+}
+instance.Parameters.RemoveAll(p => p.Definition.Name == "Volumen");
+instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, 200d, StorageType.Double)
+    { ReadError = new InvalidOperationException("Simulated Revit value-read failure") });
+try { RevitQuantityReader.Read(document, instance, byNameVolume, "m3"); throw new Exception("Unexpected candidate read failure was not diagnosed"); }
+catch (InvalidDataException ex)
+{
+    Check(ex.Message.Contains("Mehrere gleichnamige Parameter", StringComparison.Ordinal)
+        && ex.Message.Contains("HOST_VOLUME_COMPUTED", StringComparison.Ordinal)
+        && ex.Message.Contains("ID 10", StringComparison.Ordinal)
+        && ex.Message.Contains("InvalidOperationException", StringComparison.Ordinal)
+        && ex.Message.Contains("Simulated Revit value-read failure", StringComparison.Ordinal),
+        "Unexpected candidate read failure escaped bounded identity/value diagnostics");
+}
+instance.Parameters.RemoveAll(p => p.Definition.Name == "Volumen");
+var unreadableSpec = new Parameter("Volumen", SpecTypeId.Volume, 200d, StorageType.Double);
+unreadableSpec.Definition.DataTypeError = new InvalidOperationException("Simulated Revit specification-read failure");
+instance.Parameters.Add(unreadableSpec);
+try { RevitQuantityReader.Read(document, instance, byNameVolume, "m3"); throw new Exception("Unexpected candidate spec failure was not diagnosed"); }
+catch (InvalidDataException ex)
+{
+    Check(ex.Message.Contains("Mehrere gleichnamige Parameter", StringComparison.Ordinal)
+        && ex.Message.Contains("HOST_VOLUME_COMPUTED", StringComparison.Ordinal)
+        && ex.Message.Contains("ID 10", StringComparison.Ordinal)
+        && ex.Message.Contains("Spezifikation nicht lesbar", StringComparison.Ordinal)
+        && ex.Message.Contains("Simulated Revit specification-read failure", StringComparison.Ordinal),
+        "Candidate spec inspection failure escaped bounded identity/value diagnostics");
+}
+instance.Parameters.RemoveAll(p => p.Definition.Name == "Volumen");
+instance.Parameters.Add(new Parameter("Volumen", SpecTypeId.Volume, null, StorageType.Double)
+    { IdentityError = new InvalidOperationException("Simulated identity-read failure"),
+      ValueStateError = new InvalidOperationException("Simulated HasValue-read failure") });
+try { RevitQuantityReader.Read(document, instance, byNameVolume, "m3"); throw new Exception("Candidate diagnostic-state failure was not diagnosed"); }
+catch (InvalidDataException ex)
+{
+    Check(ex.Message.Contains("Kandidat 1", StringComparison.Ordinal)
+        && ex.Message.Contains("Identität nicht lesbar", StringComparison.Ordinal)
+        && ex.Message.Contains("Wertzustand nicht lesbar", StringComparison.Ordinal)
+        && ex.Message.Contains("Simulated identity-read failure", StringComparison.Ordinal)
+        && ex.Message.Contains("Simulated HasValue-read failure", StringComparison.Ordinal),
+        "Candidate identity/value-state diagnostic failure escaped its safe fallback");
 }
 instance.Parameters.RemoveAll(p => p.Definition.Name == "Volumen");
 instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, double.NaN, StorageType.Double));
@@ -205,11 +269,12 @@ instance.Parameters.Add(new("Flag", SpecTypeId.Boolean.YesNo, 1, StorageType.Int
 Check(RevitQuantityReader.Read(document, instance, boolean, "").Boolean == true, "YESNO read wrong");
 var template = new AvaTemplate(); document.Elements.Add(new Element { Id = new(400), Category = new() { CategoryType = CategoryType.Annotation } }); document.Elements.Add(system);
 Check(RevitQuantityReader.Elements(document, template).Select(e => e.Id).SequenceEqual(new[] { "100", "300" }), "Host model scope includes annotations or types");
-// Exact-name resolution does not depend on definition IDs; legacy local resolution still does.
+// Exact-name resolution does not depend on definition IDs, including legacy name sources.
 var zero = new ParameterSource { Kind = ParameterKind.ByName, Name = "Zero", Spec = "LENGTH", Scope = ParameterScope.Instance };
 instance.Parameters.Add(new("Zero", SpecTypeId.Length, 1d, StorageType.Double) { Id = new(0) });
 Check(RevitQuantityReader.Read(document, instance, zero, "m").Number == 0.3048m, "Name resolution rejected zero definition ID");
-Reject(() => RevitQuantityReader.Read(document, instance, new() { Kind = ParameterKind.LocalFamily, Name = "Zero", Spec = "LENGTH", Scope = ParameterScope.Instance }, "m"), "Legacy local source accepted zero ID");
+Check(RevitQuantityReader.Read(document, instance, new() { Kind = ParameterKind.LocalFamily, Name = "Zero", Spec = "LENGTH", Scope = ParameterScope.Instance }, "m").Number == 0.3048m,
+    "Legacy name source rejected zero definition ID");
 // Explicit scopes never borrow a same-name value from the opposite owner.
 var scoped = new ParameterSource { Kind = ParameterKind.LocalFamily, Name = "OnlyInstance", Spec = "LENGTH", Scope = ParameterScope.Type };
 instance.Parameters.Add(new("OnlyInstance", SpecTypeId.Length, 1d, StorageType.Double));

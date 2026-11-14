@@ -9,7 +9,6 @@ using BIMassist.Ava.Views;
 
 internal static class Program
 {
-    private enum TestBuiltInParameter { INVALID = -1, ASSEMBLY_CODE = 1, LENGTH_TEST_PARAMETER = 2, NUM_BUILTIN_PARAMETERS = 3 }
 
     [STAThread]
     private static int Main(string[] args)
@@ -39,33 +38,21 @@ internal static class Program
             catch (TargetInvocationException ex) when (ex.InnerException is InvalidOperationException) { }
             Check(saveTypeDialog.Result?.Types.Single().Description == "Direkt mit Speichern übernommen",
                 "BGK dialog Save dropped the selected type description when the separate apply button was not pressed");
-            var builtInCtor = typeof(ParameterSourceEditor).GetConstructor(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                null, [typeof(IReadOnlyList<SharedParameter>), typeof(ParameterSource), typeof(Type)], null);
-            Check(builtInCtor != null, "parameter source editor does not support enumerating the complete Revit BuiltIn enum");
-            if (builtInCtor != null)
+            var sources = new ParameterSourceEditor(Array.Empty<SharedParameter>(), new ParameterSource
             {
-                var sources = (ParameterSourceEditor)builtInCtor.Invoke([Array.Empty<SharedParameter>(),
-                    new ParameterSource { Kind = ParameterKind.BuiltIn, BuiltInId = "LENGTH_TEST_PARAMETER", Spec = "LENGTH" }, typeof(TestBuiltInParameter)]);
-                var identifiers = ((IEnumerable<string>)Field<ComboBox>(sources, "builtIn").ItemsSource!).ToArray();
-                Check(identifiers.Contains("LENGTH_TEST_PARAMETER") && !identifiers.Contains("INVALID")
-                    && !identifiers.Contains("NUM_BUILTIN_PARAMETERS")
-                    && Field<ComboBox>(sources, "builtIn").IsTextSearchEnabled
-                    && Field<ComboBox>(sources, "builtIn").MaxDropDownHeight >= 300,
-                    "BuiltIn selector does not show searchable complete enum choices with the non-parameter sentinels excluded");
-                Check(Field<ComboBox>(sources, "builtInSpec").ItemsSource is IEnumerable<string> specs && specs.Contains("LENGTH"),
-                    "BuiltIn selector does not expose the expected Revit parameter specification");
-                Check(BuiltInParameterCatalog.IsValid("LENGTH_TEST_PARAMETER", typeof(TestBuiltInParameter)),
-                    "a defined runtime BuiltIn enum member is rejected by template validation");
-                Check(!BuiltInParameterCatalog.IsValid("1", typeof(TestBuiltInParameter))
-                    && !BuiltInParameterCatalog.IsValid("2", typeof(TestBuiltInParameter)),
-                    "numeric enum values were accepted as BuiltIn names and could resolve differently across Revit versions");
-                Check(sources.ReadSource() is { Kind: ParameterKind.BuiltIn, BuiltInId: "LENGTH_TEST_PARAMETER", Name: "LENGTH_TEST_PARAMETER", Spec: "LENGTH", Scope: ParameterScope.Type },
-                    "BuiltIn editing did not preserve the selected identifier, explicit specification, and scope");
-                var preselectedTypeDialog = new BgkEntryEditorWindow(new("44-40", "Flansche", "", [new("110", "Losflansch")]), "110");
-                Check(Field<DataGrid>(preselectedTypeDialog, "types").SelectedItem is BgkType { Number: "110" }
-                    && Field<TextBox>(preselectedTypeDialog, "typeDescription").Text == "Losflansch",
-                    "opening a type node did not preselect its type text for immediate editing");
-            }
+                Kind = ParameterKind.LocalFamily, Name = "Durchmesser", Spec = "LENGTH", Scope = ParameterScope.Instance
+            });
+            var sourceKinds = Field<ComboBox>(sources, "kind").Items.Cast<ComboBoxItem>()
+                .Select(item => (ParameterKind)item.Tag).ToArray();
+            Check(sourceKinds.SequenceEqual([ParameterKind.SharedGuid, ParameterKind.ByName]),
+                "parameter source selection should expose only shared GUID and universal exact-name lookup, not LocalFamily/BuiltIn modes");
+            Check(Field<ComboBox>(sources, "kind").SelectedItem is ComboBoxItem { Tag: ParameterKind.ByName }
+                && sources.ReadSource() is { Kind: ParameterKind.ByName, Name: "Durchmesser", Spec: "LENGTH", Scope: ParameterScope.Instance },
+                "opening a legacy named source did not simplify it to universal name lookup");
+            var preselectedTypeDialog = new BgkEntryEditorWindow(new("44-40", "Flansche", "", [new("110", "Losflansch")]), "110");
+            Check(Field<DataGrid>(preselectedTypeDialog, "types").SelectedItem is BgkType { Number: "110" }
+                && Field<TextBox>(preselectedTypeDialog, "typeDescription").Text == "Losflansch",
+                "opening a type node did not preselect its type text for immediate editing");
             var reservedBgkDialog = new BgkEntryEditorWindow(null) { ErrorReporter = bgkDialogErrors.Add };
             Field<TextBox>(reservedBgkDialog, "key").Text = "///"; Field<TextBox>(reservedBgkDialog, "description").Text = "Reserved";
             Field<Button>(reservedBgkDialog, "saveButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

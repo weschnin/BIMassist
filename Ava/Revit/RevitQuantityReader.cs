@@ -7,6 +7,11 @@ namespace BIMassist.Ava.Revit;
 /// <summary>Read-only adapter, called synchronously inside the external command's Revit API context.</summary>
 public static class RevitQuantityReader
 {
+    private const int MaxCandidateDiagnostics = 6;
+    private const int MaxCandidateDiagnosticLength = 220;
+
+    private sealed record CandidateIdentityInfo(string Key, string Description);
+
     public static IEnumerable<TakeoffElement> Elements(Document document, AvaTemplate template,
         Func<Element, ParameterSource, IReadOnlyList<AvaParameterCandidate>, string?>? chooseAmbiguous = null)
     {
@@ -120,7 +125,7 @@ public static class RevitQuantityReader
             "ANGLE" => SpecTypeId.Angle, "MASS_DENSITY" => SpecTypeId.MassDensity,
             _ => throw Invalid(source, "Nicht unterstützte Parameterspezifikation.")
         };
-        List<Parameter>? nameCandidates = null;
+        List<(Parameter Parameter, string Identity, string Description)>? nameCandidates = null;
         if (owner != null)
         {
             switch (source.Kind)
@@ -130,21 +135,53 @@ public static class RevitQuantityReader
                     if (parameter != null && (!parameter.IsShared || parameter.GUID != source.SharedGuid || parameter.Definition.Name != source.Name))
                         throw Invalid(source, "Gemeinsame Parameteridentität stimmt nicht überein.");
                     break;
-                case ParameterKind.LocalFamily:
-                    if (owner is not (FamilyInstance or FamilySymbol)) throw Invalid(source, "Lokale Familienquelle ist an diesem Systemelement nicht unterstützt.");
-                    var local = owner.GetParameters(source.Name).Where(p => !p.IsShared && p.Id.Value > 0).ToList();
-                    if (local.Count > 1) throw Invalid(source, "Mehrere gleichnamige lokale Parameter; keine eindeutige Quelle.");
-                    parameter = local.SingleOrDefault();
-                    break;
+                case ParameterKind.LocalFamily: // Legacy templates: parameter names now resolve across family, system-family, and shared sources.
                 case ParameterKind.ByName:
-                    // Explicit language-dependent name lookup across built-in, shared and local
-                    // parameters. On the selected owner, never choose an arbitrary duplicate.
-                    var named = owner.GetParameters(source.Name);
-                    var matches = named.Where(p => p.Definition.GetDataType().Equals(spec)).ToList();
+                    // Exact name lookup across available family, system-family, shared, and Revit
+                    // parameters. Scope remains explicit; duplicates are compared before choosing.
+                    IList<Parameter> named;
+                    try { named = owner.GetParameters(source.Name); }
+                    catch (Exception ex) when (IsCandidateDiagnosticException(ex))
+                    { throw Invalid(source, "Gleichnamige Parameter konnten im gewählten Geltungsbereich nicht ermittelt werden: " + FormatCandidateException(ex)); }
+
+                    var matches = new List<(Parameter Parameter, string Identity, string Description)>();
+                    var inspectionFailures = new List<string>();
+                    for (var index = 0; index < named.Count; index++)
+                    {
+                        var candidate = named[index];
+                        CandidateIdentityInfo identity;
+                        try { identity = GetCandidateIdentity(candidate); }
+                        catch (Exception ex) when (IsCandidateDiagnosticException(ex))
+                        {
+                            inspectionFailures.Add(DescribeCandidateInspectionFailure(candidate, index, null,
+                                "Identität nicht lesbar", ex));
+                            continue;
+                        }
+                        try
+                        {
+                            if (candidate.Definition.GetDataType().Equals(spec))
+                                matches.Add((candidate, identity.Key, identity.Description));
+                        }
+                        catch (Exception ex) when (IsCandidateDiagnosticException(ex))
+                        {
+                            inspectionFailures.Add(DescribeCandidateInspectionFailure(candidate, index, identity.Description,
+                                "Spezifikation nicht lesbar", ex));
+                        }
+                    }
+                    if (inspectionFailures.Count > 0)
+                    {
+                        foreach (var match in matches)
+                            inspectionFailures.Add(DescribeCandidateValue(match.Parameter, match.Description, matches.IndexOf(match), source, unit));
+                        var lookupFailure = named.Count > 1
+                            ? "Mehrere gleichnamige Parameter konnten nicht zuverlässig geprüft werden"
+                            : "Der gleichnamige Parameter konnte nicht zuverlässig geprüft werden";
+                        throw Invalid(source, lookupFailure + "; mindestens ein Kandidat ist nicht prüfbar. Treffer: "
+                            + FormatCandidateDiagnostics(inspectionFailures));
+                    }
                     if (matches.Count == 0 && named.Count > 0)
                         throw Invalid(source, "Parametername gefunden, aber die Spezifikation im Modell weicht von der Vorlage ab.");
                     nameCandidates = matches;
-                    parameter = matches.Count == 1 ? matches[0] : null;
+                    parameter = matches.Count == 1 ? matches[0].Parameter : null;
                     break;
                 case ParameterKind.BuiltIn:
                     if (!BuiltInParameterCatalog.IsValid(source.BuiltInId, typeof(BuiltInParameter))
@@ -157,23 +194,38 @@ public static class RevitQuantityReader
         }
         if (nameCandidates is { Count: > 1 })
         {
-            var options = nameCandidates.Select(candidate =>
+            var options = new List<AvaParameterCandidate>();
+            var candidateDiagnostics = new List<string>();
+            for (var index = 0; index < nameCandidates.Count; index++)
             {
-                var value = ReadParameterValue(candidate, source, unit);
-                return new AvaParameterCandidate(CandidateIdentity(candidate),
-                    DescribeCandidate(candidate, source.Spec) + "; Auswahlwert: " + FormatCandidateValue(value, unit), value);
-            }).ToList();
+                var candidate = nameCandidates[index];
+                try
+                {
+                    var value = ReadParameterValue(candidate.Parameter, source, unit);
+                    var option = new AvaParameterCandidate(candidate.Identity,
+                        BoundCandidateDiagnostic(candidate.Description + "; Auswahlwert: " + FormatCandidateValue(value, unit)), value);
+                    options.Add(option);
+                    candidateDiagnostics.Add(option.Description);
+                }
+                catch (Exception ex) when (IsCandidateDiagnosticException(ex))
+                {
+                    candidateDiagnostics.Add(DescribeCandidateReadFailure(candidate.Parameter, candidate.Description, ex));
+                }
+            }
+            var candidateSummary = FormatCandidateDiagnostics(candidateDiagnostics);
+            if (options.Count != nameCandidates.Count)
+                throw Invalid(source, "Mehrere gleichnamige Parameter konnten nicht zuverlässig verglichen werden; mindestens ein Kandidat ist nicht lesbar. "
+                    + "Treffer: " + candidateSummary);
             if (options.All(option => option.Value == options[0].Value))
-                parameter = nameCandidates[0];
+                return options[0].Value;
             else
             {
                 var choice = chooseAmbiguous?.Invoke(options);
                 int? selected = choice == null ? null : options.FindIndex(option => string.Equals(option.Identity, choice, StringComparison.Ordinal));
                 if (selected is not >= 0)
                     throw Invalid(source, "Mehrere gleichnamige Parameter haben unterschiedliche Werte. Benutzerentscheidung fehlt oder wurde abgebrochen. "
-                        + "Treffer: " + string.Join("; ", options.Take(6).Select(option => option.Description))
-                        + (options.Count > 6 ? $"; weitere {options.Count - 6} Treffer" : ""));
-                parameter = nameCandidates[selected.Value];
+                        + "Treffer: " + candidateSummary);
+                return options[selected.Value].Value;
             }
         }
         if (parameter == null)
@@ -214,17 +266,14 @@ public static class RevitQuantityReader
         foreach (var (owner, scope) in new[] { (instance, "Instanz"), (document.GetElement(instance.GetTypeId()), "Typ") })
         {
             if (owner == null) { findings.Add(scope + ": kein Revit-Typ vorhanden"); continue; }
-            var candidates = owner.GetParameters(source.Name);
+            IList<Parameter> candidates;
+            try { candidates = owner.GetParameters(source.Name); }
+            catch (Exception ex) when (IsCandidateDiagnosticException(ex))
+            { findings.Add(scope + ": Parameterliste nicht lesbar: " + FormatCandidateException(ex)); continue; }
             if (candidates.Count == 0) { findings.Add(scope + ": kein gleichnamiger Parameter"); continue; }
-            foreach (var candidate in candidates.Take(6))
-            {
-                string value;
-                try { value = FormatCandidateValue(ReadParameterValue(candidate, source, unit), unit); }
-                catch (Exception ex) when (ex is InvalidDataException or ArgumentException or OverflowException)
-                { value = ex.Message; }
-                findings.Add(scope + ": " + DescribeCandidate(candidate, source.Spec) + "; " + value);
-            }
-            if (candidates.Count > 6) findings.Add(scope + ": weitere " + (candidates.Count - 6) + " gleichnamige Parameter");
+            foreach (var (candidate, index) in candidates.Select((candidate, index) => (candidate, index)).Take(MaxCandidateDiagnostics))
+                findings.Add(scope + ": " + DescribeCandidateValue(candidate, null, index, source, unit));
+            if (candidates.Count > MaxCandidateDiagnostics) findings.Add(scope + ": weitere " + (candidates.Count - MaxCandidateDiagnostics) + " gleichnamige Parameter");
         }
         return Invalid(source, reason + " Keine automatische Typ-/Instanz-Ausweichsuche."
             + "\nModellquellen (nur Diagnose, keine Ersatzwerte):\n" + string.Join("\n", findings)
@@ -287,23 +336,22 @@ public static class RevitQuantityReader
         return "„" + (value.Text ?? "") + "“";
     }
 
-    private static string CandidateIdentity(Parameter parameter)
+    private static CandidateIdentityInfo GetCandidateIdentity(Parameter parameter)
     {
-        if (parameter.IsShared) return "Shared:" + parameter.GUID.ToString("D");
         var id = parameter.Id.Value;
+        if (parameter.IsShared)
+        {
+            var guid = parameter.GUID;
+            return new("Shared:" + guid.ToString("D"), "Gemeinsam GUID " + guid + " (ID " + id + ")");
+        }
         if (id < 0 && id >= int.MinValue && Enum.GetName(typeof(BuiltInParameter), (int)id) is string builtIn)
-            return "BuiltIn:" + builtIn;
-        return "Id:" + id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return new("BuiltIn:" + builtIn, "BuiltIn " + builtIn + " (ID " + id + ")");
+        return new("Id:" + id.ToString(System.Globalization.CultureInfo.InvariantCulture), "Parameter-ID " + id);
     }
 
     private static string DescribeCandidate(Parameter parameter, string spec)
     {
-        var id = parameter.Id.Value;
-        string identity;
-        if (parameter.IsShared) identity = "Gemeinsam GUID " + parameter.GUID + " (ID " + id + ")";
-        else if (id < 0 && id >= int.MinValue && Enum.GetName(typeof(BuiltInParameter), (int)id) is string builtIn)
-            identity = "BuiltIn " + builtIn + " (ID " + id + ")";
-        else identity = "Parameter-ID " + id;
+        var identity = GetCandidateIdentity(parameter).Description;
         string value = parameter.HasValue ? "Wert vorhanden" : "kein Wert";
         if (parameter.HasValue && spec == "VOLUME" && parameter.StorageType == StorageType.Double
             && parameter.Definition.GetDataType().Equals(SpecTypeId.Volume))
@@ -324,6 +372,70 @@ public static class RevitQuantityReader
         }
         return $"{identity} ({value})";
     }
+
+    private static string DescribeCandidateInspectionFailure(Parameter candidate, int index, string? identity,
+        string stage, Exception exception)
+    {
+        var label = identity ?? SafeCandidateIdentity(candidate, index);
+        return BoundCandidateDiagnostic(label + " (" + SafeCandidateValueState(candidate) + "); "
+            + stage + ": " + FormatCandidateException(exception));
+    }
+
+    private static string DescribeCandidateReadFailure(Parameter candidate, string identity, Exception exception) =>
+        BoundCandidateDiagnostic(identity + " (" + SafeCandidateValueState(candidate) + "); Auswahlwert nicht lesbar: "
+            + FormatCandidateException(exception));
+
+    private static string DescribeCandidateValue(Parameter candidate, string? identity, int index,
+        ParameterSource source, string unit)
+    {
+        var label = identity ?? SafeCandidateIdentity(candidate, index);
+        var state = SafeCandidateValueState(candidate);
+        try
+        {
+            var value = ReadParameterValue(candidate, source, unit);
+            return BoundCandidateDiagnostic(label + " (" + state + "); Auswahlwert: " + FormatCandidateValue(value, unit));
+        }
+        catch (Exception ex) when (IsCandidateDiagnosticException(ex))
+        {
+            return BoundCandidateDiagnostic(label + " (" + state + "); Auswahlwert nicht lesbar: " + FormatCandidateException(ex));
+        }
+    }
+
+    private static string SafeCandidateIdentity(Parameter candidate, int index)
+    {
+        try { return GetCandidateIdentity(candidate).Description; }
+        catch (Exception ex) when (IsCandidateDiagnosticException(ex))
+        { return $"Kandidat {index + 1} (Identität nicht lesbar: {FormatCandidateException(ex)})"; }
+    }
+
+    private static string SafeCandidateValueState(Parameter candidate)
+    {
+        try { return candidate.HasValue ? "Wert vorhanden" : "kein Wert"; }
+        catch (Exception ex) when (IsCandidateDiagnosticException(ex))
+        { return "Wertzustand nicht lesbar: " + FormatCandidateException(ex); }
+    }
+
+    private static bool IsCandidateDiagnosticException(Exception exception) =>
+        exception is not OutOfMemoryException and not StackOverflowException and not AccessViolationException;
+
+    private static string FormatCandidateException(Exception exception)
+    {
+        string message;
+        try { message = exception.Message; }
+        catch (Exception ex) when (IsCandidateDiagnosticException(ex))
+        { message = "Fehlertext nicht lesbar (" + ex.GetType().Name + ")"; }
+        message = new string(message.Select(character => char.IsControl(character) ? ' ' : character).ToArray());
+        var summary = exception.GetType().Name + (message.Length == 0 ? "" : ": " + message);
+        return BoundCandidateDiagnostic(summary);
+    }
+
+
+    private static string BoundCandidateDiagnostic(string value) => value.Length <= MaxCandidateDiagnosticLength
+        ? value : value[..(MaxCandidateDiagnosticLength - 3)] + "...";
+
+    private static string FormatCandidateDiagnostics(IReadOnlyList<string> diagnostics) =>
+        string.Join("; ", diagnostics.Take(MaxCandidateDiagnostics).Select(BoundCandidateDiagnostic))
+        + (diagnostics.Count > MaxCandidateDiagnostics ? $"; weitere {diagnostics.Count - MaxCandidateDiagnostics} Treffer" : "");
 
     private static InvalidDataException Invalid(ParameterSource source, string message) => new(source.Name + " (" + source.Scope + "): " + message);
 }

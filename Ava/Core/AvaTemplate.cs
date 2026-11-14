@@ -20,8 +20,8 @@ public sealed class ParameterSource
     public override string ToString() => $"{Name} | {Spec} | {Scope} | " + (Kind switch
     {
         ParameterKind.SharedGuid => SharedGuid.ToString(), ParameterKind.BuiltIn => BuiltInId,
-        ParameterKind.LocalFamily => "lokale Familie (kein GUID-Fallback)",
-        ParameterKind.ByName => "exakter Name (muss im Modell eindeutig sein)",
+        ParameterKind.LocalFamily => "Parametername (Familie/Systemfamilie/gemeinsam)",
+        ParameterKind.ByName => "Parametername (Familie/Systemfamilie/gemeinsam)",
         _ => "unbekannte Quelle"
     });
 }

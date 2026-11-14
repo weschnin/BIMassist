@@ -29,20 +29,34 @@ public static class UnitUtils
 public sealed class Definition(string name, ForgeTypeId type)
 {
     public string Name { get; } = name;
-    public ForgeTypeId GetDataType() => type;
+    public Exception? DataTypeError { get; set; }
+    public ForgeTypeId GetDataType() => DataTypeError is { } error ? throw error : type;
 }
 public sealed class Parameter(string name, ForgeTypeId spec, object? value, StorageType storage, Guid guid = default)
 {
-    public ElementId Id { get; set; } = new(10);
+    private ElementId id = new(10);
+    private bool hasValue = value != null;
+    public Exception? IdentityError { get; init; }
+    public Exception? ValueStateError { get; init; }
+    public Exception? ReadError { get; init; }
+    public ElementId Id
+    {
+        get => IdentityError is { } error ? throw error : id;
+        set => id = value;
+    }
     public Definition Definition { get; } = new(name, spec);
     // Revit exposes HasValue separately from storage/spec and the default returned by AsDouble.
-    public bool HasValue { get; init; } = value != null;
+    public bool HasValue
+    {
+        get => ValueStateError is { } error ? throw error : hasValue;
+        init => hasValue = value;
+    }
     public bool IsShared => guid != Guid.Empty;
     public Guid GUID => guid;
     public StorageType StorageType { get; } = storage;
     public string? AsString() => (string?)value;
     public int AsInteger() => (int)value!;
-    public double AsDouble() => (double)value!;
+    public double AsDouble() => ReadError is { } error ? throw error : (double)value!;
 }
 public sealed record ElementId(long Value);
 public sealed record ModelPath(string UserVisiblePath);

@@ -175,12 +175,14 @@ internal static class Program
                 Check(TemplateValidator.Validate(p).Any(d => d.Code == "BUILTIN_SOURCE"), "Built-in volume as TEXT accepted");
                 var editor = new BIMassist.Ava.Views.ParameterSourceEditor([], new() { Kind = ParameterKind.BuiltIn, BuiltInId = "HOST_VOLUME_COMPUTED", Name = "Volumen", Spec = "VOLUME", Scope = ParameterScope.Instance });
                 var selected = editor.ReadSource();
-                Check(selected.Kind == ParameterKind.BuiltIn && selected.BuiltInId == "HOST_VOLUME_COMPUTED" && selected.Spec == "VOLUME" && selected.Scope == ParameterScope.Instance,
-                    "Built-in volume not retained by the source editor");
-                var freshEditor = new BIMassist.Ava.Views.ParameterSourceEditor([], new() { Kind = ParameterKind.BuiltIn, BuiltInId = "ASSEMBLY_CODE", Scope = ParameterScope.Type, Spec = "TEXT" });
-                var builtinList = (System.Windows.Controls.ComboBox)typeof(BIMassist.Ava.Views.ParameterSourceEditor).GetField("builtIn", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(freshEditor)!;
-                builtinList.SelectedItem = "HOST_VOLUME_COMPUTED";
-                Check(freshEditor.ReadSource().Scope == ParameterScope.Instance, "Selecting built-in instance volume retained type scope");
+                Check(selected.Kind == ParameterKind.ByName && selected.Name == "Volumen" && selected.BuiltInId.Length == 0
+                    && selected.Spec == "VOLUME" && selected.Scope == ParameterScope.Instance,
+                    "legacy BuiltIn source was not simplified to a parameter-name source in the editor");
+                var kinds = ((System.Windows.Controls.ComboBox)typeof(BIMassist.Ava.Views.ParameterSourceEditor)
+                    .GetField("kind", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(editor)!).Items
+                    .Cast<System.Windows.Controls.ComboBoxItem>().Select(item => (ParameterKind)item.Tag).ToArray();
+                Check(kinds.SequenceEqual([ParameterKind.SharedGuid, ParameterKind.ByName]),
+                    "BuiltIn and LocalFamily source modes remain user-selectable");
             });
             Test("BuiltIn sources do not advertise unsupported MATERIAL reads", () =>
                 Check(!BuiltInParameterCatalog.Specifications.Contains("MATERIAL", StringComparer.Ordinal),
@@ -283,29 +285,28 @@ internal static class Program
                 name.Text = "Wanddicke";
                 Check(validSourceNotified, "typing the final required name leaves unit choices empty");
             });
-            Test("Parameter and mapping editors preserve explicit local source", () => {
+            Test("Parameter editor exposes universal name lookup and retains source identity", () => {
                 var p = ValidTemplate();
                 var source = new BIMassist.Ava.Views.ParameterSourceEditor(p.ParameterCatalog.Entries, p.Mappings[0].Positions[0].Quantity!.Source!);
-                var value = source.ReadSource(); Check(value.Kind == ParameterKind.LocalFamily && value.Spec == "NUMBER" && value.Scope == ParameterScope.Instance, "local source lost in UI");
+                var value = source.ReadSource(); Check(value.Kind == ParameterKind.ByName && value.Spec == "NUMBER" && value.Scope == ParameterScope.Instance, "legacy name source was not simplified in UI");
                 var sourceLabel = source.Children.OfType<System.Windows.Controls.TextBlock>().Select(x => x.Text).FirstOrDefault();
                 Check(sourceLabel != null && sourceLabel.Contains("Parameterquelle", StringComparison.Ordinal), "Parameter source label missing");
                 var kinds = (System.Windows.Controls.ComboBox)typeof(BIMassist.Ava.Views.ParameterSourceEditor).GetField("kind", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(source)!;
-                Check(kinds.Items.OfType<System.Windows.Controls.ComboBoxItem>().Any(x => x.Tag is ParameterKind.LocalFamily && x.Content.ToString()!.Contains("Lokaler Familienparameter", StringComparison.Ordinal)), "Legacy local source not selectable");
-                var namedItem = kinds.Items.OfType<System.Windows.Controls.ComboBoxItem>().Single(x => x.Tag is ParameterKind.ByName);
-                Check(namedItem.Content.ToString()!.Contains("Name", StringComparison.Ordinal), "Name source not selectable");
-                kinds.SelectedItem = namedItem;
-                Check(source.ReadSource().Kind == ParameterKind.ByName, "Name source not saved from UI");
+                Check(kinds.Items.OfType<System.Windows.Controls.ComboBoxItem>().Select(x => (ParameterKind)x.Tag)
+                    .SequenceEqual([ParameterKind.SharedGuid, ParameterKind.ByName]), "UI still exposes LocalFamily/BuiltIn modes");
+                Check(kinds.Items.OfType<System.Windows.Controls.ComboBoxItem>().Single(x => x.Tag is ParameterKind.ByName)
+                    .Content.ToString()!.Contains("Systemfamilie", StringComparison.Ordinal), "universal name source scope is not explained");
                 var namedTemplate = ValidTemplate();
                 namedTemplate.Mappings[0].Positions[0].Quantity!.Source!.Kind = ParameterKind.ByName;
                 Check(TemplateJson.Deserialize(TemplateJson.Serialize(namedTemplate)).Mappings[0].Positions[0].Quantity!.Source!.Kind == ParameterKind.ByName,
                     "Name source not preserved in template JSON");
                 var mapping = new BIMassist.Ava.Views.MappingEditorWindow(p, p.Mappings[0]);
                 var rule = mapping.BuildRule(); Check(rule.Id == p.Mappings[0].Id && rule.BgkKey == "09-25" && rule.TypeNumber == "100" && rule.Positions[0].LvItemId == "id", "mapping edits lose identity");
-                Check(rule.Positions[0].Quantity!.Source!.Kind == ParameterKind.LocalFamily, "UI converted local parameter"); mapping.Close();
+                Check(rule.Positions[0].Quantity!.Source!.Kind == ParameterKind.LocalFamily, "metadata-only mapping edit rewrote the stored source"); mapping.Close();
                 var position = new BIMassist.Ava.Views.PositionEditorWindow(p, p.Mappings[0].Positions[0]);
                 var edited = position.BuildPosition();
                 Check(edited.Id == p.Mappings[0].Positions[0].Id && edited.LvItemId == "id", "position edits lose identity");
-                Check(edited.Quantity!.Source!.Kind == ParameterKind.LocalFamily && edited.Quantity.Source.Spec == "NUMBER" && edited.Quantity.Source.Scope == ParameterScope.Instance && edited.Quantity.Unit == "St", "position editor changed explicit local source/unit");
+                Check(edited.Quantity!.Source!.Kind == ParameterKind.ByName && edited.Quantity.Source.Spec == "NUMBER" && edited.Quantity.Source.Scope == ParameterScope.Instance && edited.Quantity.Unit == "St", "position editor did not preserve exact name, scope, specification, or unit");
                 position.Close();
             });
             Test("X82 preserves hierarchical text keys", () => {
