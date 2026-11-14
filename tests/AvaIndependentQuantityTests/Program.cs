@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using BIMassist.Ava.Core;
 
 internal static class Program
@@ -13,6 +14,7 @@ internal static class Program
         Test("Constants freely declare arbitrary nonempty result labels", () => ArbitraryResultLabels("constant"));
         Test("Numeric formulas freely declare arbitrary nonempty result labels", () => ArbitraryResultLabels("numeric formula"));
         Test("Bound formulas freely declare arbitrary nonempty result labels", () => ArbitraryResultLabels("bound formula"));
+        Test("Integer parameter quantity can explicitly assign a custom output unit without conversion", ManualIntegerUnit);
         Test("Blank result labels and invalid typed parameter or formula inputs still reject transactionally", InvalidDeclarationsReject);
         Test("Checklist explicitly separates each quantity declaration from LV metadata without inferred conversion", IndependentChecklist);
         Console.WriteLine($"{passed} passed; {failed} failed");
@@ -73,6 +75,51 @@ internal static class Program
             Check(JsonSerializer.Serialize(final.LvCatalog) == snapshots && final.SchemaVersion == 3 && final.ProfileId == template.ProfileId, "metadata/schema/profile changed");
         }
         finally { Directory.Delete(directory, true); }
+    }
+
+    private static void ManualIntegerUnit()
+    {
+        var template = CatalogTemplate();
+        template.BgkIdentification = new() { Kind = ParameterKind.LocalFamily, Name = "BGK", Spec = "TEXT", Scope = ParameterScope.Instance };
+        template.TypeIdentification = new() { Kind = ParameterKind.LocalFamily, Name = "Type", Spec = "TEXT", Scope = ParameterScope.Instance };
+        var quantity = new QuantitySource { Source = new() { Kind = ParameterKind.LocalFamily, Name = "Days", Spec = "INTEGER", Scope = ParameterScope.Instance }, Unit = "d", AllowCustomUnit = true };
+        template.Mappings.Add(new() { BgkKey = "09-25", TypeNumber = "0100", Positions = [new() { LvItemId = "month", Quantity = quantity }] });
+        NoErrors(template);
+        var serialized = TemplateJson.Serialize(template);
+        var reopened = TemplateJson.Deserialize(serialized);
+        Check(reopened.Mappings[0].Positions[0].Quantity is { AllowCustomUnit: true, Unit: "d" }, "manual-unit configuration did not persist");
+        Check(reopened.Mappings[0].Positions[0].Quantity!.ToString().Contains("manuelle Einheit, ohne Umrechnung", StringComparison.Ordinal),
+            "manual-unit interpretation is hidden from the quantity summary");
+        var legacyJson = JsonNode.Parse(serialized)!;
+        legacyJson["Mappings"]![0]!["Positions"]![0]!["Quantity"]!.AsObject().Remove(nameof(QuantitySource.AllowCustomUnit));
+        Check(!TemplateJson.Deserialize(legacyJson.ToJsonString()).Mappings[0].Positions[0].Quantity!.AllowCustomUnit,
+            "legacy template without the optional setting no longer defaults to strict unit validation");
+        var reads = new List<(string Name, string Unit)>();
+        var element = new TakeoffElement("1", (source, unit) =>
+        {
+            reads.Add((source.Name, unit));
+            return source.Name switch
+            {
+                "BGK" => new(Text: "09-25"), "Type" => new(Text: "0100"), "Days" => new(Number: 12m),
+                _ => throw new InvalidOperationException("Unexpected source " + source.Name)
+            };
+        });
+        var result = QuantityTakeoff.Calculate(reopened, [element]);
+        Check(result.Errors.Count == 0 && result.Rows.Single() is { Value: 12m, Unit: "d" }, "manual unit changed the raw quantity or result label");
+        Check(reads.Single(read => read.Name == "Days").Unit == "1", "raw integer wasn't read as unitless before explicit unit assignment");
+        reads.Clear();
+        var numberTemplate = TemplateJson.Copy(reopened);
+        numberTemplate.Mappings[0].Positions[0].Quantity!.Source!.Spec = "NUMBER";
+        var numberResult = QuantityTakeoff.Calculate(numberTemplate, [element]);
+        Check(numberResult.Errors.Count == 0 && numberResult.Rows.Single() is { Value: 12m, Unit: "d" }
+            && reads.Single(read => read.Name == "Days").Unit == "1", "NUMBER parameter was not manually interpreted as a raw custom-unit quantity");
+
+        var strict = TemplateJson.Copy(template); strict.Mappings[0].Positions[0].Quantity!.AllowCustomUnit = false;
+        Check(TemplateValidator.Validate(strict).Any(d => d.Code == "QUANTITY_UNIT" && d.Severity == DiagnosticSeverity.Error), "strict unit validation stopped rejecting custom units");
+        var physical = TemplateJson.Copy(template); physical.Mappings[0].Positions[0].Quantity!.Source!.Spec = "LENGTH";
+        physical.Mappings[0].Positions[0].Quantity!.Unit = "m";
+        physical.Mappings[0].Positions[0].Quantity!.AllowCustomUnit = true;
+        Check(TemplateValidator.Validate(physical).Any(d => d.Code == "QUANTITY_UNIT" && d.Severity == DiagnosticSeverity.Error), "manual-unit override bypassed dimensional checks for physical parameters");
     }
 
     private static void DifferentLabelsWarn()

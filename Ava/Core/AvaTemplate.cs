@@ -50,10 +50,12 @@ public sealed class QuantitySource
     [JsonRequired] public string Unit { get; set; } = "";
     [JsonRequired] public string Expression { get; set; } = "";
     [JsonRequired] public List<FormulaVariable> Variables { get; set; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool AllowCustomUnit { get; set; }
     public override string ToString() => Kind == QuantityKind.Constant
         ? $"Konstante {ConstantValue?.ToString(System.Globalization.CultureInfo.GetCultureInfo("de-DE")) ?? "nicht definiert"} {Unit} je passendem Element"
         : Kind == QuantityKind.Formula ? $"Formel {Expression} → {Unit}"
-        : Source is { } source ? $"{source} | {Unit}" : "nicht definiert";
+        : Source is { } source ? $"{source} | {Unit}" + (AllowCustomUnit ? " | manuelle Einheit, ohne Umrechnung" : "") : "nicht definiert";
 }
 public sealed class MappingPosition
 {

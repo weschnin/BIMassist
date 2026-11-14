@@ -20,6 +20,7 @@ internal sealed class PositionEditorWindow : Window
     private readonly W.TextBox lvDetail = new() { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, Height = 180,
         VerticalScrollBarVisibility = W.ScrollBarVisibility.Auto, Margin = new Thickness(0, 12, 0, 0) };
     private readonly W.CheckBox hasQuantity = new() { Content = "Menge ausdrücklich definieren", Margin = new Thickness(0, 8, 0, 12) };
+    private readonly W.CheckBox allowCustomUnit = new() { Content = "Freie Einheit manuell interpretieren", ToolTip = "Nur für NUMBER/INTEGER. Der Rohwert wird unverändert und ohne Umrechnung übernommen.", Margin = new Thickness(0, 0, 0, 8) };
     private readonly ParameterSourceEditor quantity;
     private readonly W.ComboBox quantityKind;
     private readonly W.TextBox constantValue;
@@ -64,6 +65,8 @@ internal sealed class PositionEditorWindow : Window
         bool preserveUnit = draft.Quantity != null;
         bool updatingUnits = false;
         string lastAssignedUnit = "";
+        var quantityUnitLabel = EditorUi.Text("Einheit der Menge");
+        allowCustomUnit.IsChecked = draft.Quantity?.AllowCustomUnit == true;
         lvTree.SelectedItemChanged += (_, _) => {
             if (syncingLvTree) return;
             syncingLvTree = true;
@@ -93,8 +96,9 @@ internal sealed class PositionEditorWindow : Window
         constantValue = EditorUi.Input((draft.Quantity?.ConstantValue ?? 1m).ToString(CultureInfo.InvariantCulture));
         EditorUi.Field(panel, "Feste Zahl (positiv, für St ganzzahlig)", constantValue);
         quantity = new ParameterSourceEditor(template.ParameterCatalog.Entries, draft.Quantity?.Source ?? new()); panel.Children.Add(quantity);
-        EditorUi.Field(panel, "Eigene Mengeneinheit (bei Parameter: Leseeinheit)", quantityUnit);
-        panel.Children.Add(EditorUi.Text("LV-Auswahl und Mengenvorschrift sind unabhängig. Für Zahl/Formel darf eine eigene Einheit eingegeben werden, auch Mt oder freie Bezeichnungen. Abweichungen zur LV-Einheit verhindern das Speichern nicht; keine automatische Umrechnung. Andere Leistungspositionen bleiben unverändert."));
+        panel.Children.Add(quantityUnitLabel); panel.Children.Add(quantityUnit);
+        panel.Children.Add(allowCustomUnit);
+        panel.Children.Add(EditorUi.Text("Standardmäßig muss die Leseeinheit eines Parameters zu seiner Revit-Spezifikation passen. Für NUMBER/INTEGER kann eine freie Einheit ausdrücklich freigegeben werden: Der Zahlenwert wird dann unverändert und ohne Umrechnung mit dieser Einheit interpretiert. Nur verwenden, wenn dies fachlich stimmt. LV-Auswahl und Mengenvorschrift bleiben unabhängig; abweichende Einheiten lösen keine automatische Umrechnung aus."));
         expression.Text = draft.Quantity?.Expression ?? ""; expression.MinHeight = 60; expression.AcceptsReturn = true; expression.TextWrapping = TextWrapping.Wrap;
         EditorUi.Field(formulaPanel, "Formel: +, −, *, / und Klammern; z. B. 2 * AVA_Laenge + 0.5", expression);
         formulaPanel.Children.Add(EditorUi.Text("Parameternamen mit Leerzeichen in [Klammern] schreiben. Jeder verwendete Name wird unten ausdrücklich einer Quelle und Eingabeeinheit zugeordnet. Die Formel rechnet mit diesen Zahlenwerten; Ergebniseinheit manuell festlegen. Keine automatische Umrechnung oder Dimensionsprüfung."));
@@ -131,6 +135,22 @@ internal sealed class PositionEditorWindow : Window
             var kind = EditorUi.Selected<QuantityKind>(quantityKind);
             quantityKind.IsEnabled = enabled; constantValue.IsEnabled = enabled && kind == QuantityKind.Constant;
             quantity.IsEnabled = enabled && kind == QuantityKind.Parameter; quantity.Visibility = kind == QuantityKind.Parameter ? Visibility.Visible : Visibility.Collapsed;
+            bool manualUnitEligible = false;
+            if (kind == QuantityKind.Parameter)
+            {
+                try { manualUnitEligible = quantity.ReadSource().Spec is "INTEGER" or "NUMBER"; }
+                catch (InvalidDataException) { }
+            }
+            allowCustomUnit.IsEnabled = enabled && kind == QuantityKind.Parameter && (manualUnitEligible || allowCustomUnit.IsChecked == true);
+            allowCustomUnit.Visibility = kind == QuantityKind.Parameter ? Visibility.Visible : Visibility.Collapsed;
+            allowCustomUnit.Content = manualUnitEligible ? "Freie Einheit manuell interpretieren"
+                : allowCustomUnit.IsChecked == true ? "Nicht verfügbar: nur für NUMBER/INTEGER" : "Freie Einheit nur für NUMBER/INTEGER";
+            allowCustomUnit.ToolTip = manualUnitEligible
+                ? "Der Rohwert wird unverändert und ohne Umrechnung übernommen. Nur verwenden, wenn die Einheit fachlich stimmt."
+                : "Diese Option setzt eine NUMBER- oder INTEGER-Quelle voraus. Bei bestehender ungültiger Auswahl deaktivieren Sie sie vor dem Speichern.";
+            quantityUnitLabel.Text = kind == QuantityKind.Parameter
+                ? allowCustomUnit.IsChecked == true ? "Manuell interpretierte Ausgabeeinheit (keine Umrechnung)" : "Parameter-Leseeinheit"
+                : "Einheit der Menge / Formelergebnis";
             formulaPanel.Visibility = kind == QuantityKind.Formula ? Visibility.Visible : Visibility.Collapsed; formulaPanel.IsEnabled = enabled;
             quantityUnit.IsEnabled = enabled;
             // Editable ComboBox.Text can change before its inner TextBox is realized or raises a routed event.
@@ -142,6 +162,8 @@ internal sealed class PositionEditorWindow : Window
             try
             {
                 try { quantityUnit.ItemsSource = kind == QuantityKind.Parameter ? UnitCatalog.ForSpec(quantity.ReadSource().Spec)
+                        .Concat(allowCustomUnit.IsChecked == true && !string.IsNullOrWhiteSpace(selectedUnit) ? new[] { selectedUnit } : [])
+                        .Distinct(StringComparer.Ordinal).ToArray()
                     : new[] { "NUMBER", "LENGTH", "AREA", "VOLUME", "ANGLE", "MASS_DENSITY" }.SelectMany(UnitCatalog.ForSpec)
                         .Concat(new[] { selectedLv?.Unit ?? "", selectedUnit ?? "" }).Where(u => !string.IsNullOrWhiteSpace(u)).Distinct().ToArray(); }
                 catch (InvalidDataException) { quantityUnit.ItemsSource = Array.Empty<string>(); }
@@ -153,6 +175,7 @@ internal sealed class PositionEditorWindow : Window
             preview.Text = "";
         }
         quantityKind.SelectionChanged += (_, _) => RefreshQuantity(); quantity.SourceChanged += RefreshQuantity;
+        allowCustomUnit.Checked += (_, _) => RefreshQuantity(); allowCustomUnit.Unchecked += (_, _) => RefreshQuantity();
         hasQuantity.Checked += (_, _) => RefreshQuantity(); hasQuantity.Unchecked += (_, _) => RefreshQuantity();
         void QuantityEdited() { if (!string.IsNullOrWhiteSpace(quantityUnit.Text)) preserveUnit = true; preview.Text = ""; }
         expression.TextChanged += (_, _) => QuantityEdited(); constantValue.TextChanged += (_, _) => QuantityEdited();
@@ -247,7 +270,7 @@ internal sealed class PositionEditorWindow : Window
             var kind = EditorUi.Selected<QuantityKind>(quantityKind); var unit = quantityUnit.Text;
             result.Quantity = kind switch {
                 QuantityKind.Constant => new() { Kind = kind, Source = null, ConstantValue = ParseNumber(constantValue.Text), Unit = unit },
-                QuantityKind.Parameter => new() { Kind = kind, Source = quantity.ReadSource(), Unit = unit },
+                QuantityKind.Parameter => new() { Kind = kind, Source = quantity.ReadSource(), Unit = unit, AllowCustomUnit = allowCustomUnit.IsChecked == true },
                 QuantityKind.Formula => new() { Kind = kind, Source = null, Unit = unit, Expression = expression.Text, Variables = TemplateJson.Copy(bindings) },
                 _ => throw new InvalidDataException("Unbekannte Mengenart.")
             };

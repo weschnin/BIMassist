@@ -136,6 +136,13 @@ Reject(() => RevitQuantityReader.Read(document, instance, text, ""), "Missing re
 symbol.BuiltIns[BuiltInParameter.ASSEMBLY_CODE] = new("Assembly code", SpecTypeId.String.Text, "01-10", StorageType.String);
 Check(RevitQuantityReader.Read(document, instance, text, "").Text == "01-10", "Identification changed leading zeros");
 var number = new ParameterSource { Kind = ParameterKind.LocalFamily, Name = "Number", Spec = "NUMBER", Scope = ParameterScope.Instance };
+instance.Parameters.Add(new("Number", SpecTypeId.Number, 4.5d, StorageType.Double));
+Check(RevitQuantityReader.Read(document, instance, number, "1").Number == 4.5m, "unitless numeric parameter changed during raw-value read");
+instance.Parameters.RemoveAll(p => p.Definition.Name == "Number");
+var integer = new ParameterSource { Kind = ParameterKind.LocalFamily, Name = "Days", Spec = "INTEGER", Scope = ParameterScope.Instance };
+instance.Parameters.Add(new("Days", SpecTypeId.Int.Integer, 12, StorageType.Integer));
+Check(RevitQuantityReader.Read(document, instance, integer, "1").Number == 12m, "unitless integer parameter changed during raw-value read");
+Reject(() => RevitQuantityReader.Read(document, instance, integer, "d"), "reader accepted custom duration unit instead of explicit unitless raw read");
 instance.Parameters.Add(new("Number", SpecTypeId.Number, double.NaN, StorageType.Double));
 Reject(() => RevitQuantityReader.Read(document, instance, number, "1"), "NaN accepted");
 instance.Parameters.RemoveAll(p => p.Definition.Name == "Number"); instance.Parameters.Add(new("Number", SpecTypeId.Number, double.MaxValue, StorageType.Double));

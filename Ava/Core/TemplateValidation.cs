@@ -18,6 +18,9 @@ public static class UnitCatalog
     };
     public static IReadOnlyList<string> ForSpec(string spec) => Units.TryGetValue(spec, out var units) ? units : [];
     public static bool Allows(string spec, string unit) => ForSpec(spec).Contains(unit, StringComparer.Ordinal);
+    public static bool AllowsQuantityUnit(string spec, string unit, bool allowCustomUnit) => allowCustomUnit
+        ? (spec is "INTEGER" or "NUMBER") && !string.IsNullOrWhiteSpace(unit)
+        : Allows(spec, unit);
     public static bool Compatible(string sourceUnit, string targetUnit)
     {
         // Only explicit, published UI spellings are accepted; source text itself is never rewritten.
@@ -135,11 +138,15 @@ public static class TemplateValidator
                         else
                         {
                             Source(source, path + " / Menge");
-                            if (!UnitCatalog.Allows(source.Spec, quantity.Unit)) Error("QUANTITY_UNIT", path, "Mengeneinheit passt nicht zur Parameterspezifikation.");
+                            if (!UnitCatalog.AllowsQuantityUnit(source.Spec, quantity.Unit, quantity.AllowCustomUnit))
+                                Error("QUANTITY_UNIT", path, quantity.AllowCustomUnit
+                                    ? "Freie Einheit nur für NUMBER/INTEGER; Wert wird dabei ohne Umrechnung übernommen."
+                                    : "Mengeneinheit passt nicht zur Parameterspezifikation.");
                         }
                     }
                     else if (quantity.Kind == QuantityKind.Constant)
                     {
+                        if (quantity.AllowCustomUnit) Error("QUANTITY_MODE", path, "Freie Parameter-Einheit gilt nur für direkte NUMBER/INTEGER-Quellen.");
                         if (quantity.Source != null) Error("QUANTITY_MODE", path, "Konstante Menge darf keine Parameterquelle enthalten.");
                         if (quantity.ConstantValue is not { } value || value <= 0 || (quantity.Unit == "St" && decimal.Truncate(value) != value))
                             Error("QUANTITY_VALUE", path, "Konstante Menge muss positiv und für St ganzzahlig sein.");
@@ -147,6 +154,7 @@ public static class TemplateValidator
                     }
                     else if (quantity.Kind == QuantityKind.Formula)
                     {
+                        if (quantity.AllowCustomUnit) Error("QUANTITY_MODE", path, "Freie Parameter-Einheit gilt nicht für Formeln; die Ergebniseinheit wird separat deklariert.");
                         if (quantity.Source != null || quantity.ConstantValue != null)
                             Error("QUANTITY_MODE", path, "Formelmenge darf keine direkte Quelle oder Konstante enthalten.");
                         try { QuantityFormula.Validate(quantity.Expression, quantity.Variables.Select(v => v.Name)); }
@@ -203,6 +211,7 @@ public static class ChecklistBuilder
                     { Kind: QuantityKind.Formula } quantity => "Formel: " + quantity.Expression + "; deklarierte Ergebniseinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + " (unabhängig; keine automatische Umrechnung). Eingänge: " +
                         string.Join("; ", quantity.Variables.Select(v => v.Name + " = Lesen: " + v.Source + "; Eingabeeinheit " + v.Unit)) +
                         ". Werte beziehen sich auf die expliziten Eingabeeinheiten; keine automatische Einheitenumrechnung oder Dimensionsableitung. Fehlende / ungültige Eingänge sind Fehler, kein Fallback. Modellauswertung, Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
+                    { AllowCustomUnit: true } quantity => "Lesen: " + quantity.Source + "; Rohwert ohne Umrechnung als manuell deklarierte Einheit " + quantity.Unit + " interpretieren; LV-Katalogeinheit " + lv?.Unit + " (unabhängig). Fachliche Bedeutung der Einheit prüfen. Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen. Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
                     { } quantity => "Lesen: " + quantity.Source + "; deklarierte Leseeinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + " (unabhängig; keine automatische Umrechnung). Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen. Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
                     null => "Menge nicht definiert; Zuordnung ist ein Entwurf."
                 };

@@ -65,6 +65,26 @@ internal static class Program
             Check(Field<DataGrid>(position, "testValues").Columns[0].MinWidth >= 200, "formula input name column can collapse in scroll layout");
             Check(position.BuildPosition().Quantity!.Variables.Single().Source.Name == "AVA_Laenge", "formula binding lost");
             Check(position.EvaluatePreview(new Dictionary<string, decimal> { ["AVA_Laenge"] = 2 }) == 4.5m, "arithmetic incorrect");
+            var manualUnitPosition = new PositionEditorWindow(t, new MappingPosition { LvItemId = "pieces", Quantity = new()
+            {
+                Source = new() { Kind = ParameterKind.LocalFamily, Name = "Days", Spec = "INTEGER", Scope = ParameterScope.Instance },
+                Unit = "d", AllowCustomUnit = true
+            } });
+            Layout(manualUnitPosition);
+            Check(Field<CheckBox>(manualUnitPosition, "allowCustomUnit").IsChecked == true
+                && Field<CheckBox>(manualUnitPosition, "allowCustomUnit").IsEnabled
+                && manualUnitPosition.BuildPosition().Quantity is { AllowCustomUnit: true, Unit: "d" },
+                "position editor did not persist the explicit unconverted unit option");
+            manualUnitPosition.Close();
+            var dimensionalPosition = new PositionEditorWindow(t, new MappingPosition { LvItemId = "length", Quantity = new()
+            {
+                Source = new() { Kind = ParameterKind.LocalFamily, Name = "Length", Spec = "LENGTH", Scope = ParameterScope.Instance },
+                Unit = "m"
+            } });
+            Layout(dimensionalPosition);
+            Check(!Field<CheckBox>(dimensionalPosition, "allowCustomUnit").IsEnabled,
+                "manual-unit configuration was enabled for a dimensional Revit parameter");
+            dimensionalPosition.Close();
             var hierarchicalPosition = new PositionEditorWindow(t, first); Layout(hierarchicalPosition);
             var positionLvTree = Field<TreeView>(hierarchicalPosition, "lvTree");
             Check(positionLvTree.Items.Cast<TreeViewItem>().Any(x => ((TextBlock)x.Header).Text.StartsWith("LV ", StringComparison.Ordinal)),

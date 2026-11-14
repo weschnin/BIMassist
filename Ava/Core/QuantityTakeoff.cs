@@ -136,8 +136,9 @@ public static class QuantityTakeoff
         else
         {
             value = quantity.Kind == QuantityKind.Constant ? quantity.ConstantValue!.Value
-                : Numeric(read(quantity.Source!, quantity.Unit), quantity.Source!);
-            expression = quantity.Kind == QuantityKind.Constant ? "constant" : quantity.Source!.ToString();
+                : Numeric(read(quantity.Source!, quantity.AllowCustomUnit ? "1" : quantity.Unit), quantity.Source!);
+            expression = quantity.Kind == QuantityKind.Constant ? "constant" : quantity.Source!.ToString()
+                + (quantity.AllowCustomUnit ? "; explizit manuelle Einheit, Rohwert ohne Umrechnung" : "");
         }
         return new(position.LvItemId, value, quantity.Unit,
             $"Element {elementId}; " + (string.IsNullOrEmpty(sourceIdentity) ? "" : sourceIdentity + "; ") +
