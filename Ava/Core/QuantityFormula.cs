@@ -6,7 +6,7 @@ using System.Text;
 
 namespace BIMassist.Ava.Core;
 
-/// <summary>Pure decimal arithmetic in caller-supplied input units; no unit inference.</summary>
+/// <summary>Pure decimal arithmetic; typed takeoff also checks dimensions and normalizes physical inputs.</summary>
 public static class QuantityFormula
 {
     /// <summary>Returns unique, ordinal parameter names in first-use order after checking syntax.</summary>
@@ -77,6 +77,94 @@ public static class QuantityFormula
         {
             throw new InvalidDataException("Formula decimal overflow.", ex);
         }
+    }
+
+    private readonly record struct Dimension(int Length = 0, int Angle = 0, int Density = 0, int Count = 0, int Lump = 0)
+    {
+        public static Dimension operator +(Dimension a, Dimension b) =>
+            new(a.Length + b.Length, a.Angle + b.Angle, a.Density + b.Density,
+                a.Count + b.Count, a.Lump + b.Lump);
+        public static Dimension operator -(Dimension a, Dimension b) =>
+            new(a.Length - b.Length, a.Angle - b.Angle, a.Density - b.Density,
+                a.Count - b.Count, a.Lump - b.Lump);
+    }
+
+    private readonly record struct DimensionalValue(decimal Number, Dimension Dimension, bool LiteralOnly = false);
+
+    private static (string? Base, Dimension Dimension) UnitDimension(string unit) => unit switch
+    {
+        "mm" or "cm" or "m" or "km" => ("m", new(Length: 1)),
+        "mm2" or "cm2" or "m2" or "m²" => ("m2", new(Length: 2)),
+        "cm3" or "m3" or "m³" => ("m3", new(Length: 3)),
+        "deg" or "rad" => ("rad", new(Angle: 1)),
+        "kg/m3" => ("kg/m3", new(Density: 1)),
+        "St" => (null, new(Count: 1)),
+        "psch" => (null, new(Lump: 1)),
+        _ => (null, new())
+    };
+
+    /// <summary>Inputs are normalized to physical base units before arithmetic. A numeric
+    /// literal added to a physical value is interpreted in the declared result unit.</summary>
+    public static decimal EvaluateWithUnits(string expression,
+        IReadOnlyDictionary<string, (decimal Value, string Unit, string Spec)> inputs, string resultUnit)
+    {
+        if (inputs == null) throw new InvalidDataException("Formula inputs are required.");
+        if (!UnitCatalog.AllUnits.Contains(resultUnit, StringComparer.Ordinal))
+            throw new InvalidDataException($"Unbekannte Formelergebniseinheit '{resultUnit}'.");
+        var instructions = new Parser(expression).Parse();
+        var (resultBase, expectedDimension) = UnitDimension(resultUnit);
+        var stack = new Stack<DimensionalValue>();
+        try
+        {
+            foreach (var instruction in instructions)
+            {
+                if (instruction.Operator == '#') { stack.Push(new(instruction.Number, new(), true)); continue; }
+                if (instruction.Operator == '$')
+                {
+                    if (!inputs.TryGetValue(instruction.Name!, out var input))
+                        throw new InvalidDataException($"Missing value for parameter '{instruction.Name}'.");
+                    if (!UnitCatalog.AllowsFormulaInput(input.Spec, input.Unit))
+                        throw new InvalidDataException($"Unbekannte Eingabeeinheit '{input.Unit}' für Formelparameter '{instruction.Name}'.");
+                    var (inputBase, dimension) = UnitDimension(input.Unit);
+                    var normalized = inputBase == null ? input.Value : UnitCatalog.Convert(input.Value, input.Unit, inputBase);
+                    stack.Push(new(normalized, dimension));
+                    continue;
+                }
+                var right = stack.Pop();
+                if (instruction.Operator is 'P' or 'N')
+                {
+                    stack.Push(right with { Number = instruction.Operator == 'N' ? -right.Number : right.Number });
+                    continue;
+                }
+                var left = stack.Pop();
+                if (instruction.Operator is '+' or '-')
+                {
+                    if (left.Dimension != right.Dimension)
+                    {
+                        if (left.LiteralOnly && right.Dimension == expectedDimension && resultBase != null)
+                            left = left with { Number = UnitCatalog.Convert(left.Number, resultUnit, resultBase), Dimension = right.Dimension };
+                        else if (right.LiteralOnly && left.Dimension == expectedDimension && resultBase != null)
+                            right = right with { Number = UnitCatalog.Convert(right.Number, resultUnit, resultBase), Dimension = left.Dimension };
+                        else throw new InvalidDataException("Formel-Dimensionen der Addition/Subtraktion stimmen nicht überein.");
+                    }
+                    stack.Push(new(instruction.Operator == '+' ? left.Number + right.Number : left.Number - right.Number,
+                        left.Dimension, left.LiteralOnly && right.LiteralOnly));
+                }
+                else if (instruction.Operator is '*' or '/')
+                {
+                    stack.Push(new(instruction.Operator == '*' ? left.Number * right.Number : left.Number / right.Number,
+                        instruction.Operator == '*' ? left.Dimension + right.Dimension : left.Dimension - right.Dimension,
+                        left.LiteralOnly && right.LiteralOnly));
+                }
+                else throw new InvalidDataException("Unsupported formula operator.");
+            }
+            var output = stack.Pop();
+            if (output.Dimension != expectedDimension)
+                throw new InvalidDataException($"Formel-Dimension passt nicht zur Ergebniseinheit '{resultUnit}'. NUMBER/INTEGER hat keine verifizierbare physikalische Einheit.");
+            return resultBase == null ? output.Number : UnitCatalog.Convert(output.Number, resultBase, resultUnit);
+        }
+        catch (DivideByZeroException ex) { throw new InvalidDataException("Formula division by zero.", ex); }
+        catch (OverflowException ex) { throw new InvalidDataException("Formula decimal overflow.", ex); }
     }
 
     private static bool IsValidName(string? name) =>

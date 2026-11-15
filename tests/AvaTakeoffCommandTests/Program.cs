@@ -26,7 +26,7 @@ Check(Regex.IsMatch(source, @"result\.Errors\.Count\s*>\s*0") && source.IndexOf(
 Check(source.Contains("new FileSaveDialog(") && source.Contains("InitialFileName = \"Mengenermittlung.x31\"")
     && source.Contains("DefaultFilterEntry = \"*.x31\"") && source.Contains("GetSelectedModelPath()")
     && !source.Contains("ShowFileDialog(save,"), "X31 export must use Revit's native save dialog, not WPF HWND ownership");
-Check(source.Contains("LV-Einheit") && source.Contains("Keine automatische Umrechnung"), "Declared quantity versus LV-unit warning must precede export");
+Check(source.Contains("LV-Einheit") && source.Contains("Nicht umrechenbare Mengen blockieren den Export"), "Quantity unit conversion and incompatible-unit blocking must precede export");
 Check(source.Contains("result.Unmarked") && source.Contains("result.Unmapped"), "Scope omissions must be visible, not claimed a complete audit");
 var transfer = File.ReadAllText(Path.Combine(root, "Commands", "BgkTransferFromReferenceCommand.cs"));
 Check(transfer.Contains("Application.Documents") && transfer.Contains("ReferenceEquals(document, activeDocument)"), "Reference chooser must enumerate open projects and exclude the active project");

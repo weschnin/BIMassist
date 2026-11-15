@@ -116,7 +116,8 @@ internal static class Program
             Check(Field<ListBox>(position, "variables").DisplayMemberPath == "Name", "formula list shows class names instead of parameter names");
             Check(Field<DataGrid>(position, "testValues").Columns[0].MinWidth >= 200, "formula input name column can collapse in scroll layout");
             Check(Field<StackPanel>(position, "formulaPanel").Children.OfType<TextBlock>().Any(text => text.Text.Contains("Parameter hinzufügen", StringComparison.Ordinal)
-                && text.Text.Contains("keine automatische Umrechnung", StringComparison.OrdinalIgnoreCase)), "formula editor does not explain variable binding and unit semantics");
+                && text.Text.Contains("Eingabeeinheit", StringComparison.OrdinalIgnoreCase)
+                && text.Text.Contains("Basiseinheiten", StringComparison.OrdinalIgnoreCase)), "formula editor does not explain variable binding and unit semantics");
             Check(position.BuildPosition().Quantity!.Variables.Single().Source.Name == "AVA_Laenge", "formula binding lost");
             Check(position.EvaluatePreview(new Dictionary<string, decimal> { ["AVA_Laenge"] = 2 }) == 4.5m, "arithmetic incorrect");
             var manualUnitPosition = new PositionEditorWindow(t, new MappingPosition { LvItemId = "pieces", Quantity = new()

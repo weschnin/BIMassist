@@ -9,21 +9,33 @@ namespace BIMassist.Ava.Core;
 public sealed record TakeoffValue(decimal? Number = null, string? Text = null, bool? Boolean = null);
 public sealed record TakeoffElement(string Id, Func<ParameterSource, string, TakeoffValue> Read, string SourceIdentity = "");
 public sealed record TakeoffIssue(string ElementId, string Message);
+public sealed record TakeoffSkip(string ElementId, string Message);
 public sealed record TakeoffLine(string LvItemId, decimal Value, string Unit, string Explanation, string ElementId = "");
 /// <summary>Rows are ordered by input element, mapping, then position; Errors must block the entire export.
 /// Unmapped counts marked elements without an exact BGK/type rule, not elements whose conditions are false.</summary>
 public sealed record TakeoffResult(IReadOnlyList<TakeoffLine> Rows, IReadOnlyList<TakeoffIssue> Errors,
-    int Examined, int Unmarked, int Unmapped);
+    int Examined, int Unmarked, int Unmapped, IReadOnlyList<TakeoffSkip> Skipped);
 
 /// <summary>Read-only, decimal takeoff. Any Errors must block export of the entire result.</summary>
 public static class QuantityTakeoff
 {
+    private const int MaxSkipDetailLength = 600;
     public static TakeoffResult Calculate(AvaTemplate template, IEnumerable<TakeoffElement> elements)
     {
         TemplateEditor.EnsureValid(template);
         if (template.Mappings.Count == 0) throw new InvalidDataException("At least one mapping is required for takeoff.");
         var rows = new List<TakeoffLine>();
         var errors = new List<TakeoffIssue>();
+        var skipped = new List<TakeoffSkip>();
+        void Skip(TakeoffElement element, string reason)
+        {
+            if (skipped.Count < 20)
+            {
+                var message = $"Element {element.Id}: {reason}";
+                if (message.Length > MaxSkipDetailLength) message = message[..(MaxSkipDetailLength - 1)] + "…";
+                skipped.Add(new(element.Id, message));
+            }
+        }
         var elementIds = new HashSet<string>(StringComparer.Ordinal);
         int examined = 0, unmarked = 0, unmapped = 0;
         foreach (var element in elements)
@@ -61,7 +73,10 @@ public static class QuantityTakeoff
                 errors.Add(new(element.Id, $"Element {element.Id}; Identification: {ex.Message}"));
                 continue;
             }
-            if (string.IsNullOrWhiteSpace(bgk) || string.IsNullOrWhiteSpace(type)) { unmarked++; continue; }
+            if (string.IsNullOrWhiteSpace(bgk) || string.IsNullOrWhiteSpace(type))
+            {
+                unmarked++; Skip(element, $"BGK '{bgk}' / Typ '{type}' unvollständig (Quelle: {element.SourceIdentity})."); continue;
+            }
             var rules = template.Mappings.Where(r => string.Equals(r.BgkKey, bgk, StringComparison.Ordinal)
                 && string.Equals(r.TypeNumber, type, StringComparison.Ordinal)).ToList();
             if (rules.Count == 0)
@@ -76,15 +91,31 @@ public static class QuantityTakeoff
                     rules = template.Mappings.Where(r => string.Equals(r.BgkKey, catalogMatches[0], StringComparison.Ordinal)
                         && string.Equals(r.TypeNumber, type, StringComparison.Ordinal)).ToList();
             }
-            if (rules.Count == 0) { unmapped++; continue; }
+            if (rules.Count == 0) { unmapped++; Skip(element, $"BGK '{bgk}' / Typ '{type}': keine exakte Zuordnung."); continue; }
+            var conditionReasons = new List<string>();
+            int rowsBefore = rows.Count, errorsBefore = errors.Count;
             foreach (var rule in rules)
             {
                 bool conditionFailed = false;
                 var matches = new List<bool>(rule.Conditions.Count);
+                var failedConditions = new List<string>();
                 foreach (var condition in rule.Conditions)
                 {
                     // Read every input, even after a match or read failure: missing OR/AND inputs are errors, not false.
-                    try { matches.Add(Matches(condition, Read(condition.Source, condition.AllowCustomUnit ? "1" : condition.Unit))); }
+                    try
+                    {
+                        if (condition.AllowCustomUnit && !UnitCatalog.Allows(condition.Source.Spec, condition.Unit))
+                            throw new InvalidDataException($"Einheit '{condition.Unit}' für {condition.Source.Spec} in Revit nicht verifizierbar; einen Parameter mit physikalischer Spezifikation verwenden.");
+                        var actual = Read(condition.Source, condition.AllowCustomUnit ? "1" : condition.Unit);
+                        var matched = Matches(condition, actual);
+                        matches.Add(matched);
+                        if (!matched) failedConditions.Add($"{condition.Source.Name} {condition.Operator} "
+                            + (condition.Operand == OperandKind.Numeric ? condition.Number.ToString(CultureInfo.InvariantCulture) + " " + condition.Unit
+                                : condition.Operand == OperandKind.Text ? condition.Text : condition.Boolean.ToString())
+                            + "; Modellwert " + (actual.Number is { } number
+                                ? number.ToString(CultureInfo.InvariantCulture) + " " + condition.Unit
+                                : actual.Text ?? actual.Boolean?.ToString() ?? "leer"));
+                    }
                     catch (Exception ex) when (ex is InvalidDataException or OverflowException)
                     {
                         errors.Add(new(element.Id, $"Element {element.Id}; {RuleContext(template, rule)}; Condition {condition}:\n{ex.Message}"));
@@ -93,19 +124,30 @@ public static class QuantityTakeoff
                     }
                 }
                 bool applies = !conditionFailed && MatchesConditionExpression(rule.Conditions, matches);
-                if (!applies) continue;
+                if (!applies)
+                {
+                    if (!conditionFailed) conditionReasons.Add($"{RuleContext(template, rule)}: " + string.Join("; ", failedConditions.Take(4)));
+                    continue;
+                }
                 // Matching rules and sibling positions are intentionally independent and additive.
                 foreach (var position in rule.Positions)
                 {
-                    try { rows.Add(CalculateLine(element.Id, element.SourceIdentity, rule.Id, position, Read)); }
+                    try
+                    {
+                        var lv = template.LvCatalog.Entries.Single(item => item.Id == position.LvItemId);
+                        rows.Add(CalculateLine(element.Id, element.SourceIdentity, rule.Id, position, lv.Unit, Read));
+                    }
                     catch (Exception ex) when (ex is InvalidDataException or OverflowException)
                     {
                         errors.Add(new(element.Id, $"Element {element.Id}; {RuleContext(template, rule, position)}; Position {position.Id}:\n{ex.Message}"));
                     }
                 }
             }
+            if (rows.Count == rowsBefore && errors.Count == errorsBefore && conditionReasons.Count > 0)
+                Skip(element, $"BGK '{bgk}' / Typ '{type}' zugeordnet, aber keine Bedingung erfüllt. "
+                    + string.Join(" | ", conditionReasons.Take(3)));
         }
-        return new(rows.AsReadOnly(), errors.AsReadOnly(), examined, unmarked, unmapped);
+        return new(rows.AsReadOnly(), errors.AsReadOnly(), examined, unmarked, unmapped, skipped.AsReadOnly());
     }
 
     internal static bool MatchesConditionExpression(IReadOnlyList<RuleCondition> conditions, IReadOnlyList<bool> matches)
@@ -135,7 +177,7 @@ public static class QuantityTakeoff
             + (ids.Count > 6 ? $" (+{ids.Count - 6} weitere)" : "") + $"; Rule {rule.Id}";
     }
 
-    private static TakeoffLine CalculateLine(string elementId, string sourceIdentity, Guid ruleId, MappingPosition position,
+    private static TakeoffLine CalculateLine(string elementId, string sourceIdentity, Guid ruleId, MappingPosition position, string lvUnit,
         Func<ParameterSource, string, TakeoffValue> read)
     {
         var quantity = position.Quantity ?? throw new InvalidDataException("Quantity is not defined.");
@@ -143,27 +185,35 @@ public static class QuantityTakeoff
         string expression;
         if (quantity.Kind == QuantityKind.Formula)
         {
-            var values = new Dictionary<string, decimal>(StringComparer.Ordinal);
+            var values = new Dictionary<string, (decimal Value, string Unit, string Spec)>(StringComparer.Ordinal);
             var inputs = new List<string>();
             foreach (var variable in quantity.Variables)
             {
                 var input = Numeric(read(variable.Source, variable.Unit), variable.Source);
-                values.Add(variable.Name, input);
+                values.Add(variable.Name, (input, variable.Unit, variable.Source.Spec));
                 inputs.Add($"{variable.Name}={input.ToString(CultureInfo.InvariantCulture)} {variable.Unit} [Quelle: {variable.Source}]");
             }
-            value = QuantityFormula.Evaluate(quantity.Expression, values);
+            value = values.Count == 0
+                ? QuantityFormula.Evaluate(quantity.Expression, new Dictionary<string, decimal>(StringComparer.Ordinal))
+                : QuantityFormula.EvaluateWithUnits(quantity.Expression, values, quantity.Unit);
             expression = quantity.Expression + " (" + string.Join("; ", inputs) + ")";
         }
         else
         {
+            if (quantity.Kind == QuantityKind.Parameter && quantity.AllowCustomUnit
+                && !UnitCatalog.Allows(quantity.Source!.Spec, quantity.Unit))
+                throw new InvalidDataException($"Einheit '{quantity.Unit}' für {quantity.Source.Spec} in Revit nicht verifizierbar; einen Parameter mit physikalischer Spezifikation verwenden.");
             value = quantity.Kind == QuantityKind.Constant ? quantity.ConstantValue!.Value
                 : Numeric(read(quantity.Source!, quantity.AllowCustomUnit ? "1" : quantity.Unit), quantity.Source!);
             expression = quantity.Kind == QuantityKind.Constant ? "constant" : quantity.Source!.ToString()
                 + (quantity.AllowCustomUnit ? "; explizit manuelle Einheit, Rohwert ohne Umrechnung" : "");
         }
-        return new(position.LvItemId, value, quantity.Unit,
+        var sourceValue = value;
+        value = UnitCatalog.Convert(value, quantity.Unit, lvUnit);
+        return new(position.LvItemId, value, lvUnit,
             $"Element {elementId}; " + (string.IsNullOrEmpty(sourceIdentity) ? "" : sourceIdentity + "; ") +
-            $"Rule {ruleId}; Position {position.Id}; {expression} = {value.ToString(CultureInfo.InvariantCulture)} {quantity.Unit}", elementId);
+            $"Rule {ruleId}; Position {position.Id}; {expression} = {sourceValue.ToString(CultureInfo.InvariantCulture)} {quantity.Unit}"
+            + (quantity.Unit == lvUnit ? "" : $" → {value.ToString(CultureInfo.InvariantCulture)} {lvUnit} (LV-Einheit)"), elementId);
     }
 
     private readonly record struct ReadKey(ParameterKind Kind, ParameterScope Scope, Guid SharedGuid,

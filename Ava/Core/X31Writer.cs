@@ -25,6 +25,7 @@ public static class X31Writer
         var source = LoadSnapshot(template.LvCatalog.Source, out var imported);
         var entries = template.LvCatalog.Entries.ToArray();
         var knownItems = new HashSet<string>(StringComparer.Ordinal);
+        var entriesById = new Dictionary<string, LvEntry>(StringComparer.Ordinal);
         var originals = imported.Entries.ToDictionary(x => x.Id, StringComparer.Ordinal);
         if (entries.Length != originals.Count) throw new InvalidDataException("LV-Katalog und X82-Snapshot haben unterschiedliche Positionen; bitte das LV erneut importieren.");
         foreach (var entry in entries)
@@ -35,11 +36,14 @@ public static class X31Writer
                 entry.BoqId != original.BoqId || entry.Ordinal != original.Ordinal || entry.Unit != original.Unit ||
                 entry.Text != original.Text || entry.Description != original.Description)
                 throw new InvalidDataException("LV-Katalog stimmt nicht mit dem unveränderten X82-Snapshot überein.");
+            entriesById.Add(entry.Id, entry);
         }
         foreach (var row in rows)
         {
             if (row == null || string.IsNullOrWhiteSpace(row.LvItemId) || !knownItems.Contains(row.LvItemId))
                 throw new InvalidDataException("Unbekannte oder leere LV-Position.");
+            if (!string.Equals(row.Unit, entriesById[row.LvItemId].Unit, StringComparison.Ordinal))
+                throw new InvalidDataException($"Mengeneinheit '{row.Unit}' weicht von der unveränderten LV-Einheit '{entriesById[row.LvItemId].Unit}' ab. Die Menge muss vor dem X31-Export in die LV-Einheit umgerechnet werden.");
             CheckText(row.Unit, 40, "Ergebniseinheit", false);
             CheckText(row.Explanation, 4096, "Erläuterung", true);
             if (!string.IsNullOrEmpty(row.ElementId)) CheckText(row.ElementId, 9, "Revit-Element-ID im X31-Bemerkungsfeld (max. 9 Zeichen)", false);

@@ -14,6 +14,7 @@
     <Compile Include="../../Ava/Core/TemplateEditor.cs" Link="Core/TemplateEditor.cs" />
     <Compile Include="../../Ava/Core/TemplateJson.cs" Link="Core/TemplateJson.cs" />
     <Compile Include="../../Ava/Core/QuantityFormula.cs" Link="Core/QuantityFormula.cs" />
+    <Compile Include="../../Ava/Core/UnitCatalog.cs" Link="Core/UnitCatalog.cs" />
     <Compile Include="../../Ava/Core/QuantityTakeoff.cs" Link="Core/QuantityTakeoff.cs" Condition="Exists('../../Ava/Core/QuantityTakeoff.cs')" />
     <Compile Include="../../Ava/Core/BgkReferenceTransfer.cs" Link="Core/BgkReferenceTransfer.cs" Condition="Exists('../../Ava/Core/BgkReferenceTransfer.cs')" />
 

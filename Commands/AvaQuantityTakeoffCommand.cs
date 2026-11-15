@@ -78,6 +78,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                     + "\nOhne vollständige BGK-/Typkennzeichnung: " + result.Unmarked
                     + "\nOhne passende BGK-/Typzuordnung: " + result.Unmapped
                     + "\nErmittelte Mengenzeilen (nicht exportiert): " + result.Rows.Count
+                    + "\nAuswahl-/Bedingungsdetails (maximal 20):\n" + string.Join("\n", result.Skipped.Select(s => s.Message))
                     + "\nUmfang: " + scopeDescription
                     + "\nVerknüpfte Modelle werden nicht ausgewertet."
                     + "\n\nFehlerdetails (erste " + Math.Min(errorLimit, result.Errors.Count) + " von " + result.Errors.Count + ", maximal " + errorLimit + "):\n"
@@ -90,6 +91,8 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             {
                 TaskDialog.Show("AVA – Mengenermittlung", "Keine passenden Mengenzeilen gefunden.\nUntersuchte Modellelemente: " + result.Examined
                     + "\nOhne vollständige BGK-/Typkennzeichnung: " + result.Unmarked + "\nOhne passende BGK-/Typzuordnung: " + result.Unmapped
+                    + "\nAuswahl-/Bedingungsdetails (maximal 20):\n" + (result.Skipped.Count == 0
+                        ? "Keine Modellelement-Instanzen im gewählten Umfang oder keine auswertbare Position." : string.Join("\n", result.Skipped.Select(s => s.Message)))
                     + "\nUmfang: " + scopeDescription
                     + "\nKeine Datei erstellt. Verknüpfte Modelle werden nicht ausgewertet.");
                 return Result.Cancelled;
@@ -105,9 +108,6 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             var exportRows = result.Rows.Select(r => new QuantityTakeoffRow(r.LvItemId, r.Value, r.Unit, r.Explanation,
                 r.ElementId, grouping.Mode == QuantityGroupingMode.Position ? null : labels[r.ElementId],
                 grouping.Mode == QuantityGroupingMode.Position ? null : grouping.GroupKind)).ToList();
-            var units = result.Rows.Where(r => template.LvCatalog.Entries.Single(l => l.Id == r.LvItemId).Unit != r.Unit)
-                .Select(r => { var lv = template.LvCatalog.Entries.Single(l => l.Id == r.LvItemId); return lv.Ordinal + ": Menge " + r.Unit + " / LV-Einheit " + lv.Unit; })
-                .Distinct(StringComparer.Ordinal).ToList();
             var warnings = TemplateValidator.Validate(template).Where(d => d.Severity == DiagnosticSeverity.Warning).ToList();
             var confirm = new TaskDialog("AVA – Mengenermittlung")
             {
@@ -116,11 +116,11 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                     + "\nGruppierung: " + (grouping.Mode == QuantityGroupingMode.Position ? "nach Leistungspositionen" : grouping.Mode == QuantityGroupingMode.FamilyAndType ? "nach Familienname und Typ" : grouping.GroupKind + " nach Parameter „" + grouping.Parameter!.DisplayLabel + "“")
                     + "\n\n" + result.Examined + " Modellelemente untersucht; " + result.Rows.Count + " Mengenzeilen."
                     + "\nOhne vollständige Kennzeichnung: " + result.Unmarked + "; ohne BGK-/Typzuordnung: " + result.Unmapped + "."
+                    + "\nEinheiten: Revit-Spezifikation wird beim Lesen geprüft; physikalische Parameter werden von internen Einheiten zur Vorlageneinheit und bei Bedarf zur LV-Einheit umgerechnet. Parametrisierte Formeln werden dimensional geprüft; parameterfreie Zahlenformeln sind deklarierte Konstanten. Nicht umrechenbare Mengen blockieren den Export."
                     + "\n\nUmfang: " + scopeDescription
                     + "; keine verknüpften Modelle. Der textuelle Prüfumfang ist kein Kategorienfilter; dies ist keine vollständige Modellprüfung."
-                    + "\nAlle zutreffenden Regeln werden additiv ausgewertet. Verwendet wird die gespeicherte Vorlage. Keine Revit-Schreibzugriffe."
-                    + (units.Count > 0 ? "\n\nACHTUNG: " + units.Count + " unterschiedliche Mengen-/LV-Einheiten. Keine automatische Umrechnung. Mit Ja werden die Zahlen unverändert unter der jeweiligen LV-Position ausgegeben; eigene Einheit steht im Erläuterungstext." : ""),
-                ExpandedContent = string.Join("\n", units.Concat(warnings.Select(w => w.ToString()))),
+                    + "\nAlle zutreffenden Regeln werden additiv ausgewertet. Verwendet wird die gespeicherte Vorlage. Keine Revit-Schreibzugriffe.",
+                ExpandedContent = string.Join("\n", warnings.Select(w => w.ToString())),
                 CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No,
                 DefaultButton = TaskDialogResult.No
             };

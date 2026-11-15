@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../Ava/Core/QuantityFormula.cs" Link="Core/QuantityFormula.cs" />
+    <Compile Include="../../Ava/Core/UnitCatalog.cs" Link="Core/UnitCatalog.cs" />
   </ItemGroup>
 </Project>

@@ -216,9 +216,9 @@ internal sealed class ConditionEditorWindow : Window
     private readonly W.ComboBox unit = new() { MinHeight = 30 };
     private readonly W.CheckBox manualUnit = new()
     {
-        Content = "Einheit manuell deklarieren (Zahlenwert ohne Umrechnung)",
+        Content = "Einheit manuell deklarieren (Revit kann physikalische Einheit nicht verifizieren)",
         Margin = new Thickness(0, 4, 0, 8),
-        ToolTip = "Nur für NUMBER/INTEGER. Der Revit-Rohwert wird unverändert mit dieser Einheit verglichen."
+        ToolTip = "Nur für NUMBER/INTEGER. Physikalische/freie Einheiten sind in Revit nicht verifizierbar und blockieren die Mengenermittlung bei passenden Regeln. Für m usw. einen LENGTH-Parameter verwenden."
     };
 
     public RuleCondition? Result { get; private set; }

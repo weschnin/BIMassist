@@ -10,13 +10,13 @@ internal static class Program
     private static int Main()
     {
         Test("Mixed LV sibling units attach, save, load, export and edit without changing independent quantities", MixedSiblingRoundtrip);
-        Test("Every different LV label is only a warning, including known scale differences", DifferentLabelsWarn);
+        Test("Every different LV label warns about conversion or blocking", DifferentLabelsWarn);
         Test("Constants freely declare arbitrary nonempty result labels", () => ArbitraryResultLabels("constant"));
         Test("Numeric formulas freely declare arbitrary nonempty result labels", () => ArbitraryResultLabels("numeric formula"));
         Test("Bound formulas freely declare arbitrary nonempty result labels", () => ArbitraryResultLabels("bound formula"));
-        Test("Integer parameter quantity can explicitly assign a custom output unit without conversion", ManualIntegerUnit);
+        Test("Unverifiable INTEGER/NUMBER physical output units block takeoff", ManualIntegerUnit);
         Test("Blank result labels and invalid typed parameter or formula inputs still reject transactionally", InvalidDeclarationsReject);
-        Test("Checklist explicitly separates each quantity declaration from LV metadata without inferred conversion", IndependentChecklist);
+        Test("Checklist states LV conversion/blocking and separate formula input units", IndependentChecklist);
         Console.WriteLine($"{passed} passed; {failed} failed");
         return failed == 0 ? 0 : 1;
     }
@@ -105,14 +105,14 @@ internal static class Program
             };
         });
         var result = QuantityTakeoff.Calculate(reopened, [element]);
-        Check(result.Errors.Count == 0 && result.Rows.Single() is { Value: 12m, Unit: "d" }, "manual unit changed the raw quantity or result label");
-        Check(reads.Single(read => read.Name == "Days").Unit == "1", "raw integer wasn't read as unitless before explicit unit assignment");
+        Check(result.Errors.Count == 1 && result.Rows.Count == 0 && result.Errors[0].Message.Contains("nicht verifizierbar"), "unverifiable integer unit was exported");
+        Check(!reads.Any(read => read.Name == "Days"), "unverifiable integer was read before the unit check");
         reads.Clear();
         var numberTemplate = TemplateJson.Copy(reopened);
         numberTemplate.Mappings[0].Positions[0].Quantity!.Source!.Spec = "NUMBER";
         var numberResult = QuantityTakeoff.Calculate(numberTemplate, [element]);
-        Check(numberResult.Errors.Count == 0 && numberResult.Rows.Single() is { Value: 12m, Unit: "d" }
-            && reads.Single(read => read.Name == "Days").Unit == "1", "NUMBER parameter was not manually interpreted as a raw custom-unit quantity");
+        Check(numberResult.Errors.Count == 1 && numberResult.Rows.Count == 0
+            && !reads.Any(read => read.Name == "Days"), "unverifiable NUMBER unit was exported");
 
         var strict = TemplateJson.Copy(template); strict.Mappings[0].Positions[0].Quantity!.AllowCustomUnit = false;
         Check(TemplateValidator.Validate(strict).Any(d => d.Code == "QUANTITY_UNIT" && d.Severity == DiagnosticSeverity.Error), "strict unit validation stopped rejecting custom units");
@@ -134,7 +134,7 @@ internal static class Program
             NoErrors(template);
             var warning = diagnostics.Single(d => d.Code == "LV_UNIT");
             Check(warning.Severity == DiagnosticSeverity.Warning && warning.Path.Contains(template.Mappings[0].Positions[0].Id.ToString()), "LV difference must be a position-scoped warning");
-            Check(warning.Message.Contains(quantityUnit) && warning.Message.Contains(lvUnit) && warning.Message.Contains("unabhängig") && warning.Message.Contains("keine automatische Umrechnung", StringComparison.OrdinalIgnoreCase), "warning must explain independent declarations and no automatic conversion");
+            Check(warning.Message.Contains(quantityUnit) && warning.Message.Contains(lvUnit) && warning.Message.Contains("umgerechnet") && warning.Message.Contains("blockieren"), "warning must explain compatible conversion and incompatible blocking");
             TemplateEditor.EnsureValid(template);
             Check(TemplateJson.Serialize(template) == before, "validation converted, relabeled or mutated data");
         }
@@ -194,8 +194,8 @@ internal static class Program
             var lv = template.LvCatalog.Entries.Single(l => l.Id == position.LvItemId);
             Check(check.AppliesTo.Contains(position.Id.ToString()), "Checklist quantities share a group-only context");
             Check(check.Requirement.Contains(position.Quantity!.Unit) && check.Requirement.Contains(lv.Unit), "Checklist drops quantity or catalog declaration");
-            Check(check.Requirement.Contains("unabhängig") && check.Requirement.Contains("LV-Katalogeinheit") &&
-                check.Requirement.Contains("keine automatische Umrechnung", StringComparison.OrdinalIgnoreCase), "Checklist implies LV conversion rather than independent declarations");
+            Check(check.Requirement.Contains("LV-Katalogeinheit") &&
+                (check.Requirement.Contains("umgerechnet") || check.Requirement.Contains("blockiert")), "Checklist omits unit conversion or blocking");
         }
         Check(checks[1].Requirement.Contains("Length") && checks[1].Requirement.Contains("Eingabeeinheit m"), "Formula input identity or read unit lost");
     }

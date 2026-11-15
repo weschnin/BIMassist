@@ -79,11 +79,15 @@ internal static class Program
             missingBreakdown.Descendants(SourceNs + "BoQBkdn").Remove();
             Reject(() => X31Writer.Serialize(Read(missingBreakdown.ToString()), [new("FirstItem", 1m, "m2", "")]));
         });
+        Test("X31 refuses a quantity whose unit differs from the unchanged LV unit", () =>
+        {
+            Reject(() => X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m", "unit mismatch")]));
+        });
         Test("X31 places labeled Revit ID remarks before quantity rows and preserves the compact row ID", () =>
         {
             var explanation = "Revit ElementId=42 UniqueId=source&<element>; " + new string('x', 130);
             var template = Read(Fixture);
-            var xml = X31Writer.Serialize(template, [new("FirstItem", 2.5m, "kg", explanation, "42", "Erdgeschoss", "Baubereich"), new("SecondItem", 0.0045m, "m", "same Revit ElementId=42", "43")]);
+            var xml = X31Writer.Serialize(template, [new("FirstItem", 2.5m, "m2", explanation, "42", "Erdgeschoss", "Baubereich"), new("SecondItem", 0.0045m, "m3", "same Revit ElementId=42", "43")]);
             Validate(xml);
             var doc = XDocument.Parse(xml);
             var first = doc.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == "FirstItem");
@@ -109,10 +113,10 @@ internal static class Program
         {
             var rows = new[]
             {
-                new QuantityTakeoffRow("FirstItem", 1m, "St", "trace 101", "101", "Erdgeschoss", "Baubereich"),
-                new QuantityTakeoffRow("FirstItem", 2m, "St", "trace 102", "102", "Erdgeschoss", "Baubereich"),
-                new QuantityTakeoffRow("FirstItem", 3m, "St", "trace 103", "103", "Obergeschoss", "Baubereich"),
-                new QuantityTakeoffRow("SecondItem", 4m, "m", "trace 104", "104", "Rohbau", "Gewerk")
+                new QuantityTakeoffRow("FirstItem", 1m, "m2", "trace 101", "101", "Erdgeschoss", "Baubereich"),
+                new QuantityTakeoffRow("FirstItem", 2m, "m2", "trace 102", "102", "Erdgeschoss", "Baubereich"),
+                new QuantityTakeoffRow("FirstItem", 3m, "m2", "trace 103", "103", "Obergeschoss", "Baubereich"),
+                new QuantityTakeoffRow("SecondItem", 4m, "m3", "trace 104", "104", "Rohbau", "Gewerk")
             };
             var xml = X31Writer.Serialize(Read(Fixture), rows); Validate(xml);
             var doc = XDocument.Parse(xml);
@@ -127,7 +131,7 @@ internal static class Program
             var second = doc.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == "SecondItem");
             Require(second.Descendants(Ns + "QTakeoff").Select(x => x.Attribute("Row")!.Value)
                 .Any(x => x[12] == '*' && x.Substring(13, 56).TrimEnd() == "Gewerk: Rohbau"), "Trade header missing");
-            var ungrouped = X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m", "trace", "77")]);
+            var ungrouped = X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m2", "trace", "77")]);
             var ungroupedRows = XDocument.Parse(ungrouped).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
             Equal(2, ungroupedRows.Length);
             Require(ungroupedRows[0][12] == '*' && ungroupedRows[0].Substring(13, 56).TrimEnd() == "Revit-ElementID: 77", "Ungrouped ID remark missing or mislabeled");
@@ -212,7 +216,7 @@ internal static class Program
                 catch(System.Reflection.TargetInvocationException e) when(e.InnerException is InvalidDataException) { }
             }
             Reject(() => X31Writer.Serialize(Read(Fixture), new ImpossibleRows()));
-            var xml = X31Writer.Serialize(Read(Fixture), Enumerable.Range(0,150).Select(i => new QuantityTakeoffRow("FirstItem", i, "m", "ref")).ToArray());
+            var xml = X31Writer.Serialize(Read(Fixture), Enumerable.Range(0,150).Select(i => new QuantityTakeoffRow("FirstItem", i, "m2", "ref")).ToArray());
             Validate(xml);
             var lines = XDocument.Parse(xml).Descendants(Ns+"QTakeoff").Select(x => x.Attribute("Row")!.Value).ToArray();
             Equal(lines.Length, lines.Select(x => x.Substring(69,6)).Distinct().Count());
@@ -229,7 +233,7 @@ internal static class Program
                     foreach (var value in new[] { decimal.MinValue, decimal.MaxValue, 0m, -0.0000000000000000000000000001m, 0.0000000000000000000000000001m })
                     {
                         var explanation = "#Bild ../../private.png & <tag> \"quoted\" " + new string('x', 4000);
-                        var xml = X31Writer.Serialize(Read(Fixture), [new("FirstItem", value, "m", explanation, "42")]);
+                        var xml = X31Writer.Serialize(Read(Fixture), [new("FirstItem", value, "m2", explanation, "42")]);
                         Validate(xml);
                         var lines = XDocument.Parse(xml).Descendants(Ns+"QTakeoff").Select(x => x.Attribute("Row")!.Value).ToArray();
                         Require(!xml.Contains(explanation), "Internal formula explanation leaked into screenshot-oriented output");
@@ -248,7 +252,7 @@ internal static class Program
         Test("long internal explanations do not consume export addresses or leak into California", () =>
         {
             var explanation = new string('x', 4096);
-            var xml = X31Writer.Serialize(Read(Fixture), [new QuantityTakeoffRow("FirstItem", 1m, "m", explanation, "42")]);
+            var xml = X31Writer.Serialize(Read(Fixture), [new QuantityTakeoffRow("FirstItem", 1m, "m2", explanation, "42")]);
             Validate(xml);
             var rows = XDocument.Parse(xml).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
             Equal(2, rows.Length);
@@ -259,7 +263,7 @@ internal static class Program
         {
             const string groupPrefix = "Baubereich: ";
             var groupLabel = new string('x', 56 - groupPrefix.Length) + "#Bild ../../group.png";
-            var xml = X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m", "", "42", groupLabel, "Baubereich")]);
+            var xml = X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m2", "", "42", groupLabel, "Baubereich")]);
             Validate(xml);
             var comments = XDocument.Parse(xml).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!)
                 .Where(row => row[12] == '*').Select(row => row.Substring(13, 56)).ToArray();
@@ -317,7 +321,7 @@ internal static class Program
                 Require(original.SequenceEqual(File.ReadAllBytes(path)), "Invalid input changed existing target");
                 using (var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
-                    try { Save(path, Read(Fixture), [new("FirstItem", 1, "m", "locked fixture")]); throw new Exception("Expected locked-target IO error"); }
+                    try { Save(path, Read(Fixture), [new("FirstItem", 1, "m2", "locked fixture")]); throw new Exception("Expected locked-target IO error"); }
                     catch (IOException) { }
                 }
                 Require(original.SequenceEqual(File.ReadAllBytes(path)), "IO failure changed existing target");

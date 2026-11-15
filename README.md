@@ -25,32 +25,6 @@ vorhandene Exemplarwerte bleiben geschützt. Ein Projektparameter mit demselben
 Namen kann für neue lokale BGK-Familien bestehen bleiben; bei mehrdeutigen
 Parametern vorhandener Exemplare wird das Neuladen sicher abgebrochen.
 
-## BGK-Schreibschutz (2026.1.40)
-
-Das Schloss im BGK-Manager schaltet den Schreibschutz für das gewählte Element
-**und sämtliche Unterelemente** um. Der Zustand wird mit der BGK-XML-Datei
-gespeichert; nach dem Umschalten die Datei speichern. Geschützte Einträge
-können nicht umbenannt, bearbeitet, verschoben, kopiert oder gelöscht werden.
-Auch ein ungeschützter übergeordneter Eintrag kann nicht mitsamt geschützten
-Unterelementen entfernt oder verschoben werden. Das Schloss kann den Schutz
-für den gewählten Teilbaum wieder aufheben. Bei geschütztem Vorfahren muss
-zuerst dessen Schloss geöffnet werden; darunterliegende Elemente bleiben
-sonst weiterhin schreibgeschützt.
-
-## Typmarkierungen gesammelt auswählen (2026.1.41)
-
-Über **Alle markieren** und **Auswahl aufheben** oberhalb der Typenliste werden
-alle Typmarkierungen der gerade gewählten Baugruppe gemeinsam ausgewählt bzw.
-abgewählt. Andere Baugruppen bleiben unberührt; die Auswahl ist keine Änderung
-an der gespeicherten BGK-Datei.
-
-## Gespeicherte 3D-Ansichten sortieren (2026.1.42)
-
-Im Fenster für gespeicherte SectionBox-Snapshots lässt sich die Liste nach
-Namen **A–Z** oder **Z–A** sortieren. Die Sortierung ändert nur die Anzeige,
-nicht die gespeicherten Ansichten; der ausgewählte Eintrag bleibt beim
-Umschalten erhalten.
-
 ## AVA-Vorlagen und abgeleitete Prüfliste (2026.1.43)
 
 Direkt links von **Info** befindet sich **AVA → Vorlagen verwalten**.
@@ -59,7 +33,7 @@ Der dateibasierte Editor benötigt keine Modelländerungen. Er bietet:
 - neue, öffnungsfähige und als JSON importierbare/exportierbare Vorlagen;
 - read-only Import von BGK-XML, GAEB DA82/3.3 (`.x82`) und Revit-Parameter-TXT;
 - durchsuchbare BGK-/Typ- und LV-Kataloge, manuelle Zuordnungen und deren Bearbeitung;
-- typisierte UND-Bedingungen mit Vergleichsoperator, Wert und expliziter Einheit;
+- typisierte UND-/ODER-Bedingungen mit Vergleichsoperator, Wert und expliziter Einheit (UND bindet stärker als ODER);
 - Mengenquellen mit GUID oder ausdrücklich lokalem Familienparameter,
   Spezifikation und Instanz-/Typ-Geltung;
 - automatisch abgeleitete Prüfvorschriften sowie Validierung der Vorlage.
@@ -88,11 +62,14 @@ Parameter gleichen Namens mit `INTEGER`; es gibt keinen stillen Fallback.
 
 **Grenzen des Vorlageneditors:** Die Prüfliste beschreibt Anforderungen, nicht bereits ermittelte
 Modellfehler. Der Prüfumfang ist bisher eine Beschreibung, noch kein ausführbarer
-Kategorienfilter. Keine Modellprüfung oder Parameterbindung im Editor; für
-Mengenermittlung und X31 steht ab 2026.1.48 ein eigener AVA-Befehl bereit.
-Keine automatische Umrechnung der Ergebnisseinheit, keine Prioritäten oder
+Kategorienfilter. Keine Parameterbindung, automatische Ergebnisumrechnung oder
+Rundung. Modellmengenermittlung und X31 laufen ab 2026.1.48 separat über
+**AVA → Mengenermittlung**, nicht im dateibasierten Editor. Keine Prioritäten oder
 Else-Regeln; mehrere Zuordnungen werden zur fachlichen Prüfung gekennzeichnet.
-Keine vollständige GAEB-XSD-Validierung. Unterstützte Mengenspezifikationen:
+Die Mengenermittlung kann optional auf Elemente der aktiven Ansicht begrenzt werden.
+Im Zuordnungsbaum lassen sich gleichartige Regeln umsortieren; BGK und Typ können
+dort per Doppelklick bearbeitet werden.
+Der X82-Importer ersetzt keine vollständige GAEB-XSD-Validierung. Unterstützte Mengenspezifikationen:
 Zahl/Ganzzahl, Länge, Fläche, Volumen, Winkel und Massendichte. Diese betreffen
 die Parameter-Leseeinheiten, nicht die Auswahl der zugeordneten LV-Positionen.
 
@@ -153,8 +130,8 @@ Schema 1 und 2 werden beim Laden übernommen: jede alte Regel bleibt eine
 eigene Zuordnung mit einer Leistungsposition; IDs, Bedingungen und Quellen
 bleiben erhalten. Bestehende Dateien werden nicht ungefragt überschrieben.
 Die Prüfliste leitet für jede Position die eigene Menge und alle benötigten
-Formelparameter ab. Modellprüfung und automatische Modellmengenermittlung
-bleiben vom Vorlageneditor getrennt; siehe den eigenen Befehl ab 2026.1.48.
+Formelparameter ab. Modellprüfung, automatische Modellmengenermittlung und
+X31 sind weiterhin nicht Bestandteil dieses Editors.
 
 ## Mengeneinheit neuer AVA-Positionen (2026.1.46)
 
@@ -163,8 +140,9 @@ beispielsweise **psch** statt einer pauschalen Vorbelegung mit **St**.
 Solange die Menge unberührt ist, folgt der Vorschlag der LV-Auswahl.
 Gespeicherte Mengen sowie ausdrücklich gewählte Einheiten oder eingegebene
 Zahlen/Formeln werden beim Wechsel der LV-Position nicht still umetikettiert.
-Die damalige Sperre bei abweichender LV-Einheit wird ab 2026.1.47 aufgehoben;
-es erfolgt weiterhin keine automatische Umrechnung.
+Ab 2026.1.72 bleiben LV-Einheiten unverändert. Bei der Mengenermittlung werden
+kompatible Ergebnisse in die originale LV-Einheit umgerechnet; inkompatible
+Einheiten verhindern den Export.
 
 ## Unabhängige LV-Positionen und Mengenvorschriften (2026.1.47)
 
@@ -175,15 +153,19 @@ Nachbarposition übernommen noch über eine gemeinsame Einheit gekoppelt.
 Auch beim Bearbeiten einer vorhandenen Position bleibt ihre eigene Menge
 erhalten, wenn eine andere LV-Position ausgewählt wird.
 
-Für Zahlen und Formeln ist die Mengeneinheit frei eingebbar, etwa **Mt** oder
-eine eigene Bezeichnung. Die LV-Einheit ist nur ein Vorschlag und bleibt als
-unabhängige Kataloginformation erhalten. Unterschiedliche LV-/Mengeneinheiten
-erzeugen höchstens einen Hinweis, verhindern aber weder Übernahme noch
-Speichern/Import/Export. Es wird keine Umrechnung behauptet oder durchgeführt.
-Bei direkt gelesenen Parametern und Formeleingängen muss die Leseeinheit
-weiterhin zur Parameterspezifikation passen. Fehlende Quellen und ungültige
-Formeln bleiben Fehler. Schema 3 bleibt unverändert; mit früheren Versionen
-können die nun zugelassenen Einheitenkombinationen nicht erneut bearbeitbar sein.
+Die LV-Einheit bleibt maßgeblich und wird nie umetikettiert. Physikalische
+Parameterwerte werden aus Revit-internen Einheiten über die in den
+Projekteinstellungen festgelegte Anzeigeeinheit in die für Bedingung bzw.
+Mengenquelle gespeicherte Zieleinheit überführt. Bedingungen vergleichen damit
+in ihrer ausdrücklich gespeicherten Einheit. Direkte Mengen und Formelergebnisse
+werden vor dem X31-Schreiben in die unveränderte Einheit der LV-Position
+umgerechnet; inkompatible Einheiten blockieren den Export. NUMBER/INTEGER sind
+Revit-seitig dimensionslos. Eine ausdrücklich aktivierte freie Mengeneinheit
+bleibt eine manuelle Deklaration ohne Revit-Umrechnung und darf keine
+physikalische Revit-Spezifikation vortäuschen. Parametrisierte Formeln prüfen
+Dimensionen und normalisieren ihre physikalischen Eingänge vor der Rechnung.
+Die Projekteinstellung dient als Umrechnungsbasis, nicht als Rundung der
+angezeigten Zahl.
 
 ## AVA-Arbeitsbereich, Dateidialoge und Mengenermittlung (2026.1.48)
 
@@ -208,20 +190,23 @@ automatisch von den Importern unterstützt.
 
 **AVA → Mengenermittlung** liest das aktuell geöffnete Hauptmodell und die
 zuletzt gespeicherte Arbeitsvorlage. Der Befehl verändert keine Revit-Elemente.
-Alle Modellelement-Instanzen werden betrachtet, nicht nur die Auswahl oder
-aktuelle Ansicht; verknüpfte Modelle und der Familieneditor sind ausgeschlossen.
+Standardmäßig werden alle Modellelement-Instanzen des Host-Modells betrachtet.
+Optional lässt sich auf Elemente der aktiven Ansicht begrenzen; verknüpfte
+Modelle und der Familieneditor sind ausgeschlossen. Die Ansichtsauswertung ist
+keine geometrische Verdeckungs- oder pixelgenaue Sichtbarkeitsprüfung.
 BGK und Typnummer werden exakt aus den konfigurierten Quellen gelesen.
 Fehlende Kennzeichnungen und nicht zugeordnete BGK-/Typkombinationen werden
 separat gezählt. Der beschreibende Prüfumfang wird nicht als Filter interpretiert;
 die Auswertung ist keine vollständige Modell- oder Parameterbindungsprüfung.
 
-Alle zutreffenden Zuordnungen wirken **additiv**, alle Bedingungen innerhalb
-einer Zuordnung als **UND**. Jede Leistungsposition berechnet ihre eigene
-Konstante, Parameter-Menge oder Formel je passendem Element. Revit-interne
-Parameterwerte werden in die ausdrücklich konfigurierte Leseeinheit umgerechnet;
-die Formel arbeitet mit diesen Zahlenwerten. Eine automatische Umrechnung
-von der Ergebniseinheit in die LV-Einheit erfolgt nicht. Bei unterschiedlichen
-Einheiten muss die unveränderte Ausgabe ausdrücklich bestätigt werden.
+Alle zutreffenden Zuordnungen wirken **additiv**; Bedingungen unterstützen
+UND/ODER mit üblichem Vorrang von UND. Jede Leistungsposition berechnet ihre
+eigene Konstante, Parameter-Menge oder Formel je passendem Element. Revit prüft
+die tatsächliche Parameterspezifikation und die Projekteinstellungen; der Wert
+wird ohne Anzeige-Rundung in die explizite Bedingungs-/Eingabeeinheit umgerechnet.
+Parametrisierte Formeln prüfen die Ergebnisdimension. Mengen werden vor der
+X31-Ausgabe in die LV-Einheit umgerechnet; die LV-Katalogdaten bleiben dabei
+unverändert. Nicht umrechenbare Werte blockieren den gesamten Export.
 Fehlende benötigte Parameter, falsche Spezifikationen, mehrdeutige lokale
 Quellen, ungültige Rechenoperationen oder fehlende Mengenvorschriften verhindern
 den gesamten Export statt einer stillen Teil- oder Nullmengenausgabe.
@@ -260,7 +245,7 @@ die zusammengehörenden `BIMassist.dll` und `BIMassist.addin` verwenden; keine
 RevitAPI-DLLs oder RevitMCP-Komponenten mitkopieren. Build, API-Metadaten- und
 Laufzeittests ersetzen keine interaktive Prüfung auf dem Zielrechner.
 
-## Geometrie aus gewählten Flächen (2026.1.37)
+## Geometrie aus gewählten Flächen (2026.1.38)
 
 Im Menü **Geometrien** lassen sich einzelne begrenzte Revit-Flächen auswählen.
 Eine Familie wird nur für einen geprüften, geschlossenen Volumenkörper geladen
@@ -281,8 +266,18 @@ vollständigen Umfang abdecken. Achse, Radialprofil, umlaufende Kreisränder und
 auswärts gerichtete Flächennormalen werden geprüft; unklare Lücken und von der
 Außenkontur abweichende Flächen werden abgelehnt. Das ist **kein** allgemeiner
 Algorithmus für beliebige gekrümmte Freiformflächen oder mehrere Achsen.
-Der neue Pfad ist bislang nur gebaut und statisch getestet, **nicht** für den
-konkreten Schacht in Revit abgenommen.
+Zusätzlich erkennt ein enger Spezialpfad beim `Schachthals_DN1000/800`
+zwei exzentrische, waagerechte Ringenden und segmentierte Außenmantelflächen
+einschließlich `RuledFace`. Die vier gewählten Flächen werden über ihre stabilen
+Revit-Referenzen genau einem Quell-Solid zugeordnet. Nur zugehörige,
+geometrisch geprüfte Außenflächen dürfen die Außenkontur schließen; Innenwände
+des Quell-Solids werden nicht kopiert. Zwei gefüllte Enden ersetzen die Ringe.
+Diese Ergänzung ist **keine** generelle Freiform-Rekonstruktion und setzt
+passende kreisförmige Enden und verifizierbare Mantelabschnitte voraus.
+Auf einer Projektkopie wurden die vier konkreten Schachthals-Flächen in Revit
+2026 zu einem geschlossenen Solid mit positivem Volumen verarbeitet; die Familie
+wurde gespeichert, wieder geöffnet, geladen und einmal platziert. Ein
+interaktiver Test der Auswahl über das Ribbon steht für diesen Fall noch aus.
 
 Sind alle Flächen eines einzelnen, bereits geschlossenen Volumenkörpers gewählt,
 werden sie exakt mit dessen Flächen verglichen und der vorhandene Körper

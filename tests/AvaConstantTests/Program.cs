@@ -96,7 +96,7 @@ internal static class Program
                 Check(quantity.Requirement.Contains("Konstante 1 St je passendem Element") && quantity.Requirement.Contains("kein Mengenparameter") && !quantity.Requirement.Contains("Lesen:"), "constant requires parameter read");
                 Check(quantity.AppliesTo.Contains("nur bei erfüllten UND-Bedingungen"), "constant is not branch-specific");
                 Check(checks.Any(c => c.Kind == "Bedingung" && c.Requirement.Contains("DN") && c.Requirement.Contains("Quelle:") && c.Requirement.Contains("nicht auswertbar")), "DN reading requirement lost");
-                Check(checks.Any(c => c.Requirement.Contains("nicht implementiert")), "checklist implies evaluation");
+                Check(quantity.Requirement.Contains("umgerechnet") && quantity.Requirement.Contains("blockiert"), "checklist omits unit safety on export");
                 var parameter = ValidTemplate().Mappings[0].Positions[0].Quantity!;
                 Check(parameter.ToString() == parameter.Source!.ToString() + " | St", "parameter description lost");
                 parameter.Source = null;

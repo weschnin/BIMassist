@@ -235,7 +235,7 @@ internal static class Program
                 foreach (var variable in group.Positions[1].Quantity!.Variables) {
                     Check(formula.Requirement.Contains(variable.Name) && formula.Requirement.Contains(variable.Source.ToString()) && formula.Requirement.Contains(variable.Unit), "formula input source/unit missing: " + variable.Name);
                 }
-                Check(formula.Requirement.Contains("nicht implementiert") && formula.Requirement.Contains("keine automatische"), "checklist suggests execution, conversion or dimensional inference");
+                Check(formula.Requirement.Contains("Ergebnisdimension") && formula.Requirement.Contains("LV-Einheit umgerechnet"), "checklist must state dimensional validation and unit conversion");
                 group.Positions[1].Quantity = null;
                 Check(ChecklistBuilder.Build(template).Any(c => c.Kind == "Menge" && c.AppliesTo.Contains(group.Positions[1].Id.ToString()) && c.Requirement.Contains("nicht definiert")), "draft quantity omitted");
             });

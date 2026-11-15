@@ -49,6 +49,18 @@ internal static class Program
             Reject(() => QuantityFormula.Evaluate("X", new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase) { ["x"] = 3 }));
             Equal(3m, QuantityFormula.Evaluate("x", new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase) { ["x"] = 3, ["unused"] = 9 }));
         });
+        Test("typed evaluator independently rejects unitless count/lump relabeling and preserves physical conversion", () =>
+        {
+            foreach (var spec in new[] { "NUMBER", "INTEGER" })
+            foreach (var unit in new[] { "St", "psch" })
+                Reject(() => QuantityFormula.EvaluateWithUnits("x",
+                    new Dictionary<string, (decimal Value, string Unit, string Spec)> { ["x"] = (100m, unit, spec) }, unit));
+            foreach (var unit in new[] { "St", "psch" })
+                Reject(() => QuantityFormula.EvaluateWithUnits("x",
+                    new Dictionary<string, (decimal Value, string Unit, string Spec)> { ["x"] = (100m, "1", "NUMBER") }, unit));
+            Equal(1m, QuantityFormula.EvaluateWithUnits("x",
+                new Dictionary<string, (decimal Value, string Unit, string Spec)> { ["x"] = (100m, "cm", "LENGTH") }, "m"));
+        });
         Test("validation requires exact one-to-one bindings and parses without evaluation", () =>
         {
             QuantityFormula.Validate("1 / (x - x)", new[] { "x" });

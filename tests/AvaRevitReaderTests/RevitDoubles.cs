@@ -14,18 +14,52 @@ public static class SpecTypeId
 }
 public static class UnitTypeId
 {
-    public static ForgeTypeId Millimeters = new("mm"), Centimeters = new("cm"), Meters = new("m"), SquareMillimeters = new("mm2"), SquareCentimeters = new("cm2"), SquareMeters = new("m2"), CubicCentimeters = new("cm3"), CubicMeters = new("m3"), Degrees = new("deg"), Radians = new("rad"), KilogramsPerCubicMeter = new("kg/m3");
+    public static ForgeTypeId Millimeters = new("mm"), Centimeters = new("cm"), Meters = new("m"), Feet = new("ft"), SquareMillimeters = new("mm2"), SquareCentimeters = new("cm2"), SquareMeters = new("m2"), SquareFeet = new("ft2"), CubicCentimeters = new("cm3"), CubicMeters = new("m3"), CubicFeet = new("ft3"), Degrees = new("deg"), Radians = new("rad"), KilogramsPerCubicMeter = new("kg/m3");
 }
 public static class UnitUtils
 {
-    public static ISet<ForgeTypeId> GetAllUnits() => new HashSet<ForgeTypeId> { new("feet") };
-    public static double ConvertFromInternalUnits(double value, ForgeTypeId unit) => !double.IsFinite(value) ? throw new ArgumentException("Nonfinite test input") : value * (unit.Value switch
+    public static bool IsValidUnit(ForgeTypeId spec, ForgeTypeId unit) => spec.Value switch
     {
-        "mm" => 304.8, "cm" => 30.48, "m" => 0.3048, "km" => 0.0003048,
-        "mm2" => 92903.04, "cm2" => 929.0304, "m2" => 0.09290304,
-        "cm3" => 28316.846592, "m3" => 0.028316846592,
+        "LENGTH" or "PIPE_SIZE" or "PIPE_DIMENSION" => unit.Value is "mm" or "cm" or "m" or "km" or "ft",
+        "AREA" => unit.Value is "mm2" or "cm2" or "m2" or "ft2",
+        "VOLUME" => unit.Value is "cm3" or "m3" or "ft3",
+        "ANGLE" => unit.Value is "deg" or "rad",
+        "MASS_DENSITY" => unit.Value == "kg/m3",
+        _ => false
+    };
+    public static ISet<ForgeTypeId> GetAllUnits() => new HashSet<ForgeTypeId> { new("feet") };
+    private static double ToInternal(double value, ForgeTypeId unit) => value / (unit.Value switch
+    {
+        "mm" => 304.8, "cm" => 30.48, "m" => 0.3048, "km" => 0.0003048, "ft" => 1,
+        "mm2" => 92903.04, "cm2" => 929.0304, "m2" => 0.09290304, "ft2" => 1,
+        "cm3" => 28316.846592, "m3" => 0.028316846592, "ft3" => 1,
         "deg" => 180 / Math.PI, "rad" => 1, "kg/m3" => 1, _ => throw new ArgumentException("Unsupported test unit")
     });
+    public static double ConvertFromInternalUnits(double value, ForgeTypeId unit) => !double.IsFinite(value) ? throw new ArgumentException("Nonfinite test input") : value * (unit.Value switch
+    {
+        "mm" => 304.8, "cm" => 30.48, "m" => 0.3048, "km" => 0.0003048, "ft" => 1,
+        "mm2" => 92903.04, "cm2" => 929.0304, "m2" => 0.09290304, "ft2" => 1,
+        "cm3" => 28316.846592, "m3" => 0.028316846592, "ft3" => 1,
+        "deg" => 180 / Math.PI, "rad" => 1, "kg/m3" => 1, _ => throw new ArgumentException("Unsupported test unit")
+    });
+    public static double Convert(double value, ForgeTypeId from, ForgeTypeId to) =>
+        !double.IsFinite(value) ? throw new ArgumentException("Nonfinite test input") : ConvertFromInternalUnits(ToInternal(value, from), to);
+}
+public sealed class FormatOptions(ForgeTypeId unit) { public ForgeTypeId GetUnitTypeId() => unit; }
+public sealed class Units
+{
+    public string? LastRequestedSpec { get; private set; }
+    public Dictionary<string, ForgeTypeId> ProjectUnits { get; } = new()
+    {
+        ["LENGTH"] = UnitTypeId.Feet, ["AREA"] = UnitTypeId.SquareFeet, ["VOLUME"] = UnitTypeId.CubicFeet,
+        ["ANGLE"] = UnitTypeId.Degrees, ["MASS_DENSITY"] = UnitTypeId.KilogramsPerCubicMeter
+    };
+    public FormatOptions GetFormatOptions(ForgeTypeId spec)
+    {
+        LastRequestedSpec = spec.Value;
+        var key = spec.Value switch { "PIPE_SIZE" or "PIPE_DIMENSION" => "LENGTH", _ => spec.Value };
+        return new(ProjectUnits.GetValueOrDefault(key) ?? throw new ArgumentException("No project format for spec"));
+    }
 }
 public static class LabelUtils { public static string GetLabelForUnit(ForgeTypeId unit) => unit.Value == "feet" ? "Feet" : unit.Value; }
 public sealed class Definition(string name, ForgeTypeId type)
@@ -94,6 +128,8 @@ public sealed class Document
     public string PathName { get; set; } = "";
     public string Title { get; set; } = "Unsaved project";
     public bool IsFamilyDocument { get; set; }
+    public Units ProjectUnits { get; } = new();
+    public Units GetUnits() => ProjectUnits;
     public List<Element> Elements { get; } = [];
     public Element? GetElement(ElementId id) => Elements.SingleOrDefault(e => e.Id == id);
 }

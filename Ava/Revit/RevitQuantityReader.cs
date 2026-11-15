@@ -194,7 +194,7 @@ public static class RevitQuantityReader
                     if (inspectionFailures.Count > 0)
                     {
                         foreach (var match in matches)
-                            inspectionFailures.Add(DescribeCandidateValue(match.Parameter, match.Description, matches.IndexOf(match), source, unit));
+                            inspectionFailures.Add(DescribeCandidateValue(document, match.Parameter, match.Description, matches.IndexOf(match), source, unit));
                         var lookupFailure = named.Count > 1
                             ? "Mehrere gleichnamige Parameter konnten nicht zuverlässig geprüft werden"
                             : "Der gleichnamige Parameter konnte nicht zuverlässig geprüft werden";
@@ -225,7 +225,7 @@ public static class RevitQuantityReader
                 var candidate = nameCandidates[index];
                 try
                 {
-                    var value = ReadParameterValue(candidate.Parameter, source, unit);
+                    var value = ReadParameterValue(document, candidate.Parameter, source, unit);
                     var option = new AvaParameterCandidate(candidate.Identity,
                         BoundCandidateDiagnostic(candidate.Description + "; Auswahlwert: " + FormatCandidateValue(value, unit)), value);
                     options.Add(option);
@@ -279,7 +279,7 @@ public static class RevitQuantityReader
             if (allowMissingText && source.Spec == "TEXT") return new(Text: "");
             throw MissingSource(document, instance, source, unit, true);
         }
-        return ReadParameterValue(parameter, source, unit);
+        return ReadParameterValue(document, parameter, source, unit);
     }
 
     private static InvalidDataException MissingSource(Document document, Element instance, ParameterSource source,
@@ -297,7 +297,7 @@ public static class RevitQuantityReader
             { findings.Add(scope + ": Parameterliste nicht lesbar: " + FormatCandidateException(ex)); continue; }
             if (candidates.Count == 0) { findings.Add(scope + ": kein gleichnamiger Parameter"); continue; }
             foreach (var (candidate, index) in candidates.Select((candidate, index) => (candidate, index)).Take(MaxCandidateDiagnostics))
-                findings.Add(scope + ": " + DescribeCandidateValue(candidate, null, index, source, unit));
+                findings.Add(scope + ": " + DescribeCandidateValue(document, candidate, null, index, source, unit));
             if (candidates.Count > MaxCandidateDiagnostics) findings.Add(scope + ": weitere " + (candidates.Count - MaxCandidateDiagnostics) + " gleichnamige Parameter");
         }
         return Invalid(source, reason + " Keine automatische Typ-/Instanz-Ausweichsuche."
@@ -326,7 +326,7 @@ public static class RevitQuantityReader
             && (actual.Equals(SpecTypeId.PipeSize) || actual.Equals(SpecTypeId.PipeDimension)));
     }
 
-    private static TakeoffValue ReadParameterValue(Parameter parameter, ParameterSource source, string unit)
+    private static TakeoffValue ReadParameterValue(Document document, Parameter parameter, ParameterSource source, string unit)
     {
         var expected = source.Spec switch
         {
@@ -360,22 +360,38 @@ public static class RevitQuantityReader
         if (!double.IsFinite(value)) throw Invalid(source, "Parameterwert ist nicht endlich.");
         if (source.Spec != "NUMBER")
         {
-            var displayUnit = unit switch
-            {
-                "mm" => UnitTypeId.Millimeters, "cm" => UnitTypeId.Centimeters, "m" or "km" => UnitTypeId.Meters,
-                "mm2" => UnitTypeId.SquareMillimeters, "cm2" => UnitTypeId.SquareCentimeters, "m2" or "m²" => UnitTypeId.SquareMeters,
-                "cm3" => UnitTypeId.CubicCentimeters, "m3" or "m³" => UnitTypeId.CubicMeters,
-                "deg" => UnitTypeId.Degrees, "rad" => UnitTypeId.Radians, "kg/m3" => UnitTypeId.KilogramsPerCubicMeter,
-                _ => throw Invalid(source, "Leseneinheit wird nicht unterstützt.")
-            };
-            value = UnitUtils.ConvertFromInternalUnits(value, displayUnit);
-            // Original Revit 2026 has no UnitTypeId.Kilometers; derive it from metres.
+            var actualSpec = parameter.Definition.GetDataType();
+            ForgeTypeId projectUnit;
+            try { projectUnit = document.GetUnits().GetFormatOptions(actualSpec).GetUnitTypeId(); }
+            catch (Exception ex) when (IsCandidateDiagnosticException(ex))
+            { throw Invalid(source, "Projekteinheit für die tatsächliche Revit-Spezifikation " + actualSpec.TypeId + " konnte nicht gelesen werden: " + FormatCandidateException(ex)); }
+            var targetUnit = TargetUnitId(unit);
+            if (!UnitUtils.IsValidUnit(actualSpec, projectUnit))
+                throw Invalid(source, "Die Projekteinstellung liefert keine gültige Einheit für die tatsächliche Revit-Spezifikation " + actualSpec.TypeId + ".");
+            if (!UnitUtils.IsValidUnit(actualSpec, targetUnit))
+                throw Invalid(source, $"Zieleinheit '{unit}' passt nicht zur tatsächlichen Revit-Spezifikation {actualSpec.TypeId}.");
+
+            // Revit stores measurable doubles in internal units. First interpret them in the
+            // active project's configured unit for the actual spec, then convert that value
+            // to the exact unit requested by this condition/quantity. Display rounding is not applied.
+            var projectValue = UnitUtils.ConvertFromInternalUnits(value, projectUnit);
+            value = UnitUtils.Convert(projectValue, projectUnit, targetUnit);
+            // Revit 2026 has no kilometer unit identifier; convert through metres.
             if (unit == "km") value /= 1000d;
         }
         if (!double.IsFinite(value)) throw Invalid(source, "Parameterwert ist nicht endlich.");
         try { return new(Number: checked((decimal)value)); }
         catch (OverflowException ex) { throw new InvalidDataException(source.Name + ": Parameterwert überschreitet den Dezimalbereich.", ex); }
     }
+
+    private static ForgeTypeId TargetUnitId(string unit) => unit switch
+    {
+        "mm" => UnitTypeId.Millimeters, "cm" => UnitTypeId.Centimeters, "m" or "km" => UnitTypeId.Meters,
+        "mm2" => UnitTypeId.SquareMillimeters, "cm2" => UnitTypeId.SquareCentimeters, "m2" or "m²" => UnitTypeId.SquareMeters,
+        "cm3" => UnitTypeId.CubicCentimeters, "m3" or "m³" => UnitTypeId.CubicMeters,
+        "deg" => UnitTypeId.Degrees, "rad" => UnitTypeId.Radians, "kg/m3" => UnitTypeId.KilogramsPerCubicMeter,
+        _ => throw new InvalidDataException("Leseneinheit wird nicht unterstützt: " + unit)
+    };
 
     private static string FormatCandidateValue(TakeoffValue value, string unit)
     {
@@ -433,14 +449,14 @@ public static class RevitQuantityReader
         BoundCandidateDiagnostic(identity + " (" + SafeCandidateValueState(candidate) + "); Auswahlwert nicht lesbar: "
             + FormatCandidateException(exception));
 
-    private static string DescribeCandidateValue(Parameter candidate, string? identity, int index,
+    private static string DescribeCandidateValue(Document document, Parameter candidate, string? identity, int index,
         ParameterSource source, string unit)
     {
         var label = identity ?? SafeCandidateIdentity(candidate, index);
         var state = SafeCandidateValueState(candidate);
         try
         {
-            var value = ReadParameterValue(candidate, source, unit);
+            var value = ReadParameterValue(document, candidate, source, unit);
             return BoundCandidateDiagnostic(label + " (" + state + "); Auswahlwert: " + FormatCandidateValue(value, unit));
         }
         catch (Exception ex) when (IsCandidateDiagnosticException(ex))

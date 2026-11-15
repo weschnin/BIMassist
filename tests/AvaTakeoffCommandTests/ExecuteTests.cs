@@ -88,15 +88,14 @@ internal static class ExecuteTests
         {
             var template = f.Template();
             template.Mappings[0].Positions[0].Quantity = new() { Source = new() { Kind = ParameterKind.ByName,
-                Scope = ParameterScope.Instance, Name = "Volumen", Spec = "VOLUME" }, Unit = "m3" };
-            f.Instance.BuiltIns[BuiltInParameter.HOST_VOLUME_COMPUTED] = new("Volumen", SpecTypeId.Volume, 100d, StorageType.Double)
-                { Id = new((long)BuiltInParameter.HOST_VOLUME_COMPUTED) };
-            f.Instance.Parameters.Add(new("Volumen", SpecTypeId.Volume, 200d, StorageType.Double) { Id = new(10) });
+                Scope = ParameterScope.Instance, Name = "Länge", Spec = "LENGTH" }, Unit = "m" };
+            f.Instance.Parameters.Add(new("Länge", SpecTypeId.Length, 1d, StorageType.Double) { Id = new(10) });
+            f.Instance.Parameters.Add(new("Länge", SpecTypeId.Length, 2d, StorageType.Double) { Id = new(11) });
             var source = template.Mappings[0].Positions[0].Quantity!.Source!;
             var key = AvaParameterChoiceStore.Key(Path.GetFullPath(f.Document.PathName), template.ProfileId, f.Type.UniqueId, source);
             new AvaParameterChoiceStore(f.ChoiceSettings).Remember(key, "Id:stale-choice");
             f.Remember(template);
-            BIMassist.Ava.Views.ParameterChoiceWindow.NextIdentity = "BuiltIn:HOST_VOLUME_COMPUTED";
+            BIMassist.Ava.Views.ParameterChoiceWindow.NextIdentity = "Id:10";
             BIMassist.Ava.Views.ParameterChoiceWindow.RememberNext = true;
             f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
             Equal(1, BIMassist.Ava.Views.ParameterChoiceWindow.Shown);
@@ -311,22 +310,25 @@ internal static class ExecuteTests
             Equal(1, rows.Count(r => r[12] != '*'));
             Contains("1 Modellelemente untersucht; 1 Mengenzeilen.", TaskDialog.Confirmations.Single().MainContent);
         });
-        Test("different LV and result units are explicit and nonblocking only after Yes", f =>
+        Test("compatible Revit quantity and LV units are converted before confirmation and X31", f =>
         {
-            var template = f.Template(); template.Mappings[0].Positions[0].Quantity!.Unit = "St";
+            var template = f.Template(); template.Mappings[0].Positions[0].Quantity = new() { Source = new()
+                { Kind = ParameterKind.ByName, Scope = ParameterScope.Instance, Name = "Länge", Spec = "LENGTH" }, Unit = "cm" };
+            f.Instance.Parameters.Add(new("Länge", SpecTypeId.Length, 2d, StorageType.Double));
             f.Remember(template); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
             var confirmation = TaskDialog.Confirmations.Single();
-            Contains("Keine automatische Umrechnung", confirmation.MainContent); Contains("Menge St / LV-Einheit m", confirmation.ExpandedContent);
+            Contains("zur LV-Einheit umgerechnet", confirmation.MainContent); Contains("Parametrisierte Formeln werden dimensional geprüft", confirmation.MainContent); Contains("Mengeneinheit cm und LV-Einheit m", confirmation.ExpandedContent);
             var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToList();
-            Check(rows.Any(r => r.Contains("912=")), "Unit mismatch silently converted numeric result");
+            Check(rows.Any(r => r.Contains("910,6096=")), "Converted metric quantity missing in X31");
             Check(!rows.Any(r => r.Contains("Info:")), "Screenshot-oriented output includes extra explanation rows");
         });
-        Test("unit mismatch refusal creates no file", f =>
+        Test("incompatible quantity and LV unit blocks before confirmation", f =>
         {
             var template = f.Template(); template.Mappings[0].Positions[0].Quantity!.Unit = "St";
             f.Remember(template); TaskDialog.Answers.Enqueue(TaskDialogResult.No);
-            Equal(Result.Cancelled, f.Execute()); f.NoOutput(); Equal(0, CommonDialog.Shown.Count);
+            Equal(Result.Failed, f.Execute()); f.NoOutput(); Equal(0, TaskDialog.Confirmations.Count);
+            Contains("nicht umrechenbar", f.Message);
         });
         Test("writer validation error creates no partial file or success message", f =>
         {

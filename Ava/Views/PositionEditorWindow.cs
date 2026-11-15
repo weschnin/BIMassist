@@ -20,7 +20,7 @@ internal sealed class PositionEditorWindow : Window
     private readonly W.TextBox lvDetail = new() { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, Height = 180,
         VerticalScrollBarVisibility = W.ScrollBarVisibility.Auto, Margin = new Thickness(0, 12, 0, 0) };
     private readonly W.CheckBox hasQuantity = new() { Content = "Menge ausdrücklich definieren", Margin = new Thickness(0, 8, 0, 12) };
-    private readonly W.CheckBox allowCustomUnit = new() { Content = "Freie Einheit manuell interpretieren", ToolTip = "Nur für NUMBER/INTEGER. Der Rohwert wird unverändert und ohne Umrechnung übernommen.", Margin = new Thickness(0, 0, 0, 8) };
+    private readonly W.CheckBox allowCustomUnit = new() { Content = "Freie Einheit manuell interpretieren", ToolTip = "NUMBER/INTEGER hat keine Revit-Einheit. Nicht verifizierbare freie Einheiten blockieren den Export; für m usw. eine physikalische Revit-Spezifikation verwenden.", Margin = new Thickness(0, 0, 0, 8) };
     private readonly ParameterSourceEditor quantity;
     private readonly W.ComboBox quantityKind;
     private readonly W.TextBox constantValue;
@@ -98,10 +98,10 @@ internal sealed class PositionEditorWindow : Window
         quantity = new ParameterSourceEditor(template.ParameterCatalog.Entries, draft.Quantity?.Source ?? new()); panel.Children.Add(quantity);
         panel.Children.Add(quantityUnitLabel); panel.Children.Add(quantityUnit);
         panel.Children.Add(allowCustomUnit);
-        panel.Children.Add(EditorUi.Text("Standardmäßig muss die Leseeinheit eines Parameters zu seiner Revit-Spezifikation passen. Für NUMBER/INTEGER kann eine freie Einheit ausdrücklich freigegeben werden: Der Zahlenwert wird dann unverändert und ohne Umrechnung mit dieser Einheit interpretiert. Nur verwenden, wenn dies fachlich stimmt. LV-Auswahl und Mengenvorschrift bleiben unabhängig; abweichende Einheiten lösen keine automatische Umrechnung aus."));
+        panel.Children.Add(EditorUi.Text("Die Revit-Spezifikation muss zur Leseeinheit passen. NUMBER/INTEGER hat keine nachprüfbare physikalische Einheit: freie Einheiten wie h, kg oder m blockieren den Export für passende Positionen. Für physikalische Mengen einen entsprechend typisierten Revit-Parameter verwenden. Kompatible Mengen- und LV-Einheiten werden bei der Ermittlung umgerechnet, inkompatible blockieren den Export."));
         expression.Text = draft.Quantity?.Expression ?? ""; expression.MinHeight = 60; expression.AcceptsReturn = true; expression.TextWrapping = TextWrapping.Wrap;
         EditorUi.Field(formulaPanel, "Formel: +, −, *, / und Klammern; z. B. 2 * AVA_Laenge + 0.5", expression);
-        formulaPanel.Children.Add(EditorUi.Text("Jeder Parameter muss zuerst über 'Parameter hinzufügen…' einer Revit-Quelle und Eingabeeinheit zugeordnet werden. Einfache Namen ohne Leerzeichen dürfen direkt stehen (Volumen); Namen mit Leerzeichen müssen in [Klammern] stehen. 'Name in Formel einfügen' setzt den ausgewählten Namen ein. Keine automatische Umrechnung: Eingabe- und Ergebniseinheit müssen fachlich stimmen; eine Volumenmenge wird nicht allein durch Eingabe von 'Volumen' zu kg."));
+        formulaPanel.Children.Add(EditorUi.Text("Jeder Parameter muss zuerst über 'Parameter hinzufügen…' einer Revit-Quelle und Eingabeeinheit zugeordnet werden. Einfache Namen ohne Leerzeichen dürfen direkt stehen (Volumen); Namen mit Leerzeichen müssen in [Klammern] stehen. 'Name in Formel einfügen' setzt den ausgewählten Namen ein. Parametrisierte Formeln prüfen Dimensionen und rechnen physikalische Eingänge vor der Auswertung auf Basiseinheiten um; Zahlen bei Addition gelten in der Ergebniseinheit. NUMBER/INTEGER hat keine physikalische Revit-Einheit. Parameterfreie Zahlenformeln sind ausdrücklich deklarierte Konstanten."));
         var variableButtons = new W.WrapPanel(); formulaPanel.Children.Add(variableButtons);
         void EditVariable(bool edit)
         {
@@ -146,10 +146,10 @@ internal sealed class PositionEditorWindow : Window
             allowCustomUnit.Content = manualUnitEligible ? "Freie Einheit manuell interpretieren"
                 : allowCustomUnit.IsChecked == true ? "Nicht verfügbar: nur für NUMBER/INTEGER" : "Freie Einheit nur für NUMBER/INTEGER";
             allowCustomUnit.ToolTip = manualUnitEligible
-                ? "Der Rohwert wird unverändert und ohne Umrechnung übernommen. Nur verwenden, wenn die Einheit fachlich stimmt."
+                ? "Nur dimensionslose Einheiten können ohne Revit-Physikspezifikation übernommen werden. Andere freie Einheiten blockieren den Export."
                 : "Diese Option setzt eine NUMBER- oder INTEGER-Quelle voraus. Bei bestehender ungültiger Auswahl deaktivieren Sie sie vor dem Speichern.";
             quantityUnitLabel.Text = kind == QuantityKind.Parameter
-                ? allowCustomUnit.IsChecked == true ? "Manuell interpretierte Ausgabeeinheit (keine Umrechnung)" : "Parameter-Leseeinheit"
+                ? allowCustomUnit.IsChecked == true ? "Manuell deklarierte Einheit (physikalische Einheit nicht verifizierbar)" : "Parameter-Leseeinheit"
                 : "Einheit der Menge / Formelergebnis";
             formulaPanel.Visibility = kind == QuantityKind.Formula ? Visibility.Visible : Visibility.Collapsed; formulaPanel.IsEnabled = enabled;
             quantityUnit.IsEnabled = enabled;
@@ -319,7 +319,7 @@ internal sealed class FormulaVariableWindow : Window
         void RefreshUnits()
         {
             var prior = unit.SelectedItem as string ?? draft.Unit;
-            try { var value = source.ReadSource(); unit.ItemsSource = UnitCatalog.ForSpec(value.Spec); if (name.Text.Length == 0) name.Text = value.Name; }
+            try { var value = source.ReadSource(); unit.ItemsSource = UnitCatalog.ForFormulaInputSpec(value.Spec); if (name.Text.Length == 0) name.Text = value.Name; }
             catch (InvalidDataException) { unit.ItemsSource = Array.Empty<string>(); }
             unit.SelectedItem = prior;
         }
@@ -327,7 +327,7 @@ internal sealed class FormulaVariableWindow : Window
         buttons.Children.Add(EditorUi.Button("Übernehmen", () => EditorUi.Guard(this, () => {
             var parameter = source.ReadSource();
             var selected = unit.SelectedItem as string ?? "";
-            if (!UnitCatalog.Allows(parameter.Spec, selected)) throw new InvalidDataException("Numerischen Parameter und passende Eingabeeinheit wählen.");
+            if (!UnitCatalog.AllowsFormulaInput(parameter.Spec, selected)) throw new InvalidDataException("Numerischen Parameter und passende Eingabeeinheit wählen. NUMBER/INTEGER wird in Formeln als einheitenloser Wert gelesen.");
             var candidate = new FormulaVariable { Name = name.Text, Source = parameter, Unit = selected };
             QuantityFormula.Validate("[" + candidate.Name + "]", new[] { candidate.Name });
             Result = candidate; DialogResult = true;

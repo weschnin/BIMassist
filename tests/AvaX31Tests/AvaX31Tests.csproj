@@ -11,6 +11,7 @@
     <Compile Include="../../Ava/Core/BuiltInParameterCatalog.cs" Link="Core/BuiltInParameterCatalog.cs" />
     <Compile Include="../../Ava/Core/TemplateEditor.cs" Link="Core/TemplateEditor.cs" />
     <Compile Include="../../Ava/Core/QuantityFormula.cs" Link="Core/QuantityFormula.cs" />
+    <Compile Include="../../Ava/Core/UnitCatalog.cs" Link="Core/UnitCatalog.cs" />
     <Compile Include="../../Ava/Core/QuantityTakeoff.cs" Link="Core/QuantityTakeoff.cs" />
     <Compile Include="../../Ava/Core/X31Writer*.cs" LinkBase="Core" />
     <None Update="Fixtures/**/*" CopyToOutputDirectory="PreserveNewest" />

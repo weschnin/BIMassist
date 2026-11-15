@@ -54,6 +54,26 @@ var source = new ParameterSource { Kind = ParameterKind.SharedGuid, SharedGuid =
 instance.Parameters.Add(new("Länge", SpecTypeId.Length, 10d, StorageType.Double, id));
 symbol.Parameters.Add(new("Länge", SpecTypeId.Length, 20d, StorageType.Double, id));
 Check(RevitQuantityReader.Read(document, instance, source, "m").Number == 3.048m, "Instance metres conversion wrong");
+Check(document.ProjectUnits.LastRequestedSpec == "LENGTH", "Revit project length units were not inspected during physical parameter read");
+document.ProjectUnits.ProjectUnits.Remove("LENGTH");
+try { RevitQuantityReader.Read(document, instance, source, "m"); throw new Exception("Missing project format options did not fail as a domain error"); }
+catch (InvalidDataException ex)
+{
+    Check(ex.Message.Contains("Länge") && ex.Message.Contains("LENGTH") && ex.Message.Length <= 1200,
+        "Missing project format options did not retain bounded parameter/specification context");
+}
+document.ProjectUnits.ProjectUnits["LENGTH"] = new ForgeTypeId("not-a-length-unit");
+try { RevitQuantityReader.Read(document, instance, source, "m"); throw new Exception("Incompatible project format unit did not fail as a domain error"); }
+catch (InvalidDataException ex)
+{
+    Check(ex.Message.Contains("Länge") && ex.Message.Contains("LENGTH") && ex.Message.Length <= 1200,
+        "Incompatible project format unit did not retain bounded parameter/specification context");
+}
+document.ProjectUnits.ProjectUnits["LENGTH"] = UnitTypeId.Feet;
+document.ProjectUnits.ProjectUnits["LENGTH"] = UnitTypeId.Millimeters;
+Check(RevitQuantityReader.Read(document, instance, source, "m").Number == 3.048m,
+    "Changing the project display unit changed the explicit mapping comparison unit");
+document.ProjectUnits.ProjectUnits["LENGTH"] = UnitTypeId.Feet;
 Check(RevitQuantityReader.Read(document, instance, source, "mm").Number == 3048m, "Instance millimetres conversion wrong");
 Check(RevitQuantityReader.Read(document, instance, source, "km").Number == 0.003048m, "Kilometres must convert via original Revit API metres");
 source.Scope = ParameterScope.Type;

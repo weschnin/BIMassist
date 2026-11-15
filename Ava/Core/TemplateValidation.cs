@@ -6,38 +6,6 @@ public sealed record Diagnostic(DiagnosticSeverity Severity, string Code, string
     public override string ToString() => $"{(Severity == DiagnosticSeverity.Error ? "Fehler" : "Hinweis")} [{Code}] {Path}: {Message}";
 }
 
-/// <summary>Unit declarations only; no Revit internal-unit conversion or model evaluation is performed.</summary>
-public static class UnitCatalog
-{
-    private static readonly Dictionary<string, string[]> Units = new(StringComparer.Ordinal)
-    {
-        ["LENGTH"] = ["mm", "cm", "m", "km"], ["AREA"] = ["mm2", "cm2", "m2", "m²"],
-        ["VOLUME"] = ["cm3", "m3", "m³"], ["ANGLE"] = ["deg", "rad"],
-        ["NUMBER"] = ["1", "St", "psch"], ["INTEGER"] = ["1", "St", "psch"],
-        ["MASS_DENSITY"] = ["kg/m3"]
-    };
-    public static IReadOnlyList<string> AllUnits => Units.Values.SelectMany(units => units).Distinct(StringComparer.Ordinal).ToArray();
-    public static IReadOnlyList<string> ForSpec(string spec) => Units.TryGetValue(spec, out var units) ? units : [];
-    public static bool Allows(string spec, string unit) => ForSpec(spec).Contains(unit, StringComparer.Ordinal);
-    public static bool AllowsQuantityUnit(string spec, string unit, bool allowCustomUnit) => allowCustomUnit
-        ? (spec is "INTEGER" or "NUMBER") && !string.IsNullOrWhiteSpace(unit)
-        : Allows(spec, unit);
-    public static bool Compatible(string sourceUnit, string targetUnit)
-    {
-        // Only explicit, published UI spellings are accepted; source text itself is never rewritten.
-        string Dimension(string unit) => unit switch
-        {
-            "mm" or "cm" or "m" or "km" => "length",
-            "mm2" or "cm2" or "m2" or "m²" => "area",
-            "cm3" or "m3" or "m³" => "volume",
-            "deg" or "rad" => "angle",
-            "St" => "count", "psch" => "lump", "1" => "number", "kg/m3" => "density", _ => ""
-        };
-        var dimension = Dimension(sourceUnit);
-        return dimension.Length > 0 && dimension == Dimension(targetUnit);
-    }
-}
-
 public static class TemplateValidator
 {
     public static IReadOnlyList<Diagnostic> Validate(AvaTemplate template) => Validate(template, null);
@@ -125,6 +93,8 @@ public static class TemplateValidator
                         ? !UnitCatalog.AllowsQuantityUnit(condition.Source.Spec, condition.Unit, true)
                         : !UnitCatalog.Allows(condition.Source.Spec, condition.Unit))
                         Error("CONDITION_UNIT", path, "Explizite passende oder manuell deklarierte Einheit fehlt: " + condition.Source.Spec);
+                    if (condition.AllowCustomUnit && !UnitCatalog.Allows(condition.Source.Spec, condition.Unit))
+                        Warn("CONDITION_UNIT_UNVERIFIABLE", path, "NUMBER/INTEGER hat in Revit keine physikalische Einheit. Diese freie Einheit kann nicht verifiziert werden; eine passende Bedingung blockiert die Mengenermittlung bis zur Klärung der Quelle.");
                     if (condition.Source.Spec == "INTEGER" && decimal.Truncate(condition.Number) != condition.Number) Error("CONDITION_TYPE", path, "INTEGER erwartet eine Ganzzahl.");
                 }
                 else if ((condition.Source.Spec == "TEXT" && condition.Operand == OperandKind.Text) || (condition.Source.Spec == "YESNO" && condition.Operand == OperandKind.Boolean))
@@ -156,6 +126,8 @@ public static class TemplateValidator
                                 Error("QUANTITY_UNIT", path, quantity.AllowCustomUnit
                                     ? "Freie Einheit nur für NUMBER/INTEGER; Wert wird dabei ohne Umrechnung übernommen."
                                     : $"Mengeneinheit '{quantity.Unit}' passt nicht zur Parameterspezifikation {source.Spec}. Zulässig: {string.Join(", ", UnitCatalog.ForSpec(source.Spec))}. Für eine Formel mit Umrechnung bitte die Quelleneinheit und Ergebniseinheit getrennt festlegen.");
+                            if (quantity.AllowCustomUnit && !UnitCatalog.Allows(source.Spec, quantity.Unit))
+                                Warn("QUANTITY_UNIT_UNVERIFIABLE", path, "NUMBER/INTEGER hat in Revit keine physikalische Einheit. Diese freie Einheit kann nicht verifiziert werden; eine passende Position blockiert den Export bis zur Klärung der Quelle.");
                         }
                     }
                     else if (quantity.Kind == QuantityKind.Constant)
@@ -177,14 +149,14 @@ public static class TemplateValidator
                         {
                             var variablePath = path + " / Formelvariable " + variable.Name;
                             Source(variable.Source, variablePath);
-                            if (!UnitCatalog.Allows(variable.Source.Spec, variable.Unit))
-                                Error("FORMULA", variablePath, "Numerische Parameterspezifikation und explizite passende Eingabeeinheit erforderlich.");
+                            if (!UnitCatalog.AllowsFormulaInput(variable.Source.Spec, variable.Unit))
+                                Error("FORMULA", variablePath, "Numerische Parameterspezifikation und explizite passende Eingabeeinheit erforderlich. NUMBER/INTEGER-Formelparameter sind einheitenlos und dürfen nicht als St oder psch deklariert werden.");
                         }
                         if (string.IsNullOrWhiteSpace(quantity.Unit)) Error("QUANTITY_UNIT", path, "Formel benötigt eine nichtleere deklarierte Ergebniseinheit.");
                     }
                     else Error("QUANTITY_MODE", path, "Unbekannte Mengenart.");
                     if (lv != null && !string.Equals(quantity.Unit, lv.Unit, StringComparison.Ordinal))
-                        Warn("LV_UNIT", path, "Mengeneinheit " + quantity.Unit + " und LV-Einheit " + lv.Unit + " sind unabhängig deklariert. Keine automatische Umrechnung oder Änderung von Werten und Einheiten.");
+                        Warn("LV_UNIT", path, "Mengeneinheit " + quantity.Unit + " und LV-Einheit " + lv.Unit + " weichen ab. Kompatible Einheiten werden bei der Mengenermittlung umgerechnet; nicht umrechenbare Einheiten blockieren den Export.");
                 }
                 else Warn("QUANTITY_MISSING", path, "Für diese LV-Position ist noch keine Mengenart (Parameter, feste Zahl oder Formel) festgelegt; Zuordnung ist ein Entwurf.");
             }
@@ -243,12 +215,12 @@ public static class ChecklistBuilder
                 checks.Add(new("Zuordnung", context, "LV-ID, OZ und Einheit gegen Snapshot prüfen: " + position.LvItemId + " | " + lv?.Unit));
                 var requirement = position.Quantity switch
                 {
-                    { Kind: QuantityKind.Constant } quantity => quantity + "; fester Wert, kein Mengenparameter erforderlich. Eigene Mengeneinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + " (unabhängig; keine automatische Umrechnung). Bedingungen benötigen weiterhin ihre Parameterquellen. Modellauswertung, Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
-                    { Kind: QuantityKind.Formula } quantity => "Formel: " + quantity.Expression + "; deklarierte Ergebniseinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + " (unabhängig; keine automatische Umrechnung). Eingänge: " +
+                    { Kind: QuantityKind.Constant } quantity => quantity + "; fester Wert, kein Mengenparameter erforderlich. Eigene Mengeneinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + ". Kompatible Mengen werden zur LV-Einheit umgerechnet, andere blockiert. Bedingungen benötigen weiterhin ihre Parameterquellen.",
+                    { Kind: QuantityKind.Formula } quantity => "Formel: " + quantity.Expression + "; deklarierte Ergebniseinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + ". Eingänge: " +
                         string.Join("; ", quantity.Variables.Select(v => v.Name + " = Lesen: " + v.Source + "; Eingabeeinheit " + v.Unit)) +
-                        ". Werte beziehen sich auf die expliziten Eingabeeinheiten; keine automatische Einheitenumrechnung oder Dimensionsableitung. Fehlende / ungültige Eingänge sind Fehler, kein Fallback. Modellauswertung, Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
-                    { AllowCustomUnit: true } quantity => "Lesen: " + quantity.Source + "; Rohwert ohne Umrechnung als manuell deklarierte Einheit " + quantity.Unit + " interpretieren; LV-Katalogeinheit " + lv?.Unit + " (unabhängig). Fachliche Bedeutung der Einheit prüfen. Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen. Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
-                    { } quantity => "Lesen: " + quantity.Source + "; deklarierte Leseeinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + " (unabhängig; keine automatische Umrechnung). Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen. Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
+                        ". Revit-Eingänge werden in ihren deklarierten Einheiten gelesen; parametrisierte Formeln rechnen physikalische Eingänge auf Basiseinheiten um und prüfen die Ergebnisdimension. Zahlenkonstanten in einer Addition gelten in der Ergebniseinheit; parameterfreie Formeln deklarieren ihre Einheit ausdrücklich. Kompatible Ergebnisse werden in die LV-Einheit umgerechnet, sonst blockiert. Fehlende / ungültige Eingänge sind Fehler, kein Fallback.",
+                    { AllowCustomUnit: true } quantity => "Lesen: " + quantity.Source + "; manuell deklarierte Einheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + ". Physikalische NUMBER/INTEGER-Einheiten sind in Revit nicht verifizierbar und blockieren passende Mengenzeilen. Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen.",
+                    { } quantity => "Lesen: " + quantity.Source + "; deklarierte Leseeinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + ". Revit-Spezifikation wird geprüft, interne Revit-Einheit in die Leseeinheit und kompatible Mengeneinheit in die LV-Einheit umgerechnet; sonst blockiert der Export. Null/Negativwerte fachlich prüfen.",
                     null => "Menge nicht definiert; Zuordnung ist ein Entwurf."
                 };
                 checks.Add(new("Menge", context + " — nur bei erfüllten " + conditionSemantics + "-Bedingungen", requirement));
