@@ -5,6 +5,8 @@ using System.IO;
 
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
 static void Reject(Action action, string message) { try { action(); } catch (InvalidDataException) { return; } throw new Exception(message); }
+var manualUnits = RevitUnitCatalog.GetManualUnitChoices();
+Check(manualUnits.Contains("m") && manualUnits.Contains("Feet"), "manual units must include common symbols and Revit's complete runtime unit catalog");
 var document = new Document(); var instance = new FamilyInstance { Id = new(100), TypeId = new(200) }; var symbol = new FamilySymbol { Id = new(200) };
 document.Elements.AddRange([instance, symbol]);
 var id = Guid.NewGuid();
@@ -315,6 +317,20 @@ instance.Parameters.Add(new("Flag", SpecTypeId.Boolean.YesNo, 1, StorageType.Int
 Check(RevitQuantityReader.Read(document, instance, boolean, "").Boolean == true, "YESNO read wrong");
 var template = new AvaTemplate(); document.Elements.Add(new Element { Id = new(400), Category = new() { CategoryType = CategoryType.Annotation } }); document.Elements.Add(system);
 Check(RevitQuantityReader.Elements(document, template).Select(e => e.Id).SequenceEqual(new[] { "100", "300" }), "Host model scope includes annotations or types");
+var isolateDocument = new Document();
+var isolateView = new View { Id = new(800), TemporaryHideIsolateActive = true };
+var isolatedVisible = new FamilyInstance { Id = new(801), Category = new() { CategoryType = CategoryType.Model } };
+var isolatedHidden = new FamilyInstance { Id = new(802), Category = new() { CategoryType = CategoryType.Model } };
+var permanentlyHidden = new FamilyInstance { Id = new(803), Category = new() { CategoryType = CategoryType.Model } };
+var hiddenCategoryElement = new FamilyInstance { Id = new(804), Category = new() { Id = new(900), CategoryType = CategoryType.Model } };
+isolatedVisible.VisibleInViews.Add(800); isolatedHidden.VisibleInViews.Add(800);
+permanentlyHidden.VisibleInViews.Add(800); permanentlyHidden.HiddenInViews.Add(800);
+hiddenCategoryElement.VisibleInViews.Add(800);
+isolateView.TemporaryVisibleElementIds.UnionWith([801, 803, 804]);
+isolateView.HiddenCategoryIds.Add(900);
+isolateDocument.Elements.AddRange([isolateView, isolatedVisible, isolatedHidden, permanentlyHidden, hiddenCategoryElement]);
+Check(RevitQuantityReader.Elements(isolateDocument, template, viewId: isolateView.Id).Select(e => e.Id).SequenceEqual(new[] { "801" }),
+    "visible-only collection included elements hidden temporarily, permanently, or by category visibility");
 // Exact-name resolution does not depend on definition IDs, including legacy name sources.
 var zero = new ParameterSource { Kind = ParameterKind.ByName, Name = "Zero", Spec = "LENGTH", Scope = ParameterScope.Instance };
 instance.Parameters.Add(new("Zero", SpecTypeId.Length, 1d, StorageType.Double) { Id = new(0) });

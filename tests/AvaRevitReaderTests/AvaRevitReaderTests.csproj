@@ -3,5 +3,6 @@
   <ItemGroup>
     <Compile Include="../../Ava/Core/*.cs" Link="Core/%(Filename)%(Extension)" />
     <Compile Include="../../Ava/Revit/RevitQuantityReader.cs" Link="RevitQuantityReader.cs" />
+    <Compile Include="../../Ava/Revit/RevitUnitCatalog.cs" Link="RevitUnitCatalog.cs" />
   </ItemGroup>
 </Project>

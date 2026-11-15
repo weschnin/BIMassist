@@ -36,9 +36,12 @@ public sealed class RuleCondition
     [JsonRequired] public string Text { get; set; } = "";
     [JsonRequired] public string Unit { get; set; } = "";
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool AllowCustomUnit { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public ConditionJoin JoinWithPrevious { get; set; }
     public override string ToString() => (JoinWithPrevious == ConditionJoin.Or ? "ODER: " : "UND: ") +
-        $"{Source.Name} {Operator} " + (Operand == OperandKind.Numeric ? Number.ToString(System.Globalization.CultureInfo.InvariantCulture) + " " + Unit : Operand == OperandKind.Boolean ? Boolean.ToString() : Text);
+        $"{Source.Name} {Operator} " + (Operand == OperandKind.Numeric ? Number.ToString(System.Globalization.CultureInfo.InvariantCulture) + " " + Unit
+            + (AllowCustomUnit ? " (manuell, Rohwert ohne Umrechnung)" : "") : Operand == OperandKind.Boolean ? Boolean.ToString() : Text);
 }
 internal static class ConditionNumberComparison
 {

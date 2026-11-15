@@ -4,7 +4,7 @@ public record ForgeTypeId(string Value) { public string TypeId => Value; }
 public enum StorageType { None, Integer, Double, String, ElementId }
 public enum BuiltInParameter { INVALID = -1, ASSEMBLY_CODE = -2, ALL_MODEL_TYPE_COMMENTS = -3, ALL_MODEL_DESCRIPTION = -4, HOST_VOLUME_COMPUTED = -5, RBS_PIPE_DIAMETER_PARAM = -6 }
 public enum CategoryType { Model, Annotation }
-public sealed class Category { public CategoryType CategoryType { get; set; } = CategoryType.Model; public string Name { get; set; } = "Model"; }
+public sealed class Category { public ElementId Id { get; set; } = new(-1); public CategoryType CategoryType { get; set; } = CategoryType.Model; public string Name { get; set; } = "Model"; }
 public static class SpecTypeId
 {
     public static ForgeTypeId Length = new("LENGTH"), PipeSize = new("PIPE_SIZE"), PipeDimension = new("PIPE_DIMENSION"), Area = new("AREA"), Volume = new("VOLUME"), Angle = new("ANGLE"), Number = new("NUMBER"), MassDensity = new("MASS_DENSITY");
@@ -18,6 +18,7 @@ public static class UnitTypeId
 }
 public static class UnitUtils
 {
+    public static ISet<ForgeTypeId> GetAllUnits() => new HashSet<ForgeTypeId> { new("feet") };
     public static double ConvertFromInternalUnits(double value, ForgeTypeId unit) => !double.IsFinite(value) ? throw new ArgumentException("Nonfinite test input") : value * (unit.Value switch
     {
         "mm" => 304.8, "cm" => 30.48, "m" => 0.3048, "km" => 0.0003048,
@@ -26,6 +27,7 @@ public static class UnitUtils
         "deg" => 180 / Math.PI, "rad" => 1, "kg/m3" => 1, _ => throw new ArgumentException("Unsupported test unit")
     });
 }
+public static class LabelUtils { public static string GetLabelForUnit(ForgeTypeId unit) => unit.Value == "feet" ? "Feet" : unit.Value; }
 public sealed class Definition(string name, ForgeTypeId type)
 {
     public string Name { get; } = name;
@@ -72,12 +74,14 @@ public class Element
     public Category? Category { get; set; } = new();
     public ElementId TypeId { get; set; } = new(2);
     public HashSet<long> VisibleInViews { get; } = [];
+    public HashSet<long> HiddenInViews { get; } = [];
     public List<Parameter> Parameters { get; } = [];
     public Dictionary<BuiltInParameter, Parameter> BuiltIns { get; } = [];
     public Parameter? get_Parameter(Guid guid) => Parameters.SingleOrDefault(p => p.IsShared && p.GUID == guid);
     public Parameter? get_Parameter(BuiltInParameter id) => BuiltIns.GetValueOrDefault(id);
     public IList<Parameter> GetParameters(string name) => Parameters.Concat(BuiltIns.Values).Where(p => p.Definition.Name == name).ToList();
     public ElementId GetTypeId() => TypeId;
+    public bool IsHidden(View view) => HiddenInViews.Contains(view.Id.Value);
 }
 public sealed class FamilyInstance : Element { }
 public sealed class RevitLinkInstance : Element { }
@@ -93,7 +97,19 @@ public sealed class Document
     public List<Element> Elements { get; } = [];
     public Element? GetElement(ElementId id) => Elements.SingleOrDefault(e => e.Id == id);
 }
-public sealed class View : Element { public bool IsTemplate { get; set; } }
+public sealed class View : Element
+{
+    public bool IsTemplate { get; set; }
+    public bool TemporaryHideIsolateActive { get; set; }
+    public HashSet<long> TemporaryVisibleElementIds { get; } = [];
+    public HashSet<long> HiddenCategoryIds { get; } = [];
+    public bool IsInTemporaryViewMode(TemporaryViewMode mode) =>
+        mode == TemporaryViewMode.TemporaryHideIsolate && TemporaryHideIsolateActive;
+    public bool GetCategoryHidden(ElementId categoryId) => HiddenCategoryIds.Contains(categoryId.Value);
+    public bool IsElementVisibleInTemporaryViewMode(TemporaryViewMode mode, ElementId id) =>
+        mode == TemporaryViewMode.TemporaryHideIsolate && TemporaryVisibleElementIds.Contains(id.Value);
+}
+public enum TemporaryViewMode { TemporaryHideIsolate }
 public sealed class FilteredElementCollector : IEnumerable<Element>, IDisposable
 {
     private readonly Document document;

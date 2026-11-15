@@ -99,6 +99,7 @@ public static class RevitQuantityReader
 
     private static IEnumerable<Element> ModelInstances(Document document, ElementId? viewId = null)
     {
+        View? activeView = null;
         if (viewId != null)
         {
             if (document.GetElement(viewId) is not View view)
@@ -107,13 +108,23 @@ public static class RevitQuantityReader
                 throw new InvalidDataException("Die aktive Revit-Ansicht ist eine Ansichtsvorlage; sichtbare Elemente können nicht ermittelt werden.");
             if (!FilteredElementCollector.IsViewValidForElementIteration(document, viewId))
                 throw new InvalidDataException("Die aktive Revit-Ansicht unterstützt keine elementbasierte Mengenermittlung. Wählen Sie eine unterstützte Modellansicht oder deaktivieren Sie ‚nur sichtbare Elemente‘.");
+            activeView = view;
         }
         using var collector = viewId == null
             ? new FilteredElementCollector(document)
             : new FilteredElementCollector(document, viewId);
-        return collector.WhereElementIsNotElementType()
+        var elements = collector.WhereElementIsNotElementType()
             .Where(element => element is not (RevitLinkInstance or ImportInstance { IsLinked: true })
                 && element.Category?.CategoryType == CategoryType.Model).ToArray();
+        if (activeView != null)
+        {
+            elements = elements.Where(element => !element.IsHidden(activeView)
+                && element.Category != null && !activeView.GetCategoryHidden(element.Category.Id)).ToArray();
+            if (activeView.IsInTemporaryViewMode(TemporaryViewMode.TemporaryHideIsolate))
+                elements = elements.Where(element => activeView.IsElementVisibleInTemporaryViewMode(
+                    TemporaryViewMode.TemporaryHideIsolate, element.Id)).ToArray();
+        }
+        return elements;
     }
 
     private static void AddTextParameters(Element owner, ParameterScope scope, HashSet<GroupingParameterOption> options)

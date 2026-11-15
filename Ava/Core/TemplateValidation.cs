@@ -16,6 +16,7 @@ public static class UnitCatalog
         ["NUMBER"] = ["1", "St", "psch"], ["INTEGER"] = ["1", "St", "psch"],
         ["MASS_DENSITY"] = ["kg/m3"]
     };
+    public static IReadOnlyList<string> AllUnits => Units.Values.SelectMany(units => units).Distinct(StringComparer.Ordinal).ToArray();
     public static IReadOnlyList<string> ForSpec(string spec) => Units.TryGetValue(spec, out var units) ? units : [];
     public static bool Allows(string spec, string unit) => ForSpec(spec).Contains(unit, StringComparer.Ordinal);
     public static bool AllowsQuantityUnit(string spec, string unit, bool allowCustomUnit) => allowCustomUnit
@@ -120,13 +121,16 @@ public static class TemplateValidator
                 bool numeric = UnitCatalog.ForSpec(condition.Source.Spec).Count > 0;
                 if (numeric && condition.Operand == OperandKind.Numeric)
                 {
-                    if (!UnitCatalog.Allows(condition.Source.Spec, condition.Unit)) Error("CONDITION_UNIT", path, "Explizite passende Einheit fehlt: " + condition.Source.Spec);
+                    if (condition.AllowCustomUnit
+                        ? !UnitCatalog.AllowsQuantityUnit(condition.Source.Spec, condition.Unit, true)
+                        : !UnitCatalog.Allows(condition.Source.Spec, condition.Unit))
+                        Error("CONDITION_UNIT", path, "Explizite passende oder manuell deklarierte Einheit fehlt: " + condition.Source.Spec);
                     if (condition.Source.Spec == "INTEGER" && decimal.Truncate(condition.Number) != condition.Number) Error("CONDITION_TYPE", path, "INTEGER erwartet eine Ganzzahl.");
                 }
                 else if ((condition.Source.Spec == "TEXT" && condition.Operand == OperandKind.Text) || (condition.Source.Spec == "YESNO" && condition.Operand == OperandKind.Boolean))
                 {
                     if (condition.Operator is not (ConditionOperator.Equal or ConditionOperator.NotEqual)) Error("CONDITION_OPERATOR", path, "Text/Ja-Nein unterstützt nur gleich / ungleich.");
-                    if (condition.Unit.Length > 0) Error("CONDITION_UNIT", path, "Text/Ja-Nein darf keine Einheit haben.");
+                    if (condition.Unit.Length > 0 || condition.AllowCustomUnit) Error("CONDITION_UNIT", path, "Text/Ja-Nein darf keine Einheit haben.");
                 }
                 else Error("CONDITION_TYPE", path, "Bedingungstyp / Spezifikation nicht unterstützt oder widersprüchlich: " + condition.Source.Spec);
             }

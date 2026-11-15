@@ -41,7 +41,7 @@ internal static class ExecuteTests
             BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Choices.Enqueue((true, true));
             f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
-            Contains("sichtbar sind", TaskDialog.Confirmations.Single().MainContent);
+            Contains("Revit-Ansichtssichtbarkeit", TaskDialog.Confirmations.Single().MainContent);
             Contains("1 Modellelemente untersucht; 1 Mengenzeilen.", TaskDialog.Confirmations.Single().MainContent);
             var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
             Equal(1, rows.Count(r => r[12] != '*'));
@@ -252,6 +252,17 @@ internal static class ExecuteTests
         {
             f.Remember(f.Template()); f.Document.Elements.Clear();
             Equal(Result.Cancelled, f.Execute()); f.NoOutput(); Contains("Untersuchte Modellelemente: 0", TaskDialog.Notices.Single());
+            Contains("Umfang: alle Modellelement-Instanzen im aktuellen Hauptmodell", TaskDialog.Notices.Single());
+            Equal(0, CommonDialog.Shown.Count);
+        });
+        Test("empty visible-only result discloses the active view scope", f =>
+        {
+            f.Document.Elements.Remove(f.Instance);
+            f.Document.Elements.Remove(f.Type);
+            BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Choices.Enqueue((true, true));
+            f.Remember(f.Template());
+            Equal(Result.Cancelled, f.Execute());
+            Contains("Umfang: Revit-Ansichtssichtbarkeit in „Grundriss EG“", TaskDialog.Notices.Single());
             Equal(0, CommonDialog.Shown.Count);
         });
         Test("missing and unmatched marks are counted independently; types and annotations excluded", f =>

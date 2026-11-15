@@ -46,6 +46,9 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             var activeView = uiDocument.ActiveView;
             if (AvaTakeoffOptionsWindow.Show(commandData.Application, activeView, out var visibleOnly) != true)
                 return Result.Cancelled;
+            var scopeDescription = visibleOnly
+                ? "Revit-Ansichtssichtbarkeit in „" + activeView.Name + "“ (dauerhafte und temporäre Ausblendungen berücksichtigt; unabhängig von Zoom/Pan; geometrische Überdeckung wird nicht geprüft)"
+                : "alle Modellelement-Instanzen im aktuellen Hauptmodell";
             var documentIdentity = string.IsNullOrWhiteSpace(document.PathName)
                 ? "unsaved:" + document.Title : Path.GetFullPath(document.PathName);
             var result = QuantityTakeoff.Calculate(template, RevitQuantityReader.Elements(document, template,
@@ -74,6 +77,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                     + "\nOhne vollständige BGK-/Typkennzeichnung: " + result.Unmarked
                     + "\nOhne passende BGK-/Typzuordnung: " + result.Unmapped
                     + "\nErmittelte Mengenzeilen (nicht exportiert): " + result.Rows.Count
+                    + "\nUmfang: " + scopeDescription
                     + "\nVerknüpfte Modelle werden nicht ausgewertet."
                     + "\n\nFehlerdetails (erste " + Math.Min(errorLimit, result.Errors.Count) + " von " + result.Errors.Count + ", maximal " + errorLimit + "):\n"
                     + string.Join("\n\n", result.Errors.Take(errorLimit).Select(e => e.Message))
@@ -85,6 +89,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             {
                 TaskDialog.Show("AVA – Mengenermittlung", "Keine passenden Mengenzeilen gefunden.\nUntersuchte Modellelemente: " + result.Examined
                     + "\nOhne vollständige BGK-/Typkennzeichnung: " + result.Unmarked + "\nOhne passende BGK-/Typzuordnung: " + result.Unmapped
+                    + "\nUmfang: " + scopeDescription
                     + "\nKeine Datei erstellt. Verknüpfte Modelle werden nicht ausgewertet.");
                 return Result.Cancelled;
             }
@@ -110,7 +115,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                     + "\nGruppierung: " + (grouping.Mode == QuantityGroupingMode.Position ? "nach Leistungspositionen" : grouping.Mode == QuantityGroupingMode.FamilyAndType ? "nach Familienname und Typ" : grouping.GroupKind + " nach Parameter „" + grouping.Parameter!.DisplayLabel + "“")
                     + "\n\n" + result.Examined + " Modellelemente untersucht; " + result.Rows.Count + " Mengenzeilen."
                     + "\nOhne vollständige Kennzeichnung: " + result.Unmarked + "; ohne BGK-/Typzuordnung: " + result.Unmapped + "."
-                    + "\n\nUmfang: " + (visibleOnly ? "Modellelement-Instanzen, die in der aktiven Ansicht „" + activeView.Name + "“ sichtbar sind" : "alle Modellelement-Instanzen im aktuellen Hauptmodell")
+                    + "\n\nUmfang: " + scopeDescription
                     + "; keine verknüpften Modelle. Der textuelle Prüfumfang ist kein Kategorienfilter; dies ist keine vollständige Modellprüfung."
                     + "\nAlle zutreffenden Regeln werden additiv ausgewertet. Verwendet wird die gespeicherte Vorlage. Keine Revit-Schreibzugriffe."
                     + (units.Count > 0 ? "\n\nACHTUNG: " + units.Count + " unterschiedliche Mengen-/LV-Einheiten. Keine automatische Umrechnung. Mit Ja werden die Zahlen unverändert unter der jeweiligen LV-Position ausgegeben; eigene Einheit steht im Erläuterungstext." : ""),

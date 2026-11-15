@@ -12,6 +12,7 @@ internal sealed class MappingEditorWindow : Window
 {
     private readonly AvaTemplate template;
     private readonly MappingRule draft;
+    private readonly IReadOnlyList<string> manualUnitChoices;
     private readonly W.TreeView bgk = new();
     private readonly W.Button bgkExpandAll;
     private readonly W.Button bgkCollapseAll;
@@ -24,9 +25,10 @@ internal sealed class MappingEditorWindow : Window
     private string selectedTypeNumber;
     public MappingRule? Result { get; private set; }
 
-    public MappingEditorWindow(AvaTemplate template, MappingRule? existing)
+    public MappingEditorWindow(AvaTemplate template, MappingRule? existing, IReadOnlyList<string>? manualUnitChoices = null)
     {
         this.template = template;
+        this.manualUnitChoices = manualUnitChoices ?? UnitCatalog.AllUnits;
         draft = existing == null ? new() : TemplateJson.Copy(existing);
         selectedBgkKey = draft.BgkKey; selectedTypeNumber = draft.TypeNumber;
         foreach (var entry in template.BgkCatalog.Entries) expandedBgkKeys.Add("bgk:" + entry.Key);
@@ -83,7 +85,7 @@ internal sealed class MappingEditorWindow : Window
             int selectedIndex = edit ? draft.Conditions.IndexOf(selected!) : draft.Conditions.Count;
             var dialog = new ConditionEditorWindow(template, edit ? selected : null,
                 selectedIndex == 0 ? ConditionJoin.And : edit ? selected!.JoinWithPrevious : ConditionJoin.And,
-                selectedIndex == 0) { Owner = this };
+                selectedIndex == 0, manualUnitChoices) { Owner = this };
             if (dialog.ShowDialog() == true && dialog.Result is { } result)
             {
                 if (edit) draft.Conditions[selectedIndex] = result; else draft.Conditions.Add(result);
@@ -210,9 +212,20 @@ internal sealed class MappingEditorWindow : Window
 
 internal sealed class ConditionEditorWindow : Window
 {
-    public RuleCondition? Result { get; private set; }
-    public ConditionEditorWindow(AvaTemplate template, RuleCondition? existing, ConditionJoin join, bool isFirst)
+    private readonly IReadOnlyList<string> manualUnitChoices;
+    private readonly W.ComboBox unit = new() { MinHeight = 30 };
+    private readonly W.CheckBox manualUnit = new()
     {
+        Content = "Einheit manuell deklarieren (Zahlenwert ohne Umrechnung)",
+        Margin = new Thickness(0, 4, 0, 8),
+        ToolTip = "Nur für NUMBER/INTEGER. Der Revit-Rohwert wird unverändert mit dieser Einheit verglichen."
+    };
+
+    public RuleCondition? Result { get; private set; }
+    public ConditionEditorWindow(AvaTemplate template, RuleCondition? existing, ConditionJoin join, bool isFirst,
+        IReadOnlyList<string>? manualUnitChoices = null)
+    {
+        this.manualUnitChoices = manualUnitChoices ?? UnitCatalog.AllUnits;
         var draft = existing == null ? new RuleCondition() : TemplateJson.Copy(existing);
         Title = "Bedingung bearbeiten – UND / ODER"; Width = 780; Height = 790; MinWidth = 620; MinHeight = 570; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         var root = new W.DockPanel { Margin = new Thickness(16) };
@@ -226,17 +239,30 @@ internal sealed class ConditionEditorWindow : Window
         EditorUi.Field(panel, "Operator (Text / Ja-Nein: nur gleich oder ungleich)", op);
         var value = EditorUi.Input(draft.Operand == OperandKind.Numeric ? draft.Number.ToString(CultureInfo.InvariantCulture) : draft.Operand == OperandKind.Boolean ? (draft.Boolean ? "true" : "false") : draft.Text);
         EditorUi.Field(panel, "Vergleichswert: Zahl mit Punkt oder Komma; Ja-Nein: true / false; Text exakt", value);
-        var unit = new W.ComboBox { MinHeight = 30 }; EditorUi.Field(panel, "Explizite Einheit (für Text / Ja-Nein leer)", unit);
+        EditorUi.Field(panel, "Explizite Einheit (für Text / Ja-Nein leer)", unit);
+        panel.Children.Add(manualUnit);
         void RefreshUnits()
         {
-            var selected = unit.SelectedItem as string ?? draft.Unit;
-            try { unit.ItemsSource = UnitCatalog.ForSpec(source.ReadSource().Spec); } catch (InvalidDataException) { unit.ItemsSource = Array.Empty<string>(); }
-            unit.SelectedItem = selected;
+            var selected = unit.SelectedItem as string ?? unit.Text;
+            string spec;
+            try { spec = source.ReadSource().Spec; } catch (InvalidDataException) { spec = ""; }
+            bool supportsCustomUnit = spec is "NUMBER" or "INTEGER";
+            if (!supportsCustomUnit) manualUnit.IsChecked = false;
+            manualUnit.IsEnabled = supportsCustomUnit;
+            bool custom = supportsCustomUnit && manualUnit.IsChecked == true;
+            unit.IsEditable = custom;
+            unit.ItemsSource = custom ? manualUnitChoices : UnitCatalog.ForSpec(spec);
+            if (custom) unit.Text = selected.Length == 0 ? draft.Unit : selected;
+            else unit.SelectedItem = selected;
         }
+        manualUnit.IsChecked = draft.AllowCustomUnit;
+        manualUnit.Checked += (_, _) => RefreshUnits();
+        manualUnit.Unchecked += (_, _) => RefreshUnits();
         source.SourceChanged += RefreshUnits; RefreshUnits();
         buttons.Children.Add(EditorUi.Button("Übernehmen", () => EditorUi.Guard(this, () => {
             var s = source.ReadSource();
-            var c = new RuleCondition { Source = s, Operator = EditorUi.Selected<ConditionOperator>(op), Unit = unit.SelectedItem as string ?? "",
+            var c = new RuleCondition { Source = s, Operator = EditorUi.Selected<ConditionOperator>(op), Unit = unit.SelectedItem as string ?? unit.Text,
+                AllowCustomUnit = manualUnit.IsChecked == true,
                 JoinWithPrevious = isFirst ? ConditionJoin.And : EditorUi.Selected<ConditionJoin>(joinWithPrevious) };
             if (s.Spec == "TEXT") { c.Operand = OperandKind.Text; c.Text = value.Text; }
             else if (s.Spec == "YESNO") { c.Operand = OperandKind.Boolean; if (!bool.TryParse(value.Text, out var boolean)) throw new InvalidDataException("Ja-Nein benötigt true oder false."); c.Boolean = boolean; }

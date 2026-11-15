@@ -160,6 +160,26 @@ internal static class Program
             Equal(1, QuantityTakeoff.Calculate(template, [Element("e1", template, (_, _) =>
                 new(Number: 124.99999999999999m))]).Rows.Count);
         });
+        Test("Manually declared NUMBER/INTEGER condition units read raw values without conversion", () =>
+        {
+            foreach (var (spec, unit) in new[] { ("NUMBER", "m"), ("INTEGER", "d") })
+            {
+                var template = Template();
+                template.Mappings[0].Conditions = [new RuleCondition
+                {
+                    Source = Local("LängeAlsZahl", spec), Operand = OperandKind.Numeric,
+                    Operator = ConditionOperator.Equal, Number = 2, Unit = unit, AllowCustomUnit = true
+                }];
+                string? readUnit = null;
+                var result = QuantityTakeoff.Calculate(template, [Element("e1", template, (_, requestedUnit) =>
+                {
+                    readUnit = requestedUnit;
+                    return new(Number: 2);
+                })]);
+                Equal("1", readUnit);
+                Equal(1, result.Rows.Count);
+            }
+        });
         Test("OR joins group AND predicates with standard AND precedence", () =>
         {
             var template = Template();

@@ -49,6 +49,21 @@ internal static class Program
             Check(Field<ComboBox>(sources, "kind").SelectedItem is ComboBoxItem { Tag: ParameterKind.ByName }
                 && sources.ReadSource() is { Kind: ParameterKind.ByName, Name: "Durchmesser", Spec: "LENGTH", Scope: ParameterScope.Instance },
                 "opening a legacy named source did not simplify it to universal name lookup");
+            var customUnitCondition = new ConditionEditorWindow(t, new RuleCondition
+            {
+                Source = new() { Kind = ParameterKind.ByName, Name = "sdvsd", Spec = "NUMBER", Scope = ParameterScope.Instance },
+                Operand = OperandKind.Numeric, Operator = ConditionOperator.Equal, Number = 2, Unit = "m", AllowCustomUnit = true
+            }, ConditionJoin.And, false, ["m", "Feet"]);
+            var conditionUnit = Field<ComboBox>(customUnitCondition, "unit");
+            var manualConditionUnit = Field<CheckBox>(customUnitCondition, "manualUnit");
+            Check(manualConditionUnit.IsChecked == true && conditionUnit.IsEditable && conditionUnit.Text == "m"
+                && ((IEnumerable<string>)conditionUnit.ItemsSource!).Contains("m")
+                && ((IEnumerable<string>)conditionUnit.ItemsSource!).Contains("Feet"),
+                "manual condition units did not expose known symbols and the Revit unit catalog");
+            manualConditionUnit.IsChecked = false;
+            Check(!conditionUnit.IsEditable && !((IEnumerable<string>)conditionUnit.ItemsSource!).Contains("m"),
+                "unchecking manual units did not restore dimension-safe NUMBER units");
+            customUnitCondition.Close();
             var preselectedTypeDialog = new BgkEntryEditorWindow(new("44-40", "Flansche", "", [new("110", "Losflansch")]), "110");
             Check(Field<DataGrid>(preselectedTypeDialog, "types").SelectedItem is BgkType { Number: "110" }
                 && Field<TextBox>(preselectedTypeDialog, "typeDescription").Text == "Losflansch",

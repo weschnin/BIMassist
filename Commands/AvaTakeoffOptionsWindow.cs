@@ -31,7 +31,7 @@ internal sealed class AvaTakeoffOptionsWindow : Window
             Content = "Nur sichtbare Elemente in der aktiven Ansicht berücksichtigen",
             IsChecked = false,
             Margin = new Thickness(0, 0, 0, 8),
-            ToolTip = "Standardmäßig werden alle Modellelement-Instanzen im Hauptmodell berücksichtigt."
+            ToolTip = "Revit-Ansichtssichtbarkeit; dauerhaft und temporär ausgeblendete Elemente werden ausgeschlossen. Zoom/Pan wird ignoriert. Geometrische Überdeckung wird nicht geprüft. Standardmäßig werden alle Modellelement-Instanzen im Hauptmodell berücksichtigt."
         };
         root.Children.Add(visibleOnly);
         root.Children.Add(new TextBlock

@@ -84,7 +84,7 @@ public static class QuantityTakeoff
                 foreach (var condition in rule.Conditions)
                 {
                     // Read every input, even after a match or read failure: missing OR/AND inputs are errors, not false.
-                    try { matches.Add(Matches(condition, Read(condition.Source, condition.Unit))); }
+                    try { matches.Add(Matches(condition, Read(condition.Source, condition.AllowCustomUnit ? "1" : condition.Unit))); }
                     catch (Exception ex) when (ex is InvalidDataException or OverflowException)
                     {
                         errors.Add(new(element.Id, $"Element {element.Id}; {RuleContext(template, rule)}; Condition {condition}:\n{ex.Message}"));

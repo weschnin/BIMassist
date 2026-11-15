@@ -1,6 +1,7 @@
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using BIMassist.Ava.Revit;
 using BIMassist.Ava.Views;
 using BIMassist.Views;
 using System;
@@ -15,7 +16,7 @@ namespace BIMassist.Commands
             try
             {
                 // File-based template work only: no Document is held and no model values are written.
-                WpfOwner.ShowDialog(new AvaTemplateWindow(), commandData.Application);
+                WpfOwner.ShowDialog(new AvaTemplateWindow(RevitUnitCatalog.GetManualUnitChoices()), commandData.Application);
                 return Result.Succeeded;
             }
             catch (Exception ex)

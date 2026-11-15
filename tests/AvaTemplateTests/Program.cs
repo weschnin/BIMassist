@@ -24,6 +24,21 @@ internal static class Program
                 Check(q.Mappings[0].Positions[0].Quantity!.Source!.Kind == ParameterKind.LocalFamily && q.Mappings[0].Positions[0].Quantity!.Source!.Spec == "NUMBER", "local source lost");
                 Check(q.BgkIdentification.BuiltInId == "ASSEMBLY_CODE" && q.TypeIdentification.BuiltInId == "ALL_MODEL_TYPE_COMMENTS", "transfer defaults wrong");
             });
+            Test("JSON preserves opt-in manual condition units and defaults legacy conditions safely", () => {
+                var p = ValidTemplate();
+                p.Mappings[0].Conditions.Add(new RuleCondition
+                {
+                    Source = new() { Kind = ParameterKind.ByName, Name = "LängeAlsZahl", Spec = "NUMBER", Scope = ParameterScope.Instance },
+                    Operand = OperandKind.Numeric, Operator = ConditionOperator.Equal, Number = 2, Unit = "m", AllowCustomUnit = true
+                });
+                var json = TemplateJson.Serialize(p);
+                var copy = TemplateJson.Deserialize(json);
+                Check(copy.Mappings[0].Conditions.Last() is { AllowCustomUnit: true, Unit: "m" }, "manual condition unit was not preserved");
+                var node = JsonNode.Parse(json)!.AsObject();
+                node["Mappings"]![0]!["Conditions"]![0]!.AsObject().Remove("AllowCustomUnit");
+                Check(!TemplateJson.Deserialize(node.ToJsonString()).Mappings[0].Conditions[0].AllowCustomUnit,
+                    "schema-3 condition without the optional flag did not retain the safe false default");
+            });
             Test("JSON rejects null unsupported schema and unknown properties", () => {
                 Reject(() => TemplateJson.Deserialize("null")); Reject(() => TemplateJson.Deserialize("{}"));
                 var json = TemplateJson.Serialize(new AvaTemplate());
@@ -122,6 +137,13 @@ internal static class Program
                 var p = ValidTemplate(); var c = new RuleCondition { Source = new() { Kind = ParameterKind.LocalFamily, Name = "D", Spec = "LENGTH" }, Operand = OperandKind.Numeric, Operator = ConditionOperator.Greater, Number = 5, Unit = "mm" };
                 p.Mappings[0].Conditions.Add(c); Check(!TemplateValidator.Validate(p).Any(d => d.Severity == DiagnosticSeverity.Error), "valid numeric condition rejected");
                 c.Unit = ""; Check(TemplateValidator.Validate(p).Any(d => d.Code == "CONDITION_UNIT"), "missing unit accepted");
+                c.Source.Spec = "NUMBER"; c.Unit = "m"; c.AllowCustomUnit = true;
+                Check(!TemplateValidator.Validate(p).Any(d => d.Severity == DiagnosticSeverity.Error), "explicit manually declared unit for NUMBER condition rejected");
+                c.AllowCustomUnit = false;
+                Check(TemplateValidator.Validate(p).Any(d => d.Code == "CONDITION_UNIT"), "incompatible NUMBER condition unit accepted without explicit manual declaration");
+                c.AllowCustomUnit = true; c.Source.Spec = "LENGTH";
+                Check(TemplateValidator.Validate(p).Any(d => d.Code == "CONDITION_UNIT"), "manual unit accepted for a dimensioned Revit parameter");
+                c.AllowCustomUnit = false; c.Unit = "";
                 c.Source.Spec = "YESNO"; c.Operand = OperandKind.Boolean; Check(TemplateValidator.Validate(p).Any(d => d.Code == "CONDITION_OPERATOR"), "ordered Boolean accepted");
                 c.Operator = ConditionOperator.Equal; Check(!TemplateValidator.Validate(p).Any(d => d.Severity == DiagnosticSeverity.Error), "valid Boolean rejected");
                 c.Source.Spec = "TEXT"; c.Operand = OperandKind.Text; c.Text = "001"; Check(!TemplateValidator.Validate(p).Any(d => d.Severity == DiagnosticSeverity.Error), "valid text rejected");

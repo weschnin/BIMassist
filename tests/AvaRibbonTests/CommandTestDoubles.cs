@@ -27,7 +27,18 @@ namespace Autodesk.Revit.UI
 }
 namespace BIMassist.Ava.Views
 {
-    public sealed class AvaTemplateWindow { }
+    public sealed class AvaTemplateWindow
+    {
+        public AvaTemplateWindow() { }
+        public AvaTemplateWindow(IReadOnlyList<string> manualUnitChoices) { }
+    }
+}
+namespace BIMassist.Ava.Revit
+{
+    public static class RevitUnitCatalog
+    {
+        public static IReadOnlyList<string> GetManualUnitChoices() => ["m"];
+    }
 }
 namespace BIMassist.Views
 {

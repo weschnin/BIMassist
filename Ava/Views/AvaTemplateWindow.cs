@@ -11,6 +11,7 @@ public sealed class AvaTemplateWindow : Window
 {
     private TemplateEditor editor = new();
     private readonly AvaWorkspace workspace;
+    private readonly IReadOnlyList<string> manualUnitChoices;
     private readonly W.TextBlock workspaceWarning = EditorUi.Text("");
     private readonly W.TextBox profileName = EditorUi.Input();
     private readonly W.TextBox profileVersion = EditorUi.Input();
@@ -55,10 +56,15 @@ public sealed class AvaTemplateWindow : Window
 
     public AvaTemplateWindow() : this(new AvaWorkspace()) { }
 
+    public AvaTemplateWindow(IReadOnlyList<string> manualUnitChoices) : this(new AvaWorkspace(), manualUnitChoices) { }
+
     /// <summary>Inject a workspace with an isolated settings path for file-only hosts and tests.</summary>
-    public AvaTemplateWindow(AvaWorkspace workspace)
+    public AvaTemplateWindow(AvaWorkspace workspace) : this(workspace, UnitCatalog.AllUnits) { }
+
+    public AvaTemplateWindow(AvaWorkspace workspace, IReadOnlyList<string> manualUnitChoices)
     {
         this.workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
+        this.manualUnitChoices = manualUnitChoices ?? throw new ArgumentNullException(nameof(manualUnitChoices));
         bgkExpandAll = EditorUi.Button("Alles aufklappen", () => ExpandCatalogs(bgkCatalogTree, bgkCatalogTreeExpansion, true));
         bgkCollapseAll = EditorUi.Button("Alles zuklappen", () => ExpandCatalogs(bgkCatalogTree, bgkCatalogTreeExpansion, false));
         lvExpandAll = EditorUi.Button("Alles aufklappen", () => ExpandCatalogs(lvCatalogTree, lvCatalogTreeExpansion, true));
@@ -315,7 +321,7 @@ public sealed class AvaTemplateWindow : Window
     {
         if (SelectedMapping?.Rule is not { } source) return;
         var duplicate = DuplicateMappingRule(source);
-        var dialog = new MappingEditorWindow(editor.Document, duplicate) { Owner = this };
+        var dialog = new MappingEditorWindow(editor.Document, duplicate, manualUnitChoices) { Owner = this };
         if (dialog.ShowDialog() == true)
         {
             editor.UpsertMapping(dialog.BuildRule());
@@ -350,7 +356,7 @@ public sealed class AvaTemplateWindow : Window
         if (DiagnosticMappingEditor != null) result = DiagnosticMappingEditor(rule);
         else
         {
-            var dialog = new MappingEditorWindow(editor.Document, rule) { Owner = this };
+            var dialog = new MappingEditorWindow(editor.Document, rule, manualUnitChoices) { Owner = this };
             result = dialog.ShowDialog() == true ? dialog.BuildRule() : null;
         }
         if (result != null) EditorUi.Guard(this, () => { editor.UpsertMapping(result); Refresh(); });
@@ -368,7 +374,7 @@ public sealed class AvaTemplateWindow : Window
         if (edit && SelectedMapping?.Rule == null) return;
         if (editor.Document.BgkCatalog.Entries.Count == 0 || editor.Document.LvCatalog.Entries.Count == 0) { EditorUi.Error(this, new InvalidDataException("Zuerst BGK-XML und LV-X82 importieren.")); return; }
         if (edit && SelectedMapping?.Position != null) { EditPosition(true); return; }
-        var dialog = new MappingEditorWindow(editor.Document, edit ? SelectedMapping!.Rule : null) { Owner = this };
+        var dialog = new MappingEditorWindow(editor.Document, edit ? SelectedMapping!.Rule : null, manualUnitChoices) { Owner = this };
         if (dialog.ShowDialog() == true && dialog.Result is { } result) EditorUi.Guard(this, () => { editor.UpsertMapping(result); Refresh(); });
     }
     private MappingTreeNode? SelectedMapping => (mappings.SelectedItem as W.TreeViewItem)?.Tag as MappingTreeNode;
