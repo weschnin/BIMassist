@@ -160,6 +160,32 @@ internal static class Program
             Equal(1, QuantityTakeoff.Calculate(template, [Element("e1", template, (_, _) =>
                 new(Number: 124.99999999999999m))]).Rows.Count);
         });
+        Test("OR joins group AND predicates with standard AND precedence", () =>
+        {
+            var template = Template();
+            template.Mappings[0].Conditions =
+            [
+                new() { Source = Local("DN"), Operand = OperandKind.Numeric, Operator = ConditionOperator.Equal, Number = 150, Unit = "mm" },
+                new() { Source = Local("Angle", "ANGLE"), Operand = OperandKind.Numeric, Operator = ConditionOperator.Equal, Number = 90, Unit = "deg" },
+                new() { Source = Local("DN"), Operand = OperandKind.Numeric, Operator = ConditionOperator.Equal, Number = 125, Unit = "mm", JoinWithPrevious = ConditionJoin.Or },
+                new() { Source = Local("Angle", "ANGLE"), Operand = OperandKind.Numeric, Operator = ConditionOperator.Equal, Number = 90, Unit = "deg" }
+            ];
+            TakeoffResult Calculate(decimal dn, decimal angle) => QuantityTakeoff.Calculate(template,
+                [Element("e1", template, (source, _) => new(Number: source.Name == "DN" ? dn : angle))]);
+            Equal(1, Calculate(150, 90).Rows.Count);
+            Equal(1, Calculate(125, 90).Rows.Count);
+            Equal(0, Calculate(150, 45).Rows.Count);
+            Equal(0, Calculate(100, 90).Rows.Count);
+            template.Mappings[0].Conditions =
+            [
+                new() { Source = Local("DN"), Operand = OperandKind.Numeric, Operator = ConditionOperator.Equal, Number = 150, Unit = "mm" },
+                new() { Source = Local("Missing", "ANGLE"), Operand = OperandKind.Numeric, Operator = ConditionOperator.Equal, Number = 90, Unit = "deg", JoinWithPrevious = ConditionJoin.Or }
+            ];
+            var missing = QuantityTakeoff.Calculate(template, [Element("e1", template, (source, _) =>
+                source.Name == "DN" ? new(Number: 150) : throw new InvalidDataException("Missing angle"))]);
+            Equal(1, missing.Errors.Count);
+            Equal(0, missing.Rows.Count); // An unvalidated OR alternative must not be hidden by the matching first branch.
+        });
         Test("invalid required quantity inputs produce contextual errors rather than fabricated zero", () =>
         {
             foreach (var value in new[] { new TakeoffValue(), new(Text: "5"), new(Boolean: false),

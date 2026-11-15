@@ -71,6 +71,7 @@ public class Element
     public string Name { get; set; } = "TestType";
     public Category? Category { get; set; } = new();
     public ElementId TypeId { get; set; } = new(2);
+    public HashSet<long> VisibleInViews { get; } = [];
     public List<Parameter> Parameters { get; } = [];
     public Dictionary<BuiltInParameter, Parameter> BuiltIns { get; } = [];
     public Parameter? get_Parameter(Guid guid) => Parameters.SingleOrDefault(p => p.IsShared && p.GUID == guid);
@@ -92,10 +93,18 @@ public sealed class Document
     public List<Element> Elements { get; } = [];
     public Element? GetElement(ElementId id) => Elements.SingleOrDefault(e => e.Id == id);
 }
-public sealed class FilteredElementCollector(Document document) : IEnumerable<Element>, IDisposable
+public sealed class View : Element { public bool IsTemplate { get; set; } }
+public sealed class FilteredElementCollector : IEnumerable<Element>, IDisposable
 {
+    private readonly Document document;
+    private readonly ElementId? viewId;
+    public FilteredElementCollector(Document document) { this.document = document; }
+    public FilteredElementCollector(Document document, ElementId viewId) { this.document = document; this.viewId = viewId; }
+    public static bool IsViewValidForElementIteration(Document document, ElementId viewId) =>
+        document.GetElement(viewId) is View { IsTemplate: false };
+    public ElementId? ViewId => viewId;
     public FilteredElementCollector WhereElementIsNotElementType() => this;
-    public IEnumerator<Element> GetEnumerator() => document.Elements.Where(e => e is not ElementType).GetEnumerator();
+    public IEnumerator<Element> GetEnumerator() => document.Elements.Where(e => e is not ElementType && (viewId == null || e.VisibleInViews.Contains(viewId.Value))).GetEnumerator();
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     public void Dispose() { }
 }

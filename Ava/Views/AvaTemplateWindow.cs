@@ -50,6 +50,7 @@ public sealed class AvaTemplateWindow : Window
     internal Func<string, bool>? RemovalPrompt { get; set; }
     internal Func<MappingRule, MappingRule?>? DiagnosticMappingEditor { get; set; }
     internal Func<BgkEntry, BgkEntry?>? BgkEditPrompt { get; set; }
+    internal Func<BgkEntry, string?, BgkEntry?>? BgkEditTargetPrompt { get; set; }
     internal Action<Exception>? ErrorReporter { get; set; }
 
     public AvaTemplateWindow() : this(new AvaWorkspace()) { }
@@ -229,10 +230,29 @@ public sealed class AvaTemplateWindow : Window
         buttons.Children.Add(EditorUi.Button("Leistungsposition hinzufügen…", () => EditPosition(false)));
         buttons.Children.Add(EditorUi.Button("Zuordnung duplizieren…", () => EditorUi.Guard(this, DuplicateSelectedMapping)));
         buttons.Children.Add(EditorUi.Button("Ausgewählte entfernen", () => EditorUi.Guard(this, RemoveSelectedMapping)));
-        buttons.Children.Add(EditorUi.Button("Alle aufklappen", () => ExpandMappings(true)));
-        buttons.Children.Add(EditorUi.Button("Alle zuklappen", () => ExpandMappings(false)));
+        var moveUp = EditorUi.Button("Nach oben", () => MoveSelectedMapping(-1));
+        moveUp.Name = "MoveMappingUp"; RegisterName(moveUp.Name, moveUp); buttons.Children.Add(moveUp);
+        var moveDown = EditorUi.Button("Nach unten", () => MoveSelectedMapping(1));
+        moveDown.Name = "MoveMappingDown"; RegisterName(moveDown.Name, moveDown); buttons.Children.Add(moveDown);
+        var mappingExpandButtons = new W.WrapPanel();
+        W.DockPanel.SetDock(mappingExpandButtons, W.Dock.Top); panel.Children.Add(mappingExpandButtons);
+        mappingExpandButtons.Children.Add(EditorUi.Button("Alle aufklappen", () => ExpandMappings(true)));
+        mappingExpandButtons.Children.Add(EditorUi.Button("Alle zuklappen", () => ExpandMappings(false)));
         mappings.Name = "MappingsTree"; RegisterName(mappings.Name, mappings);
-        mappings.MouseDoubleClick += (_, e) => { if (SelectedMapping?.Rule != null) { if (SelectedMapping.Position != null) EditPosition(true); else EditMapping(true); e.Handled = true; } };
+        mappings.MouseDoubleClick += (_, e) =>
+        {
+            if (SelectedMapping is { Kind: "BGK" } bgk)
+            { EditBgkEntry(bgk.Key["bgk:".Length..], null); e.Handled = true; }
+            else if (SelectedMapping is { Kind: "Typ" } type)
+            {
+                const string marker = "/typ:";
+                int separator = type.Key.LastIndexOf(marker, StringComparison.Ordinal);
+                if (separator > "bgk:".Length) EditBgkEntry(type.Key["bgk:".Length..separator], type.Key[(separator + marker.Length)..]);
+                e.Handled = true;
+            }
+            else if (SelectedMapping?.Rule != null)
+            { if (SelectedMapping.Position != null) EditPosition(true); else EditMapping(true); e.Handled = true; }
+        };
         panel.Children.Add(mappings); return panel;
     }
     internal static MappingRule DuplicateMappingRule(MappingRule source)
@@ -301,6 +321,20 @@ public sealed class AvaTemplateWindow : Window
             editor.UpsertMapping(dialog.BuildRule());
             Refresh();
         }
+    }
+    private void MoveSelectedMapping(int offset)
+    {
+        if (SelectedMapping is not { Kind: "Zuordnung", Rule: { } selected }) return;
+        var rules = editor.Document.Mappings;
+        int index = rules.FindIndex(rule => rule.Id == selected.Id);
+        if (index < 0) return;
+        var siblings = rules.Where(rule => rule.BgkKey == selected.BgkKey && rule.TypeNumber == selected.TypeNumber).ToList();
+        int siblingIndex = siblings.FindIndex(rule => rule.Id == selected.Id);
+        int targetSibling = siblingIndex + offset;
+        if (targetSibling < 0 || targetSibling >= siblings.Count) return;
+        int target = rules.FindIndex(rule => rule.Id == siblings[targetSibling].Id);
+        (rules[index], rules[target]) = (rules[target], rules[index]);
+        Refresh();
     }
     private void EditDiagnosticMapping(Diagnostic diagnostic)
     {
@@ -515,13 +549,18 @@ public sealed class AvaTemplateWindow : Window
         { EditorUi.Error(this, new InvalidDataException("Zuerst eine BGK oder einen Typ im BGK-Katalog auswählen.")); return; }
         string key = selected.Key.StartsWith("bgk:", StringComparison.Ordinal) ? selected.SourceId
             : selected.Key.StartsWith("typ:", StringComparison.Ordinal) ? selected.Key["typ:".Length..selected.Key.LastIndexOf(':')] : "";
+        string? selectedTypeNumber = selected.Key.StartsWith("typ:", StringComparison.Ordinal) ? selected.SourceId : null;
+        EditBgkEntry(key, selectedTypeNumber);
+    }
+    private void EditBgkEntry(string key, string? selectedTypeNumber)
+    {
         var current = editor.Document.BgkCatalog.Entries.SingleOrDefault(entry => entry.Key == key);
         if (current == null) return;
         BgkEntry? updated;
-        if (BgkEditPrompt != null) updated = BgkEditPrompt(current);
+        if (BgkEditTargetPrompt != null) updated = BgkEditTargetPrompt(current, selectedTypeNumber);
+        else if (BgkEditPrompt != null) updated = BgkEditPrompt(current);
         else
         {
-            string? selectedTypeNumber = selected.Key.StartsWith("typ:", StringComparison.Ordinal) ? selected.SourceId : null;
             var dialog = new BgkEntryEditorWindow(current, selectedTypeNumber) { Owner = this };
             if (dialog.ShowDialog() != true) return;
             updated = dialog.Result;

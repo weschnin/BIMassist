@@ -110,10 +110,13 @@ public static class TemplateValidator
             var bgk = template.BgkCatalog.Entries.FirstOrDefault(b => b.Key == rule.BgkKey);
             if (bgk == null) Error("BGK_REFERENCE", path, "BGK nicht im Katalog.");
             else if (!bgk.Types.Any(t => t.Number == rule.TypeNumber)) Error("TYPE_REFERENCE", path, "Typnummer nicht in dieser BGK.");
-            foreach (var condition in rule.Conditions)
+            for (int conditionIndex = 0; conditionIndex < rule.Conditions.Count; conditionIndex++)
             {
+                var condition = rule.Conditions[conditionIndex];
                 Source(condition.Source, path + " / Bedingung");
                 if (!Enum.IsDefined(condition.Operator) || !Enum.IsDefined(condition.Operand)) Error("CONDITION_OPERATOR", path, "Unbekannter Bedingungsoperator / Operand.");
+                if (!Enum.IsDefined(condition.JoinWithPrevious) || conditionIndex == 0 && condition.JoinWithPrevious != ConditionJoin.And)
+                    Error("CONDITION_JOIN", path, "Unbekannte Verknüpfung oder erste Bedingung mit einer vorherigen Bedingung verknüpft.");
                 bool numeric = UnitCatalog.ForSpec(condition.Source.Spec).Count > 0;
                 if (numeric && condition.Operand == OperandKind.Numeric)
                 {
@@ -182,7 +185,12 @@ public static class TemplateValidator
                 else Warn("QUANTITY_MISSING", path, "Für diese LV-Position ist noch keine Mengenart (Parameter, feste Zahl oder Formel) festgelegt; Zuordnung ist ein Entwurf.");
             }
         }
-        static bool ProvablyDisjoint(MappingRule first, MappingRule second) => first.Conditions.Any(a =>
+        static bool ProvablyDisjoint(MappingRule first, MappingRule second)
+        {
+            // OR alternatives can satisfy a rule through a different branch; stay conservative.
+            if (first.Conditions.Any(c => c.JoinWithPrevious == ConditionJoin.Or)
+                || second.Conditions.Any(c => c.JoinWithPrevious == ConditionJoin.Or)) return false;
+            return first.Conditions.Any(a =>
             a.Operator == ConditionOperator.Equal && a.Operand == OperandKind.Numeric && UnitCatalog.Allows(a.Source.Spec, a.Unit)
             && second.Conditions.Any(b => b.Operator == ConditionOperator.Equal && b.Operand == OperandKind.Numeric
                 && ConditionNumberComparison.ProvablyDifferent(a.Number, b.Number, a.Source.Spec)
@@ -190,6 +198,7 @@ public static class TemplateValidator
                 && a.Source.Scope == b.Source.Scope && a.Source.SharedGuid == b.Source.SharedGuid
                 && a.Source.Name == b.Source.Name && a.Source.Spec == b.Source.Spec
                 && a.Source.BuiltInId == b.Source.BuiltInId));
+        }
         foreach (var group in template.Mappings.GroupBy(m => (m.BgkKey, m.TypeNumber)).Where(g => g.Count() > 1))
         {
             var rules = group.ToArray();
@@ -218,8 +227,11 @@ public static class ChecklistBuilder
         foreach (var rule in template.Mappings)
         {
             var groupContext = $"{rule.BgkKey} / {rule.TypeNumber} (Gruppe {rule.Id})";
+            var conditionSemantics = rule.Conditions.Any(condition => condition.JoinWithPrevious == ConditionJoin.Or)
+                ? "UND/ODER" : "UND";
             foreach (var condition in rule.Conditions)
-                checks.Add(new("Bedingung", groupContext, "UND: " + condition + ". Quelle: " + condition.Source + ". Fehlender / ungültiger Eingang = nicht auswertbar / Fehler, nicht false; kein Fallback."));
+                checks.Add(new("Bedingung", groupContext, condition + ". Quelle: " + condition.Source
+                    + ". UND bindet stärker als ODER. Fehlender / ungültiger Eingang = Fehler (nicht auswertbar), auch wenn ein anderer Zweig zutrifft."));
             foreach (var position in rule.Positions)
             {
                 var lv = template.LvCatalog.Entries.FirstOrDefault(l => l.Id == position.LvItemId);
@@ -235,7 +247,7 @@ public static class ChecklistBuilder
                     { } quantity => "Lesen: " + quantity.Source + "; deklarierte Leseeinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + " (unabhängig; keine automatische Umrechnung). Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen. Umrechnung, Rundung und Aggregation sind noch nicht implementiert.",
                     null => "Menge nicht definiert; Zuordnung ist ein Entwurf."
                 };
-                checks.Add(new("Menge", context + " — nur bei erfüllten UND-Bedingungen", requirement));
+                checks.Add(new("Menge", context + " — nur bei erfüllten " + conditionSemantics + "-Bedingungen", requirement));
             }
         }
         return checks;

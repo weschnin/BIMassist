@@ -13,9 +13,10 @@ public static class RevitQuantityReader
     private sealed record CandidateIdentityInfo(string Key, string Description);
 
     public static IEnumerable<TakeoffElement> Elements(Document document, AvaTemplate template,
-        Func<Element, ParameterSource, IReadOnlyList<AvaParameterCandidate>, string?>? chooseAmbiguous = null)
+        Func<Element, ParameterSource, IReadOnlyList<AvaParameterCandidate>, string?>? chooseAmbiguous = null,
+        ElementId? viewId = null)
     {
-        foreach (var element in ModelInstances(document))
+        foreach (var element in ModelInstances(document, viewId))
         {
             var captured = element;
             yield return new TakeoffElement(element.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -96,9 +97,20 @@ public static class RevitQuantityReader
         return labels;
     }
 
-    private static IEnumerable<Element> ModelInstances(Document document)
+    private static IEnumerable<Element> ModelInstances(Document document, ElementId? viewId = null)
     {
-        using var collector = new FilteredElementCollector(document);
+        if (viewId != null)
+        {
+            if (document.GetElement(viewId) is not View view)
+                throw new InvalidDataException("Die aktive Revit-Ansicht ist ungültig oder nicht verfügbar; sichtbare Elemente können nicht ermittelt werden.");
+            if (view.IsTemplate)
+                throw new InvalidDataException("Die aktive Revit-Ansicht ist eine Ansichtsvorlage; sichtbare Elemente können nicht ermittelt werden.");
+            if (!FilteredElementCollector.IsViewValidForElementIteration(document, viewId))
+                throw new InvalidDataException("Die aktive Revit-Ansicht unterstützt keine elementbasierte Mengenermittlung. Wählen Sie eine unterstützte Modellansicht oder deaktivieren Sie ‚nur sichtbare Elemente‘.");
+        }
+        using var collector = viewId == null
+            ? new FilteredElementCollector(document)
+            : new FilteredElementCollector(document, viewId);
         return collector.WhereElementIsNotElementType()
             .Where(element => element is not (RevitLinkInstance or ImportInstance { IsLinked: true })
                 && element.Category?.CategoryType == CategoryType.Model).ToArray();

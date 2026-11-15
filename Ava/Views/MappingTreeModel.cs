@@ -29,7 +29,7 @@ internal static class MappingTreeModel
                 bgkNode.Children.Add(typeNode);
                 foreach (var rule in template.Mappings.Where(rule => rule.BgkKey == bgk.Key && rule.TypeNumber == type.Number))
                 {
-                    var conditions = rule.Conditions.Count == 0 ? "Ohne Bedingung" : string.Join(" UND ", rule.Conditions);
+                    var conditions = rule.Conditions.Count == 0 ? "Ohne Bedingung" : string.Join("  ", rule.Conditions);
                     var ruleNode = new MappingTreeNode("rule:" + rule.Id, "Zuordnung", conditions + $"  ({rule.Positions.Count} Leistungspositionen)", rule);
                     typeNode.Children.Add(ruleNode);
                     foreach (var position in rule.Positions)

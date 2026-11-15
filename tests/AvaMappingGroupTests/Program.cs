@@ -34,6 +34,28 @@ internal static class Program
                 Check(!diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error), string.Join("; ", diagnostics));
                 Check(!diagnostics.Any(d => d.Code == "MULTIPLE_RULES"), "siblings are not conflicting groups");
             });
+            Test("OR condition connectors round-trip and remain invalid on the first condition", () => {
+                var template = ValidTemplate();
+                var rule = template.Mappings.Single();
+                rule.Conditions = [
+                    new RuleCondition { Source = new() { Kind = ParameterKind.ByName, Name = "DN", Spec = "LENGTH", Scope = ParameterScope.Instance }, Operator = ConditionOperator.Equal, Operand = OperandKind.Numeric, Number = 150, Unit = "mm" },
+                    new RuleCondition { Source = new() { Kind = ParameterKind.ByName, Name = "DN", Spec = "LENGTH", Scope = ParameterScope.Instance }, Operator = ConditionOperator.Equal, Operand = OperandKind.Numeric, Number = 125, Unit = "mm", JoinWithPrevious = ConditionJoin.Or }
+                ];
+                var json = TemplateJson.Serialize(template);
+                var restored = TemplateJson.Deserialize(json);
+                Check(restored.Mappings.Single().Conditions[1].JoinWithPrevious == ConditionJoin.Or
+                    && TemplateJson.Serialize(restored) == json, "OR connector did not survive strict JSON round trip");
+                Check(restored.Mappings.Single().Conditions[1].ToString().StartsWith("ODER:", StringComparison.Ordinal),
+                    "condition list text does not show the OR connector");
+                restored.Mappings.Single().Conditions[0].JoinWithPrevious = ConditionJoin.Or;
+                Check(TemplateValidator.Validate(restored).Any(x => x.Code == "CONDITION_JOIN"), "first condition was allowed to join a previous condition");
+                var overlapped = TemplateJson.Copy(template.Mappings.Single()); overlapped.Id = Guid.NewGuid();
+                foreach (var p in overlapped.Positions) p.Id = Guid.NewGuid();
+                overlapped.Conditions[1].Number = 100;
+                template.Mappings.Add(overlapped);
+                Check(TemplateValidator.Validate(template).Any(x => x.Code == "MULTIPLE_RULES"),
+                    "validator assumed OR alternatives were disjoint from a sibling rule");
+            });
             Test("Different DN equalities on one source and unit are mutually exclusive, not a multiple-rule warning", () => {
                 var template = ValidTemplate();
                 var first = template.Mappings.Single();

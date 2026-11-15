@@ -22,6 +22,38 @@ internal static class ExecuteTests
 
     public static void Run()
     {
+        Test("scope options default to all model elements and identify the active view", f =>
+        {
+            var hidden = new FamilyInstance { Id = new(430000), TypeId = f.Type.Id };
+            f.Document.Elements.Add(hidden);
+            f.Remember(f.Template()); f.ApproveAndSave();
+            Equal(Result.Succeeded, f.Execute());
+            Equal(1, BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Calls);
+            Equal(700L, BIMassist.Ava.Views.AvaTakeoffOptionsWindow.LastViewId);
+            Contains("Umfang: alle Modellelement-Instanzen im aktuellen Hauptmodell", TaskDialog.Confirmations.Single().MainContent);
+            Contains("2 Modellelemente untersucht; 2 Mengenzeilen.", TaskDialog.Confirmations.Single().MainContent);
+        });
+        Test("visible-only scope passes the active view to collection and exports only its visible instances", f =>
+        {
+            f.Instance.VisibleInViews.Add(700);
+            var hidden = new FamilyInstance { Id = new(430000), TypeId = f.Type.Id };
+            f.Document.Elements.Add(hidden);
+            BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Choices.Enqueue((true, true));
+            f.Remember(f.Template()); f.ApproveAndSave();
+            Equal(Result.Succeeded, f.Execute());
+            Contains("sichtbar sind", TaskDialog.Confirmations.Single().MainContent);
+            Contains("1 Modellelemente untersucht; 1 Mengenzeilen.", TaskDialog.Confirmations.Single().MainContent);
+            var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
+            Equal(1, rows.Count(r => r[12] != '*'));
+        });
+        Test("visible-only scope rejects a template active view without producing output", f =>
+        {
+            f.Data.Application.ActiveUIDocument!.ActiveView.IsTemplate = true;
+            BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Choices.Enqueue((true, true));
+            f.Remember(f.Template());
+            Equal(Result.Failed, f.Execute()); Contains("Ansichtsvorlage", f.Message); f.NoOutput();
+            Equal(0, TaskDialog.Confirmations.Count);
+        });
         Test("actual Execute exports real model-parameter calculation to a readable X31", f =>
         {
             var template = f.Template();
@@ -354,12 +386,13 @@ internal static class ExecuteTests
             previousChoiceSettings = Environment.GetEnvironmentVariable("BIMASSIST_AVA_PARAMETER_CHOICES");
             Environment.SetEnvironmentVariable("BIMASSIST_AVA_WORKSPACE_SETTINGS", Settings);
             Environment.SetEnvironmentVariable("BIMASSIST_AVA_PARAMETER_CHOICES", ChoiceSettings);
-            TaskDialog.Reset(); CommonDialog.Reset(); AvaGroupingDialog.Reset(); BIMassist.Ava.Views.ParameterChoiceWindow.Reset();
+            TaskDialog.Reset(); CommonDialog.Reset(); AvaGroupingDialog.Reset(); BIMassist.Ava.Views.ParameterChoiceWindow.Reset(); BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Reset();
             System.Windows.Window.Created = System.Windows.Window.Closed = 0;
             var symbol = Type;
             symbol.BuiltIns[BuiltInParameter.ASSEMBLY_CODE] = new("BGK", SpecTypeId.String.Text, "001", StorageType.String);
             symbol.BuiltIns[BuiltInParameter.ALL_MODEL_TYPE_COMMENTS] = new("Typ", SpecTypeId.String.Text, "02", StorageType.String);
-            Document.Elements.AddRange([Instance, symbol]); Data.Application.ActiveUIDocument = new(Document);
+            var activeView = new Autodesk.Revit.DB.View { Id = new(700), Name = "Grundriss EG", Category = null };
+            Document.Elements.AddRange([Instance, symbol, activeView]); Data.Application.ActiveUIDocument = new(Document) { ActiveView = activeView };
         }
         public AvaTemplate Template()
         {

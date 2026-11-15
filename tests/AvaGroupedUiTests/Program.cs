@@ -223,7 +223,7 @@ internal static class Program
             var temp = Path.Combine(Path.GetTempPath(), "ava-group-ui-" + Guid.NewGuid() + ".json");
             try
             {
-                TemplateJson.Save(temp, t); var main = new AvaTemplateWindow();
+                TemplateJson.Save(temp, t); var main = new AvaTemplateWindow(new AvaWorkspace(temp + ".workspace.json"));
                 Field<TemplateEditor>(main, "editor").Open(temp);
                 main.GetType().GetMethod("Refresh", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(main, null);
                 Layout(main);
@@ -246,6 +246,37 @@ internal static class Program
                     && !headers.Any(h => h!.Contains("Quellkataloge", StringComparison.Ordinal)),
                     "BGK, LV and parameter catalogs must have separate top-level tabs");
                 var tree = (TreeView)main.FindName("MappingsTree"); var root = (TreeViewItem)tree.Items[0]; var type = (TreeViewItem)root.Items[0]; var row = (TreeViewItem)type.Items[0];
+                var mappingPanel = (DockPanel)editorTabs.Items.Cast<TabItem>().Single(item => item.Header!.ToString()!.Contains("Zuordnungen", StringComparison.Ordinal)).Content;
+                var mappingToolbars = mappingPanel.Children.OfType<WrapPanel>().ToArray();
+                Check(mappingToolbars.Length == 2
+                    && mappingToolbars[1].Children.Cast<Button>().Select(button => button.Content?.ToString()).SequenceEqual(new[] { "Alle aufklappen", "Alle zuklappen" }),
+                    "mapping expand/collapse controls are not together on their own second toolbar row");
+                Check(main.FindName("MoveMappingUp") is Button && main.FindName("MoveMappingDown") is Button,
+                    "mapping tab lacks named up/down controls");
+                var targetedBgkEdit = typeof(AvaTemplateWindow).GetProperty("BgkEditTargetPrompt", BindingFlags.NonPublic | BindingFlags.Instance);
+                Check(targetedBgkEdit != null, "mapping catalog double-click does not expose its selected BGK/type edit target");
+                if (targetedBgkEdit != null)
+                {
+                    string? editedTarget = null;
+                    targetedBgkEdit.SetValue(main, (Func<BgkEntry, string?, BgkEntry?>)((entry, target) =>
+                    {
+                        editedTarget = target;
+                        return target == null
+                            ? entry with { Description = "Flansche aktualisiert" }
+                            : entry with { Types = entry.Types.Select(item => item.Number == target
+                                ? item with { Description = "Losflansch aktualisiert" } : item).ToList() };
+                    }));
+                    var mappingBgk = FindMappingTreeItem(tree, "bgk:44-40");
+                    mappingBgk.IsSelected = true;
+                    tree.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = Control.MouseDoubleClickEvent });
+                    Check(editedTarget == null, "double-clicking a BGK node was not targeted at the BGK entry");
+                    var mappingType = FindMappingTreeItem(tree, "bgk:44-40/typ:110");
+                    mappingType.IsSelected = true;
+                    tree.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = Control.MouseDoubleClickEvent });
+                    Check(editedTarget == "110" && Field<TemplateEditor>(main, "editor").Document.BgkCatalog.Entries.Single().Types.Single().Description == "Losflansch aktualisiert",
+                        "double-clicking a mapping type did not edit that exact type through the catalog update path");
+                }
+                root = (TreeViewItem)tree.Items[0]; type = (TreeViewItem)root.Items[0]; row = (TreeViewItem)type.Items[0];
                 row.IsExpanded = false; type.IsSelected = true; main.RefreshMappings(); Layout(main);
                 root = (TreeViewItem)tree.Items[0]; type = (TreeViewItem)root.Items[0]; row = (TreeViewItem)type.Items[0];
                 Check(!row.IsExpanded && row.Items.Count == 2, "collapsed state/children lost on refresh");
@@ -321,6 +352,7 @@ internal static class Program
             finally { if (File.Exists(temp)) File.Delete(temp); }
             TestValidationNavigation();
             TestBgkSubtreeRemoval();
+            TestMappingMove();
             if (args.Length > 0 && args[0] != "--render")
             {
                 var old = TemplateJson.Load(args[0]); TemplateEditor.EnsureValid(old); var nodes = MappingTreeModel.Build(old);
@@ -438,6 +470,50 @@ internal static class Program
             typeof(AvaTemplateWindow).GetMethod("RemoveSelectedMapping", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null);
             Check(Field<TemplateEditor>(window, "editor").Document.Mappings.Count == 0,
                 "Confirmed parent-BGK deletion did not remove every descendant mapping");
+            window.Close();
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+    private static void TestMappingMove()
+    {
+        var template = new AvaTemplate();
+        template.BgkCatalog.Entries.Add(new("44-40", "Flansche", "", [new("110", "Losflansch"), new("120", "Festflansch")]));
+        template.LvCatalog.Entries.Add(new("move-lv", "boq", ["01"], "01", "Leistung", "", "St"));
+        var first = new MappingRule { BgkKey = "44-40", TypeNumber = "110",
+            Conditions = [new RuleCondition { Source = new ParameterSource { Kind = ParameterKind.LocalFamily, Name = "DN", Spec = "TEXT", Scope = ParameterScope.Type }, Operator = ConditionOperator.Equal, Operand = OperandKind.Text, Text = "100" }],
+            Positions = [new MappingPosition { LvItemId = "move-lv" }] };
+        var second = new MappingRule { BgkKey = "44-40", TypeNumber = "110", Positions = [new MappingPosition { LvItemId = "move-lv" }] };
+        var otherType = new MappingRule { BgkKey = "44-40", TypeNumber = "120", Positions = [new MappingPosition { LvItemId = "move-lv" }] };
+        template.Mappings.AddRange([first, otherType, second]);
+        var path = Path.Combine(Path.GetTempPath(), "ava-move-ui-" + Guid.NewGuid() + ".json");
+        try
+        {
+            TemplateJson.Save(path, template);
+            var window = new AvaTemplateWindow(new AvaWorkspace(path + ".workspace.json"));
+            Field<TemplateEditor>(window, "editor").Open(path); window.RefreshMappings(); Layout(window);
+            var tree = Field<TreeView>(window, "mappings");
+            var up = (Button)window.FindName("MoveMappingUp")!; var down = (Button)window.FindName("MoveMappingDown")!;
+            var firstNode = "rule:" + first.Id;
+            var rules = Field<TemplateEditor>(window, "editor").Document.Mappings;
+            var conditionBefore = rules.Single(rule => rule.Id == first.Id).Conditions.Single();
+            var positionIdBefore = rules.Single(rule => rule.Id == first.Id).Positions.Single().Id;
+            FindMappingTreeItem(tree, firstNode).IsSelected = true;
+            down.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(rules.Select(rule => rule.Id).SequenceEqual([second.Id, otherType.Id, first.Id])
+                && ReferenceEquals(rules.Single(rule => rule.Id == first.Id).Conditions.Single(), conditionBefore)
+                && rules.Single(rule => rule.Id == first.Id).Positions.Single().Id == positionIdBefore,
+                "moving a mapping down did not reorder only its same-type sibling or preserve condition/position IDs");
+            down.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(rules.Select(rule => rule.Id).SequenceEqual([second.Id, otherType.Id, first.Id]),
+                "moving a mapping crossed its BGK/type sibling boundary");
+            FindMappingTreeItem(tree, firstNode).IsSelected = true;
+            up.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(rules.Select(rule => rule.Id).SequenceEqual([first.Id, otherType.Id, second.Id]),
+                "moving a mapping up did not restore its original same-type order");
+            FindMappingTreeItem(tree, firstNode).IsSelected = true;
+            up.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(rules.Select(rule => rule.Id).SequenceEqual([first.Id, otherType.Id, second.Id]),
+                "moving the first mapping above its sibling range changed order");
             window.Close();
         }
         finally { if (File.Exists(path)) File.Delete(path); }

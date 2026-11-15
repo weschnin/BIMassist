@@ -12,7 +12,7 @@ namespace Autodesk.Revit.UI
     [Flags] public enum TaskDialogCommonButtons { Yes = 1, No = 2 }
     public enum TaskDialogResult { Yes, No, Cancel, Ok }
     public enum ItemSelectionDialogResult { Confirmed, Canceled }
-    public sealed class UIDocument(Autodesk.Revit.DB.Document document) { public Autodesk.Revit.DB.Document Document { get; } = document; }
+    public sealed class UIDocument(Autodesk.Revit.DB.Document document) { public Autodesk.Revit.DB.Document Document { get; } = document; public Autodesk.Revit.DB.View ActiveView { get; set; } = new(); }
     public sealed class UIApplication { public UIDocument? ActiveUIDocument { get; set; } public IntPtr MainWindowHandle { get; set; } = new(1234); }
     public sealed class ExternalCommandData { public UIApplication Application { get; set; } = new(); }
     public interface IExternalCommand { Result Execute(ExternalCommandData data, ref string message, Autodesk.Revit.DB.ElementSet elements); }
@@ -81,6 +81,22 @@ namespace BIMassist.Ava.Views
             return SelectedIdentity != null;
         }
         public static void Reset() { NextIdentity = null; RememberNext = false; Shown = 0; }
+    }
+    internal static class AvaTakeoffOptionsWindow
+    {
+        public static readonly Queue<(bool? Result, bool VisibleOnly)> Choices = new();
+        public static int Calls;
+        public static long LastViewId;
+        public static bool? Show(Autodesk.Revit.UI.UIApplication application, Autodesk.Revit.DB.View activeView, out bool selected)
+        {
+            _ = application;
+            Calls++;
+            LastViewId = activeView.Id.Value;
+            var choice = Choices.Count == 0 ? (true, false) : Choices.Dequeue();
+            selected = choice.Item2;
+            return choice.Item1;
+        }
+        public static void Reset() { Choices.Clear(); Calls = 0; LastViewId = 0; }
     }
 }
 namespace Microsoft.Win32

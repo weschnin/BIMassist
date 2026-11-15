@@ -43,6 +43,9 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                 workspace.Remember(choose.FileName);
             }
             var parameterChoices = new AvaParameterChoiceStore();
+            var activeView = uiDocument.ActiveView;
+            if (AvaTakeoffOptionsWindow.Show(commandData.Application, activeView, out var visibleOnly) != true)
+                return Result.Cancelled;
             var documentIdentity = string.IsNullOrWhiteSpace(document.PathName)
                 ? "unsaved:" + document.Title : Path.GetFullPath(document.PathName);
             var result = QuantityTakeoff.Calculate(template, RevitQuantityReader.Elements(document, template,
@@ -61,7 +64,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                         throw new OperationCanceledException("Parameterauswahl abgebrochen.");
                     if (dialog.RememberSelection) parameterChoices.Remember(key, dialog.SelectedIdentity);
                     return dialog.SelectedIdentity;
-                }));
+                }, visibleOnly ? activeView.Id : null));
             if (result.Errors.Count > 0)
             {
                 const int errorLimit = 15;
@@ -107,7 +110,8 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                     + "\nGruppierung: " + (grouping.Mode == QuantityGroupingMode.Position ? "nach Leistungspositionen" : grouping.Mode == QuantityGroupingMode.FamilyAndType ? "nach Familienname und Typ" : grouping.GroupKind + " nach Parameter „" + grouping.Parameter!.DisplayLabel + "“")
                     + "\n\n" + result.Examined + " Modellelemente untersucht; " + result.Rows.Count + " Mengenzeilen."
                     + "\nOhne vollständige Kennzeichnung: " + result.Unmarked + "; ohne BGK-/Typzuordnung: " + result.Unmapped + "."
-                    + "\n\nUmfang: alle Modellelement-Instanzen im aktuellen Hauptmodell, keine verknüpften Modelle. Der textuelle Prüfumfang ist kein Kategorienfilter; dies ist keine vollständige Modellprüfung."
+                    + "\n\nUmfang: " + (visibleOnly ? "Modellelement-Instanzen, die in der aktiven Ansicht „" + activeView.Name + "“ sichtbar sind" : "alle Modellelement-Instanzen im aktuellen Hauptmodell")
+                    + "; keine verknüpften Modelle. Der textuelle Prüfumfang ist kein Kategorienfilter; dies ist keine vollständige Modellprüfung."
                     + "\nAlle zutreffenden Regeln werden additiv ausgewertet. Verwendet wird die gespeicherte Vorlage. Keine Revit-Schreibzugriffe."
                     + (units.Count > 0 ? "\n\nACHTUNG: " + units.Count + " unterschiedliche Mengen-/LV-Einheiten. Keine automatische Umrechnung. Mit Ja werden die Zahlen unverändert unter der jeweiligen LV-Position ausgegeben; eigene Einheit steht im Erläuterungstext." : ""),
                 ExpandedContent = string.Join("\n", units.Concat(warnings.Select(w => w.ToString()))),

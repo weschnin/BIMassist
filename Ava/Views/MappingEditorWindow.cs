@@ -44,7 +44,7 @@ internal sealed class MappingEditorWindow : Window
         buttons.Children.Add(EditorUi.Button("Abbrechen", () => DialogResult = false));
         var tabs = new W.TabControl(); root.Children.Add(tabs);
         var selector = new W.DockPanel { Margin = new Thickness(12) };
-        var hint = EditorUi.Text("Eine Zuordnung gilt für BGK + Typ und gemeinsame UND-Bedingungen. Darunter können beliebig viele Leistungspositionen mit jeweils eigener Menge stehen.");
+        var hint = EditorUi.Text("Eine Zuordnung gilt für BGK + Typ. Bedingungen können mit UND oder ODER verknüpft werden; UND bindet stärker als ODER. Darunter können beliebig viele Leistungspositionen mit jeweils eigener Menge stehen.");
         W.DockPanel.SetDock(hint, W.Dock.Top); selector.Children.Add(hint);
         var grid = new W.Grid();
         grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -74,24 +74,27 @@ internal sealed class MappingEditorWindow : Window
         };
         RefreshBgkTree();
         var conditionPanel = new W.DockPanel { Margin = new Thickness(12) };
-        var conditionHint = EditorUi.Text("Alle Bedingungen gelten gemeinsam für sämtliche Leistungspositionen dieser Zuordnung (UND). Fehlende Eingänge bleiben Fehler, nicht false. Keine Priorität oder Else-Regel zwischen Zuordnungen.");
+        var conditionHint = EditorUi.Text("UND bindet stärker als ODER; z. B. (DN=150 UND Winkel=90) ODER (DN=125 UND Winkel=90). Alle Eingänge werden gelesen; fehlende Werte bleiben Fehler, auch wenn ein anderer Zweig zutrifft.");
         W.DockPanel.SetDock(conditionHint, W.Dock.Top); conditionPanel.Children.Add(conditionHint);
         var conditionButtons = new W.WrapPanel(); W.DockPanel.SetDock(conditionButtons, W.Dock.Top); conditionPanel.Children.Add(conditionButtons);
         void EditCondition(bool edit)
         {
             var selected = conditions.SelectedItem as RuleCondition; if (edit && selected == null) return;
-            var dialog = new ConditionEditorWindow(template, edit ? selected : null) { Owner = this };
+            int selectedIndex = edit ? draft.Conditions.IndexOf(selected!) : draft.Conditions.Count;
+            var dialog = new ConditionEditorWindow(template, edit ? selected : null,
+                selectedIndex == 0 ? ConditionJoin.And : edit ? selected!.JoinWithPrevious : ConditionJoin.And,
+                selectedIndex == 0) { Owner = this };
             if (dialog.ShowDialog() == true && dialog.Result is { } result)
             {
-                if (edit) draft.Conditions[draft.Conditions.IndexOf(selected!)] = result; else draft.Conditions.Add(result);
+                if (edit) draft.Conditions[selectedIndex] = result; else draft.Conditions.Add(result);
                 conditions.ItemsSource = null; conditions.ItemsSource = draft.Conditions;
             }
         }
         conditionButtons.Children.Add(EditorUi.Button("Bedingung hinzufügen", () => EditCondition(false)));
         conditionButtons.Children.Add(EditorUi.Button("Bearbeiten", () => EditCondition(true)));
-        conditionButtons.Children.Add(EditorUi.Button("Entfernen", () => { if (conditions.SelectedItem is RuleCondition c) { draft.Conditions.Remove(c); conditions.ItemsSource = null; conditions.ItemsSource = draft.Conditions; } }));
+        conditionButtons.Children.Add(EditorUi.Button("Entfernen", () => { if (conditions.SelectedItem is RuleCondition c) { int index = draft.Conditions.IndexOf(c); draft.Conditions.Remove(c); if (index == 0 && draft.Conditions.Count > 0) draft.Conditions[0].JoinWithPrevious = ConditionJoin.And; conditions.ItemsSource = null; conditions.ItemsSource = draft.Conditions; } }));
         conditions.ItemsSource = draft.Conditions; conditionPanel.Children.Add(conditions);
-        tabs.Items.Add(new W.TabItem { Header = "2  Bedingungen (UND)", Content = conditionPanel });
+        tabs.Items.Add(new W.TabItem { Header = "2  Bedingungen (UND / ODER)", Content = conditionPanel });
 
         var positionPanel = new W.DockPanel { Margin = new Thickness(12) };
         var positionHint = EditorUi.Text("Jede Zeile ist eine eigene Leistungsposition mit eigener Mengenquelle: feste Zahl, Parameter oder Formel. Änderungen werden erst mit 'Zuordnung übernehmen' gespeichert.");
@@ -208,13 +211,16 @@ internal sealed class MappingEditorWindow : Window
 internal sealed class ConditionEditorWindow : Window
 {
     public RuleCondition? Result { get; private set; }
-    public ConditionEditorWindow(AvaTemplate template, RuleCondition? existing)
+    public ConditionEditorWindow(AvaTemplate template, RuleCondition? existing, ConditionJoin join, bool isFirst)
     {
         var draft = existing == null ? new RuleCondition() : TemplateJson.Copy(existing);
-        Title = "Bedingung bearbeiten – UND"; Width = 780; Height = 790; MinWidth = 620; MinHeight = 570; WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        Title = "Bedingung bearbeiten – UND / ODER"; Width = 780; Height = 790; MinWidth = 620; MinHeight = 570; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         var root = new W.DockPanel { Margin = new Thickness(16) };
         var buttons = new W.WrapPanel(); W.DockPanel.SetDock(buttons, W.Dock.Bottom); root.Children.Add(buttons);
         var panel = new W.StackPanel(); root.Children.Add(EditorUi.Scroll(panel));
+        var joinWithPrevious = EditorUi.Choice(new[] { (ConditionJoin.And, "UND – gehört zur vorherigen Bedingungsgruppe"), (ConditionJoin.Or, "ODER – beginnt eine Bedingungsalternative") }, join);
+        joinWithPrevious.IsEnabled = !isFirst;
+        EditorUi.Field(panel, "Verknüpfung mit vorheriger Bedingung (UND vor ODER)", joinWithPrevious);
         var source = new ParameterSourceEditor(template.ParameterCatalog.Entries, draft.Source); panel.Children.Add(source);
         var op = EditorUi.Choice(new[] { (ConditionOperator.Equal, "= gleich"), (ConditionOperator.NotEqual, "≠ ungleich"), (ConditionOperator.Greater, "> größer"), (ConditionOperator.GreaterOrEqual, "≥ größer oder gleich"), (ConditionOperator.Less, "< kleiner"), (ConditionOperator.LessOrEqual, "≤ kleiner oder gleich") }, draft.Operator);
         EditorUi.Field(panel, "Operator (Text / Ja-Nein: nur gleich oder ungleich)", op);
@@ -230,7 +236,8 @@ internal sealed class ConditionEditorWindow : Window
         source.SourceChanged += RefreshUnits; RefreshUnits();
         buttons.Children.Add(EditorUi.Button("Übernehmen", () => EditorUi.Guard(this, () => {
             var s = source.ReadSource();
-            var c = new RuleCondition { Source = s, Operator = EditorUi.Selected<ConditionOperator>(op), Unit = unit.SelectedItem as string ?? "" };
+            var c = new RuleCondition { Source = s, Operator = EditorUi.Selected<ConditionOperator>(op), Unit = unit.SelectedItem as string ?? "",
+                JoinWithPrevious = isFirst ? ConditionJoin.And : EditorUi.Selected<ConditionJoin>(joinWithPrevious) };
             if (s.Spec == "TEXT") { c.Operand = OperandKind.Text; c.Text = value.Text; }
             else if (s.Spec == "YESNO") { c.Operand = OperandKind.Boolean; if (!bool.TryParse(value.Text, out var boolean)) throw new InvalidDataException("Ja-Nein benötigt true oder false."); c.Boolean = boolean; }
             else

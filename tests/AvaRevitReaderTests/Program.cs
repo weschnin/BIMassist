@@ -452,6 +452,20 @@ AbsenceTest("missing volume never describes a same-name length as a cubic-metre 
             && !ex.Message.Contains("m3"), "Diagnostic fabricated a volume from a LENGTH parameter: " + ex.Message);
     }
 });
+var scopeDocument = new Document();
+var activeView = new View { Id = new(700), IsTemplate = false, Category = null };
+var visibleElement = new FamilyInstance { Id = new(701) }; visibleElement.VisibleInViews.Add(700);
+var hiddenElement = new FamilyInstance { Id = new(702) };
+scopeDocument.Elements.AddRange([activeView, visibleElement, hiddenElement]);
+Check(RevitQuantityReader.Elements(scopeDocument, template).Select(e => e.Id).SequenceEqual(new[] { "701", "702" }),
+    "All-model scope changed or included a non-model view element");
+Check(RevitQuantityReader.Elements(scopeDocument, template, viewId: activeView.Id).Select(e => e.Id).SequenceEqual(new[] { "701" }),
+    "View-scoped collector did not return only visible host model instances");
+Reject(() => RevitQuantityReader.Elements(scopeDocument, template, viewId: new ElementId(999)).ToList(),
+    "Invalid current view was accepted for view-scoped collection");
+var templateView = new View { Id = new(703), IsTemplate = true }; scopeDocument.Elements.Add(templateView);
+Reject(() => RevitQuantityReader.Elements(scopeDocument, template, viewId: templateView.Id).ToList(),
+    "Template view was accepted for view-scoped collection");
 if (absenceFailures != 0) Environment.ExitCode = 1;
 Console.WriteLine($"Reader absence/scope regressions: {absenceRuns - absenceFailures} passed; {absenceFailures} failed");
 Console.WriteLine("PASS Revit adapter policy with API doubles: scope, strict GUID and unique exact-name resolution, typed input units, absence, ambiguity and nonfinite/overflow guards (not a Revit-host test)");

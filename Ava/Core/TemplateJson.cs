@@ -22,7 +22,7 @@ public static class TemplateJson
         TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { ConfigureStrictContract } },
         Converters = {
             new ExactEnumConverter<ParameterKind>(), new ExactEnumConverter<ParameterScope>(),
-            new ExactEnumConverter<ConditionOperator>(), new ExactEnumConverter<OperandKind>(),
+            new ExactEnumConverter<ConditionOperator>(), new ExactEnumConverter<ConditionJoin>(), new ExactEnumConverter<OperandKind>(),
             new ExactEnumConverter<QuantityKind>()
         }
     };

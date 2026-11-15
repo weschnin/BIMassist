@@ -5,6 +5,7 @@ namespace BIMassist.Ava.Core;
 public enum ParameterKind { SharedGuid, LocalFamily, BuiltIn, ByName }
 public enum ParameterScope { Instance, Type }
 public enum ConditionOperator { Equal, NotEqual, Greater, GreaterOrEqual, Less, LessOrEqual }
+public enum ConditionJoin { And, Or }
 public enum OperandKind { Numeric, Boolean, Text }
 public enum QuantityKind { Parameter, Constant, Formula }
 public sealed record AvaParameterCandidate(string Identity, string Description, TakeoffValue Value);
@@ -34,7 +35,10 @@ public sealed class RuleCondition
     [JsonRequired] public bool Boolean { get; set; }
     [JsonRequired] public string Text { get; set; } = "";
     [JsonRequired] public string Unit { get; set; } = "";
-    public override string ToString() => $"{Source.Name} {Operator} " + (Operand == OperandKind.Numeric ? Number.ToString(System.Globalization.CultureInfo.InvariantCulture) + " " + Unit : Operand == OperandKind.Boolean ? Boolean.ToString() : Text);
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public ConditionJoin JoinWithPrevious { get; set; }
+    public override string ToString() => (JoinWithPrevious == ConditionJoin.Or ? "ODER: " : "UND: ") +
+        $"{Source.Name} {Operator} " + (Operand == OperandKind.Numeric ? Number.ToString(System.Globalization.CultureInfo.InvariantCulture) + " " + Unit : Operand == OperandKind.Boolean ? Boolean.ToString() : Text);
 }
 internal static class ConditionNumberComparison
 {
@@ -91,7 +95,7 @@ public sealed class MappingRule
     [JsonRequired] public string TypeNumber { get; set; } = "";
     [JsonRequired] public List<RuleCondition> Conditions { get; set; } = [];
     [JsonRequired] public List<MappingPosition> Positions { get; set; } = [];
-    public override string ToString() => $"{BgkKey} / {TypeNumber} | UND: {Conditions?.Count ?? 0} | Positionen: {string.Join("; ", Positions ?? [])}";
+    public override string ToString() => $"{BgkKey} / {TypeNumber} | Bedingungen: {Conditions?.Count ?? 0} | Positionen: {string.Join("; ", Positions ?? [])}";
 }
 public sealed class AvaTemplate
 {

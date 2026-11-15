@@ -79,17 +79,20 @@ public static class QuantityTakeoff
             if (rules.Count == 0) { unmapped++; continue; }
             foreach (var rule in rules)
             {
-                bool applies = true;
+                bool conditionFailed = false;
+                var matches = new List<bool>(rule.Conditions.Count);
                 foreach (var condition in rule.Conditions)
                 {
-                    // Evaluate every input even after false: a missing later input is an error, not false.
-                    try { applies &= Matches(condition, Read(condition.Source, condition.Unit)); }
+                    // Read every input, even after a match or read failure: missing OR/AND inputs are errors, not false.
+                    try { matches.Add(Matches(condition, Read(condition.Source, condition.Unit))); }
                     catch (Exception ex) when (ex is InvalidDataException or OverflowException)
                     {
                         errors.Add(new(element.Id, $"Element {element.Id}; {RuleContext(template, rule)}; Condition {condition}:\n{ex.Message}"));
-                        applies = false;
+                        matches.Add(false);
+                        conditionFailed = true;
                     }
                 }
+                bool applies = !conditionFailed && MatchesConditionExpression(rule.Conditions, matches);
                 if (!applies) continue;
                 // Matching rules and sibling positions are intentionally independent and additive.
                 foreach (var position in rule.Positions)
@@ -103,6 +106,24 @@ public static class QuantityTakeoff
             }
         }
         return new(rows.AsReadOnly(), errors.AsReadOnly(), examined, unmarked, unmapped);
+    }
+
+    internal static bool MatchesConditionExpression(IReadOnlyList<RuleCondition> conditions, IReadOnlyList<bool> matches)
+    {
+        if (conditions.Count != matches.Count) throw new ArgumentException("Every condition needs exactly one evaluated result.");
+        if (conditions.Count == 0) return true;
+        bool anyGroup = false;
+        bool currentAndGroup = matches[0];
+        for (int index = 1; index < conditions.Count; index++)
+        {
+            if (conditions[index].JoinWithPrevious == ConditionJoin.Or)
+            {
+                anyGroup |= currentAndGroup;
+                currentAndGroup = matches[index];
+            }
+            else currentAndGroup &= matches[index];
+        }
+        return anyGroup | currentAndGroup;
     }
 
     private static string RuleContext(AvaTemplate template, MappingRule rule, MappingPosition? position = null)
