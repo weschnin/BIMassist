@@ -36,6 +36,26 @@ public sealed class RuleCondition
     [JsonRequired] public string Unit { get; set; } = "";
     public override string ToString() => $"{Source.Name} {Operator} " + (Operand == OperandKind.Numeric ? Number.ToString(System.Globalization.CultureInfo.InvariantCulture) + " " + Unit : Operand == OperandKind.Boolean ? Boolean.ToString() : Text);
 }
+internal static class ConditionNumberComparison
+{
+    // Only absorb floating-point conversion noise in the explicitly declared unit.
+    internal const decimal ConversionNoise = 0.000000001m;
+
+    internal static int Compare(decimal actual, decimal expected, string spec)
+    {
+        int comparison = actual.CompareTo(expected);
+        if (comparison == 0 || spec is not ("LENGTH" or "ANGLE")) return comparison;
+        try { return Math.Abs(actual - expected) <= ConversionNoise ? 0 : comparison; }
+        catch (OverflowException) { return comparison; }
+    }
+
+    internal static bool ProvablyDifferent(decimal first, decimal second, string spec)
+    {
+        if (spec is not ("LENGTH" or "ANGLE")) return first != second;
+        try { return Math.Abs(first - second) > 2 * ConversionNoise; }
+        catch (OverflowException) { return true; }
+    }
+}
 public sealed class FormulaVariable
 {
     [JsonRequired] public string Name { get; set; } = "";

@@ -182,7 +182,9 @@ public static class QuantityTakeoff
     {
         int comparison = condition.Operand switch
         {
-            OperandKind.Numeric => Numeric(actual, condition.Source).CompareTo(condition.Number),
+            OperandKind.Numeric => condition.Operator is ConditionOperator.Equal or ConditionOperator.NotEqual
+                ? ConditionNumberComparison.Compare(Numeric(actual, condition.Source), condition.Number, condition.Source.Spec)
+                : Numeric(actual, condition.Source).CompareTo(condition.Number),
             OperandKind.Text => string.Compare(Text(actual, condition.Source), condition.Text, StringComparison.Ordinal),
             OperandKind.Boolean => Boolean(actual, condition.Source).CompareTo(condition.Boolean),
             _ => throw new InvalidDataException("Unsupported condition operand.")

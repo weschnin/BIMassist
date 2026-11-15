@@ -185,7 +185,8 @@ public static class TemplateValidator
         static bool ProvablyDisjoint(MappingRule first, MappingRule second) => first.Conditions.Any(a =>
             a.Operator == ConditionOperator.Equal && a.Operand == OperandKind.Numeric && UnitCatalog.Allows(a.Source.Spec, a.Unit)
             && second.Conditions.Any(b => b.Operator == ConditionOperator.Equal && b.Operand == OperandKind.Numeric
-                && a.Number != b.Number && a.Unit == b.Unit && a.Source.Kind == b.Source.Kind
+                && ConditionNumberComparison.ProvablyDifferent(a.Number, b.Number, a.Source.Spec)
+                && a.Unit == b.Unit && a.Source.Kind == b.Source.Kind
                 && a.Source.Scope == b.Source.Scope && a.Source.SharedGuid == b.Source.SharedGuid
                 && a.Source.Name == b.Source.Name && a.Source.Spec == b.Source.Spec
                 && a.Source.BuiltInId == b.Source.BuiltInId));

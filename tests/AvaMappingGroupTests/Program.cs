@@ -65,6 +65,23 @@ internal static class Program
                 Check(TemplateValidator.Validate(template).Any(d => d.Code == "MULTIPLE_RULES"),
                     "A single overlapping pair must warn even when other DN rules are disjoint");
             });
+            Test("Numerically close angle equality rules warn when their conversion-noise ranges overlap", () => {
+                var template = ValidTemplate();
+                var first = template.Mappings.Single();
+                first.Conditions.Add(new RuleCondition {
+                    Source = new ParameterSource { Kind = ParameterKind.ByName, Name = "AVA_Winkel", Spec = "ANGLE", Scope = ParameterScope.Instance },
+                    Operator = ConditionOperator.Equal, Operand = OperandKind.Numeric, Number = 30m, Unit = "deg" });
+                var second = TemplateJson.Copy(first);
+                second.Id = Guid.NewGuid();
+                foreach (var position in second.Positions) position.Id = Guid.NewGuid();
+                second.Conditions[0].Number = 30.0000000015m;
+                template.Mappings.Add(second);
+                Check(TemplateValidator.Validate(template).Any(d => d.Code == "MULTIPLE_RULES"),
+                    "Equality ranges can overlap within twice the conversion tolerance");
+                second.Conditions[0].Number = 30.000000003m;
+                Check(!TemplateValidator.Validate(template).Any(d => d.Code == "MULTIPLE_RULES"),
+                    "Clearly separated angles must remain disjoint");
+            });
             Test("Positions require identities references and nonempty lists with transactional upsert", () => {
                 var template = ValidTemplate(); var group = template.Mappings[0];
                 var editor = new TemplateEditor(); editor.ImportJson(TemplateJson.Serialize(template));

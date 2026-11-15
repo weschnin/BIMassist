@@ -123,6 +123,43 @@ internal static class Program
                     operand == OperandKind.Text ? new(Text: "X") : new(Boolean: true))]).Rows.Count);
             }
         });
+        Test("Angle and length rules match sub-nanounit unit-conversion noise", () =>
+        {
+            var template = Template();
+            template.Mappings[0].Conditions =
+            [
+                new() { Source = Local("AVA_DN"), Operand = OperandKind.Numeric, Operator = ConditionOperator.Equal, Number = 125m, Unit = "mm" },
+                new() { Source = Local("AVA_Winkel", "ANGLE"), Operand = OperandKind.Numeric, Operator = ConditionOperator.Equal, Number = 30m, Unit = "deg" }
+            ];
+            var result = QuantityTakeoff.Calculate(template, [Element("e1", template, (source, _) =>
+                new(Number: source.Name == "AVA_DN" ? 125.00000000000001m : 29.999999999999996m))]);
+            Equal(0, result.Errors.Count);
+            Equal(1, result.Rows.Count);
+            foreach (var (dn, angle) in new[] { (125.00000001m, 30m), (125m, 30.00000001m), (125m, 45m) })
+            {
+                result = QuantityTakeoff.Calculate(template, [Element("e1", template, (source, _) =>
+                    new(Number: source.Name == "AVA_DN" ? dn : angle))]);
+                Equal(0, result.Errors.Count);
+                Equal(0, result.Rows.Count);
+            }
+            template.Mappings[0].Conditions = [new() { Source = Local("Count", "NUMBER"), Operand = OperandKind.Numeric,
+                Operator = ConditionOperator.Equal, Number = 30m, Unit = "1" }];
+            result = QuantityTakeoff.Calculate(template, [Element("e1", template, (_, _) => new(Number: 30.000000000000001m))]);
+            Equal(0, result.Errors.Count);
+            Equal(0, result.Rows.Count); // Unitless values remain exact.
+        });
+        Test("Conversion tolerance does not change ordered length comparisons", () =>
+        {
+            var template = Template();
+            var condition = new RuleCondition { Source = Local("AVA_DN"), Operand = OperandKind.Numeric,
+                Operator = ConditionOperator.Greater, Number = 125m, Unit = "mm" };
+            template.Mappings[0].Conditions = [condition];
+            Equal(1, QuantityTakeoff.Calculate(template, [Element("e1", template, (_, _) =>
+                new(Number: 125.00000000000001m))]).Rows.Count);
+            condition.Operator = ConditionOperator.Less;
+            Equal(1, QuantityTakeoff.Calculate(template, [Element("e1", template, (_, _) =>
+                new(Number: 124.99999999999999m))]).Rows.Count);
+        });
         Test("invalid required quantity inputs produce contextual errors rather than fabricated zero", () =>
         {
             foreach (var value in new[] { new TakeoffValue(), new(Text: "5"), new(Boolean: false),

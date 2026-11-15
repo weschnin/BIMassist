@@ -93,6 +93,15 @@ Check(RevitQuantityReader.Read(document, system, measuredDn, "m").Number == 0.15
     "150 mm instance AVA_DN did not convert to 0.15 m for an exact rule comparison");
 Reject(() => RevitQuantityReader.Read(document, system, measuredDn, "1"),
     "Length-based AVA_DN was read as a unitless integer");
+var measuredAngle = new ParameterSource { Kind = ParameterKind.ByName, Name = "AVA_Winkel", Spec = "ANGLE", Scope = ParameterScope.Instance };
+system.Parameters.Add(new("AVA_Winkel", SpecTypeId.Angle, Math.PI / 6d, StorageType.Double));
+Check(RevitQuantityReader.Read(document, system, measuredAngle, "deg").Number == 30m,
+    "An exact 30 degree condition must survive Revit's radians-to-degrees floating-point conversion");
+system.Parameters.RemoveAll(p => p.Definition.Name == "AVA_Winkel");
+system.Parameters.Add(new("AVA_Winkel", SpecTypeId.Angle, 30.000001d * Math.PI / 180d, StorageType.Double));
+Check(RevitQuantityReader.Read(document, system, measuredAngle, "deg").Number != 30m,
+    "A genuinely different angle must not be rounded into the 30 degree rule");
+system.Parameters.RemoveAll(p => p.Definition.Name == "AVA_Winkel");
 // Revit gives piping diameter a piping-specific spec, not the generic Length spec used by the template.
 var pipeDiameter = new ParameterSource { Kind = ParameterKind.ByName, Name = "Durchmesser", Spec = "LENGTH", Scope = ParameterScope.Instance };
 system.Parameters.Add(new("Durchmesser", SpecTypeId.PipeSize, 100d / 304.8d, StorageType.Double));
