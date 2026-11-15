@@ -182,8 +182,20 @@ public static class TemplateValidator
                 else Warn("QUANTITY_MISSING", path, "Für diese LV-Position ist noch keine Mengenart (Parameter, feste Zahl oder Formel) festgelegt; Zuordnung ist ein Entwurf.");
             }
         }
+        static bool ProvablyDisjoint(MappingRule first, MappingRule second) => first.Conditions.Any(a =>
+            a.Operator == ConditionOperator.Equal && a.Operand == OperandKind.Numeric && UnitCatalog.Allows(a.Source.Spec, a.Unit)
+            && second.Conditions.Any(b => b.Operator == ConditionOperator.Equal && b.Operand == OperandKind.Numeric
+                && a.Number != b.Number && a.Unit == b.Unit && a.Source.Kind == b.Source.Kind
+                && a.Source.Scope == b.Source.Scope && a.Source.SharedGuid == b.Source.SharedGuid
+                && a.Source.Name == b.Source.Name && a.Source.Spec == b.Source.Spec
+                && a.Source.BuiltInId == b.Source.BuiltInId));
         foreach (var group in template.Mappings.GroupBy(m => (m.BgkKey, m.TypeNumber)).Where(g => g.Count() > 1))
-            Warn("MULTIPLE_RULES", group.Key.ToString(), "Mehrere Zuordnungen: keine Priorität / Else-Regel. Überlappung und gewünschte Mehrfachleistung fachlich prüfen.");
+        {
+            var rules = group.ToArray();
+            if (rules.Where((rule, index) => rules.Skip(index + 1).Any(other => !ProvablyDisjoint(rule, other))).Any())
+                Warn("MULTIPLE_RULES", group.Key.ToString(),
+                    "Mehrere Regeln können dasselbe Element erfüllen. Alle passenden Leistungspositionen werden dann addiert; es gibt keine Priorität oder Else-Regel. Bedingungen und gewünschte Mehrfachleistungen prüfen.");
+        }
         if (template.Mappings.Count == 0) Warn("NO_MAPPINGS", "Profil", "Noch keine Zuordnungen.");
         return result;
     }

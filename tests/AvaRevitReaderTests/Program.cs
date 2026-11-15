@@ -87,6 +87,12 @@ system.Parameters.Add(new("GemeinsamSystem", SpecTypeId.Length, 2d, StorageType.
 Check(RevitQuantityReader.Read(document, system,
     new() { Kind = ParameterKind.ByName, Name = "GemeinsamSystem", Spec = "LENGTH", Scope = ParameterScope.Instance }, "m").Number == 0.6096m,
     "Universal name lookup did not resolve a shared parameter on a system-family instance");
+system.Parameters.Add(new("AVA_DN", SpecTypeId.Length, 150d / 304.8d, StorageType.Double));
+var measuredDn = new ParameterSource { Kind = ParameterKind.ByName, Name = "AVA_DN", Spec = "LENGTH", Scope = ParameterScope.Instance };
+Check(RevitQuantityReader.Read(document, system, measuredDn, "m").Number == 0.15m,
+    "150 mm instance AVA_DN did not convert to 0.15 m for an exact rule comparison");
+Reject(() => RevitQuantityReader.Read(document, system, measuredDn, "1"),
+    "Length-based AVA_DN was read as a unitless integer");
 // Revit gives piping diameter a piping-specific spec, not the generic Length spec used by the template.
 var pipeDiameter = new ParameterSource { Kind = ParameterKind.ByName, Name = "Durchmesser", Spec = "LENGTH", Scope = ParameterScope.Instance };
 system.Parameters.Add(new("Durchmesser", SpecTypeId.PipeSize, 100d / 304.8d, StorageType.Double));

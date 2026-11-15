@@ -34,6 +34,37 @@ internal static class Program
                 Check(!diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error), string.Join("; ", diagnostics));
                 Check(!diagnostics.Any(d => d.Code == "MULTIPLE_RULES"), "siblings are not conflicting groups");
             });
+            Test("Different DN equalities on one source and unit are mutually exclusive, not a multiple-rule warning", () => {
+                var template = ValidTemplate();
+                var first = template.Mappings.Single();
+                first.Conditions.Add(new RuleCondition {
+                    Source = new ParameterSource { Kind = ParameterKind.ByName, Name = "Durchmesser", Spec = "LENGTH", Scope = ParameterScope.Instance },
+                    Operator = ConditionOperator.Equal, Operand = OperandKind.Numeric, Number = 100m, Unit = "mm" });
+                var second = TemplateJson.Copy(first);
+                second.Id = Guid.NewGuid();
+                foreach (var position in second.Positions) position.Id = Guid.NewGuid();
+                second.Conditions[0].Number = 150m;
+                template.Mappings.Add(second);
+                Check(!TemplateValidator.Validate(template).Any(d => d.Code == "MULTIPLE_RULES"),
+                    "Disjoint DN rules must not display an overlap warning");
+                second.Conditions[0].Number = 100m;
+                Check(TemplateValidator.Validate(template).Any(d => d.Code == "MULTIPLE_RULES"),
+                    "Equal DN conditions still overlap");
+                second.Conditions[0].Number = 0.15m; second.Conditions[0].Unit = "m";
+                Check(TemplateValidator.Validate(template).Any(d => d.Code == "MULTIPLE_RULES"),
+                    "Different units must not be assumed disjoint without conversion");
+                second.Conditions[0].Number = 150m; second.Conditions[0].Unit = "mm";
+                second.Conditions[0].Source.Name = "AndereQuelle";
+                Check(TemplateValidator.Validate(template).Any(d => d.Code == "MULTIPLE_RULES"),
+                    "Different parameter sources can satisfy both rules");
+                second.Conditions[0].Source.Name = "Durchmesser";
+                var third = TemplateJson.Copy(first);
+                third.Id = Guid.NewGuid();
+                foreach (var position in third.Positions) position.Id = Guid.NewGuid();
+                template.Mappings.Add(third);
+                Check(TemplateValidator.Validate(template).Any(d => d.Code == "MULTIPLE_RULES"),
+                    "A single overlapping pair must warn even when other DN rules are disjoint");
+            });
             Test("Positions require identities references and nonempty lists with transactional upsert", () => {
                 var template = ValidTemplate(); var group = template.Mappings[0];
                 var editor = new TemplateEditor(); editor.ImportJson(TemplateJson.Serialize(template));
