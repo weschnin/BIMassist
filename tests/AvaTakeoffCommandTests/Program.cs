@@ -10,6 +10,14 @@ Check(ava >= 0 && info > ava && app[ava..info].Contains("BIMassist.Commands.AvaQ
     && app[ava..info].Contains("BIMassist.Commands.BgkTransferFromReferenceCommand")
     && !app.Contains("new PulldownButtonData(\"BGK\"", StringComparison.Ordinal), "AVA functions are not grouped under AVA or the obsolete BGK group remains");
 var source = File.ReadAllText(Path.Combine(root, "Commands", "AvaQuantityTakeoffCommand.cs"));
+var options = File.ReadAllText(Path.Combine(root, "Commands", "AvaTakeoffOptionsWindow.cs"));
+Check(options.Contains("dauerhaft in der Ansicht oder über ihre Kategorie ausgeblendet")
+    && options.Contains("keine pixelgenaue Sichtbarkeitsprüfung")
+    && options.Contains("Geometrische Überdeckung wird nicht geprüft")
+    && options.Contains("Elemente außerhalb der Grenze liefern"), "Scope options must disclose crop-boundary and pixel-visibility limitations");
+Check(source.Contains("dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen")
+    && source.Contains("Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein")
+    && source.Contains("keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung"), "Scope results must disclose crop-boundary and pixel-visibility limitations");
 Check(source.Contains("TransactionMode.ReadOnly"), "Takeoff must be read-only");
 Check(!Regex.IsMatch(source, @"new\s+(Transaction|TransactionGroup|SubTransaction)\b"), "Takeoff must not write Revit elements");
 Check(source.Contains("document.IsFamilyDocument") && source.Contains("ActiveUIDocument"), "Command must reject missing project/family context");

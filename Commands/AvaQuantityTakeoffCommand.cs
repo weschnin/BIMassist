@@ -15,6 +15,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
 {
     public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
     {
+        string? scopeDescription = null;
         try
         {
             var uiDocument = commandData.Application.ActiveUIDocument;
@@ -46,8 +47,8 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             var activeView = uiDocument.ActiveView;
             if (AvaTakeoffOptionsWindow.Show(commandData.Application, activeView, out var visibleOnly) != true)
                 return Result.Cancelled;
-            var scopeDescription = visibleOnly
-                ? "Revit-Ansichtssichtbarkeit in „" + activeView.Name + "“ (dauerhafte und temporäre Ausblendungen berücksichtigt; unabhängig von Zoom/Pan; geometrische Überdeckung wird nicht geprüft)"
+            scopeDescription = visibleOnly
+                ? "Revit-Ansichtssichtbarkeit in „" + activeView.Name + "“ (dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen; Zoom-/Pan-Bildausschnitt nicht maßgeblich; Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein; keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung)"
                 : "alle Modellelement-Instanzen im aktuellen Hauptmodell";
             var documentIdentity = string.IsNullOrWhiteSpace(document.PathName)
                 ? "unsaved:" + document.Title : Path.GetFullPath(document.PathName);
@@ -139,7 +140,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                 throw new InvalidDataException("Die X31-Ausgabe darf weder die aktive AVA-Vorlage noch die Arbeitsbereich-Einstellungen überschreiben.");
             X31Writer.Save(outputPath, template, exportRows);
             TaskDialog.Show("AVA – Mengenermittlung", "X31-Datei erstellt und zurückgelesen.\n" + result.Rows.Count + " Mengenzeilen.\n\n" + outputPath
-                + "\n\nDer Import in California ist separat zu prüfen.");
+                + "\n\nDer Import in California ist separat zu prüfen.\n\nUmfang: " + scopeDescription);
             return Result.Succeeded;
         }
         catch (OperationCanceledException)
@@ -148,7 +149,8 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
         }
         catch (Exception ex)
         {
-            message = "Die AVA-Mengenermittlung konnte nicht abgeschlossen werden.\n\n" + ex.Message;
+            message = "Die AVA-Mengenermittlung konnte nicht abgeschlossen werden.\n\n" + ex.Message
+                + (scopeDescription == null ? "" : "\n\nUmfang: " + scopeDescription);
             return Result.Failed;
         }
     }

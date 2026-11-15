@@ -42,7 +42,17 @@ internal static class ExecuteTests
             f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
             Contains("Revit-Ansichtssichtbarkeit", TaskDialog.Confirmations.Single().MainContent);
+            Contains("dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen", TaskDialog.Confirmations.Single().MainContent);
+            Contains("Zoom-/Pan-Bildausschnitt nicht maßgeblich", TaskDialog.Confirmations.Single().MainContent);
+            Contains("Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein", TaskDialog.Confirmations.Single().MainContent);
+            Contains("keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung", TaskDialog.Confirmations.Single().MainContent);
             Contains("1 Modellelemente untersucht; 1 Mengenzeilen.", TaskDialog.Confirmations.Single().MainContent);
+            var successNotice = TaskDialog.Notices.Single();
+            Contains("Umfang: Revit-Ansichtssichtbarkeit in „Grundriss EG“", successNotice);
+            Contains("dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen", successNotice);
+            Contains("Zoom-/Pan-Bildausschnitt nicht maßgeblich", successNotice);
+            Contains("Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein", successNotice);
+            Contains("keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung", successNotice);
             var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
             Equal(1, rows.Count(r => r[12] != '*'));
         });
@@ -214,6 +224,7 @@ internal static class ExecuteTests
         });
         Test("fatal quantity failure reports complete scope counts in message and dialog without replacing a target", f =>
         {
+            BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Choices.Enqueue((true, true));
             var template = f.Template();
             template.Mappings[0].Positions.Add(new() { LvItemId = "FirstItem", Quantity = new()
                 { Source = new() { Kind = ParameterKind.LocalFamily, Name = "Absent", Spec = "LENGTH", Scope = ParameterScope.Instance }, Unit = "m" } });
@@ -222,6 +233,7 @@ internal static class ExecuteTests
             unmatchedType.BuiltIns[BuiltInParameter.ALL_MODEL_TYPE_COMMENTS] = new("Typ", SpecTypeId.String.Text, "03", StorageType.String);
             f.Document.Elements.AddRange([new FamilyInstance { Id = new(101) }, unmatchedType,
                 new FamilyInstance { Id = new(102), TypeId = unmatchedType.Id }]);
+            foreach (var instance in f.Document.Elements.OfType<FamilyInstance>()) instance.VisibleInViews.Add(700);
             var original = new byte[] { 0, 255, 31, 128, 0 }; File.WriteAllBytes(f.Output, original);
             f.Remember(template); f.ApproveAndSave();
             Equal(Result.Failed, f.Execute());
@@ -233,6 +245,11 @@ internal static class ExecuteTests
             Contains("Ohne passende BGK-/Typzuordnung: 1", f.Message);
             Contains("Ermittelte Mengenzeilen (nicht exportiert): 1", f.Message);
             Contains("1 Fehler", f.Message); Contains("Absent", f.Message);
+            Contains("Umfang: Revit-Ansichtssichtbarkeit in „Grundriss EG“", f.Message);
+            Contains("dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen", f.Message);
+            Contains("Zoom-/Pan-Bildausschnitt nicht maßgeblich", f.Message);
+            Contains("Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein", f.Message);
+            Contains("keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung", f.Message);
             Equal(f.Message, TaskDialog.Notices.Single());
         });
         Test("fatal error detail limit discloses total, displayed and omitted counts", f =>
@@ -263,6 +280,10 @@ internal static class ExecuteTests
             f.Remember(f.Template());
             Equal(Result.Cancelled, f.Execute());
             Contains("Umfang: Revit-Ansichtssichtbarkeit in „Grundriss EG“", TaskDialog.Notices.Single());
+            Contains("dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen", TaskDialog.Notices.Single());
+            Contains("Zoom-/Pan-Bildausschnitt nicht maßgeblich", TaskDialog.Notices.Single());
+            Contains("Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein", TaskDialog.Notices.Single());
+            Contains("keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung", TaskDialog.Notices.Single());
             Equal(0, CommonDialog.Shown.Count);
         });
         Test("missing and unmatched marks are counted independently; types and annotations excluded", f =>
@@ -315,9 +336,16 @@ internal static class ExecuteTests
         });
         Test("writer IO error is reported without a partial target", f =>
         {
+            BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Choices.Enqueue((true, true));
+            f.Instance.VisibleInViews.Add(700);
             f.Remember(f.Template()); TaskDialog.Answers.Enqueue(TaskDialogResult.Yes);
             CommonDialog.SaveChoices.Enqueue(Path.Combine(f.Directory, "missing-directory", "takeoff.x31"));
             Equal(Result.Failed, f.Execute()); Check(f.Message.Length > 0, "Missing IO error"); f.NoOutput(); Equal(0, TaskDialog.Notices.Count);
+            Contains("Umfang: Revit-Ansichtssichtbarkeit in „Grundriss EG“", f.Message);
+            Contains("dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen", f.Message);
+            Contains("Zoom-/Pan-Bildausschnitt nicht maßgeblich", f.Message);
+            Contains("Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein", f.Message);
+            Contains("keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung", f.Message);
         });
         Test("invalid chosen JSON fails without file or remembered invalid path", f =>
         {

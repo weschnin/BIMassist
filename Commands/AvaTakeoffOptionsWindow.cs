@@ -31,7 +31,7 @@ internal sealed class AvaTakeoffOptionsWindow : Window
             Content = "Nur sichtbare Elemente in der aktiven Ansicht berücksichtigen",
             IsChecked = false,
             Margin = new Thickness(0, 0, 0, 8),
-            ToolTip = "Revit-Ansichtssichtbarkeit; dauerhaft und temporär ausgeblendete Elemente werden ausgeschlossen. Zoom/Pan wird ignoriert. Geometrische Überdeckung wird nicht geprüft. Standardmäßig werden alle Modellelement-Instanzen im Hauptmodell berücksichtigt."
+            ToolTip = "Die Revit-Ansichtssichtbarkeit wird verwendet; Elemente, die dauerhaft in der Ansicht oder über ihre Kategorie ausgeblendet sind, sowie temporär ausgeblendete Elemente werden ausgeschlossen. Der aktuelle Zoom-/Pan-Bildausschnitt ist nicht maßgeblich. Revit kann bei Zuschneidebereichen (Crop) dennoch Elemente außerhalb der Grenze liefern; dies ist keine pixelgenaue Sichtbarkeitsprüfung. Geometrische Überdeckung wird nicht geprüft. Standardmäßig werden alle Modellelement-Instanzen im Hauptmodell berücksichtigt."
         };
         root.Children.Add(visibleOnly);
         root.Children.Add(new TextBlock
