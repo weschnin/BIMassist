@@ -14,6 +14,7 @@ public static class X31Writer
 {
     private static readonly XNamespace SourceNs = "http://www.gaeb.de/GAEB_DA_XML/DA82/3.3";
     private static readonly XNamespace Ns = "http://www.gaeb.de/GAEB_DA_XML/DA31/3.3";
+    private static readonly XNamespace BvbsNs = "BVBS";
 
     public static string Serialize(AvaTemplate template, IReadOnlyList<QuantityTakeoffRow> rows)
     {
@@ -46,7 +47,7 @@ public static class X31Writer
                 throw new InvalidDataException($"Mengeneinheit '{row.Unit}' weicht von der unveränderten LV-Einheit '{entriesById[row.LvItemId].Unit}' ab. Die Menge muss vor dem X31-Export in die LV-Einheit umgerechnet werden.");
             CheckText(row.Unit, 40, "Ergebniseinheit", false);
             CheckText(row.Explanation, 4096, "Erläuterung", true);
-            if (!string.IsNullOrEmpty(row.ElementId)) CheckText(row.ElementId, 9, "Revit-Element-ID im X31-Bemerkungsfeld (max. 9 Zeichen)", false);
+            if (!string.IsNullOrEmpty(row.ElementId)) CheckText("Revit-ElementID: " + row.ElementId, 200, "Revit-Element-ID", false);
             if (row.GroupLabel != null)
             {
                 CheckText(row.GroupLabel, 4096, "Gewerk/Baubereich", false);
@@ -59,6 +60,7 @@ public static class X31Writer
         var rowsByItem = rows.GroupBy(row => row.LvItemId, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
         long requiredLines = 0;
+        var countedGroups = new HashSet<(string? Kind, string? Label)>();
         foreach (var entry in entries)
         {
             if (!rowsByItem.TryGetValue(entry.Id, out var itemRows)) continue;
@@ -67,11 +69,12 @@ public static class X31Writer
                          .ThenBy(group => group.Key.GroupLabel ?? "", StringComparer.Ordinal))
             {
                 if (group.Key.GroupLabel != null)
-                    requiredLines += CommentLineCount(group.Key.GroupKind + ": " + group.Key.GroupLabel);
+                {
+                    if (countedGroups.Add(group.Key))
+                        requiredLines += CommentLineCount(group.Key.GroupKind + ": " + group.Key.GroupLabel);
+                }
                 foreach (var row in group)
                 {
-                    if (!string.IsNullOrEmpty(row.ElementId))
-                        requiredLines += CommentLineCount("Revit-ElementID: " + row.ElementId);
                     requiredLines++;
                 }
                 if (requiredLines > 9999 * 260) throw new InvalidDataException("REB-Zeilenadressraum einschließlich Gruppierungskommentaren überschritten.");
@@ -83,6 +86,7 @@ public static class X31Writer
             Skeleton(boq.Element(SourceNs + "BoQBody")!));
         var items = outputBoq.Descendants(Ns + "Item").ToDictionary(x => x.Attribute("ID")!.Value, StringComparer.Ordinal);
         int index = 0;
+        var emittedGroups = new HashSet<(string? Kind, string? Label)>();
         foreach (var entry in entries)
         {
             if (!rowsByItem.TryGetValue(entry.Id, out var itemRows)) continue;
@@ -93,21 +97,25 @@ public static class X31Writer
                          .OrderBy(group => group.Key.GroupKind ?? "", StringComparer.Ordinal)
                          .ThenBy(group => group.Key.GroupLabel ?? "", StringComparer.Ordinal))
             {
-                if (group.Key.GroupLabel != null)
+                if (group.Key.GroupLabel != null && emittedGroups.Add(group.Key))
                     AddComment(determination, group.Key.GroupKind + ": " + group.Key.GroupLabel, ref index);
                 foreach (var row in group)
                 {
-                    if (!string.IsNullOrEmpty(row.ElementId))
-                        AddComment(determination, "Revit-ElementID: " + row.ElementId, ref index);
-                    // REB 23.003 fixed row: columns 14..22 are the nine-character remark field.
-                    // Keep the Revit id on its quantity row and add a labeled provenance comment row.
+                    // CaliforniaX reads the full identifier from BVBS:Explanation attached
+                    // to this calculation row; REB's fixed remark field contains the example token.
                     var formula = row.Value.ToString("0.############################", CultureInfo.InvariantCulture).Replace('.', ',') + "=";
-                    var remark = row.ElementId.PadRight(9);
-                    AddLine(determination, new string(' ', 13) + remark + new string(' ', 7) + "91" + formula.PadRight(38), index++);
+                    var remark = string.IsNullOrEmpty(row.ElementId) ? new string(' ', 9) : "Revit-Ele";
+                    var line = new string(' ', 13) + remark + new string(' ', 7) + "91" + formula.PadRight(38);
+                    var itemLine = new XElement(Ns + "QDetermItem", new XElement(Ns + "QTakeoff",
+                        new XAttribute("Row", line + FormatAddress(index++) + new string(' ', 5))));
+                    if (!string.IsNullOrEmpty(row.ElementId))
+                        itemLine.Add(new XElement(BvbsNs + "Explanation", "Revit-ElementID: " + row.ElementId));
+                    determination.Add(itemLine);
                 }
             }
         }
         var document = new XDocument(new XDeclaration("1.0", "utf-8", null), new XElement(Ns + "GAEB",
+            new XAttribute(XNamespace.Xmlns + "BVBS", BvbsNs.NamespaceName),
             new XElement(Ns + "GAEBInfo", new XElement(Ns + "Version", "3.3"), new XElement(Ns + "VersDate", "2023-01"),
                 new XElement(Ns + "Date", DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))),
             new XElement(Ns + "QtyDeterm", new XElement(Ns + "QtyDetermInfo", new XElement(Ns + "MethodDescription", "REB23003-2009")),
@@ -273,22 +281,10 @@ public static class X31Writer
     }
     private static void AddComment(XElement determination, string text, ref int index)
     {
-        int start = 0;
-        while (start < text.Length)
-        {
-            var continuation = start == 0 ? "" : "Fortsetzung: ";
-            var length = Math.Min(56 - continuation.Length, text.Length - start);
-            var chunk = continuation + text.Substring(start, length);
-            AddLine(determination, new string(' ', 12) + "*" + chunk.PadRight(56), index++);
-            start += length;
-        }
+        var clipped = text.Length > 56 ? text[..56] : text;
+        AddLine(determination, new string(' ', 12) + "*" + clipped.PadRight(56), index++);
     }
-    private static int CommentLineCount(string text)
-    {
-        if (text.Length <= 56) return 1;
-        const int continuationCapacity = 56 - 13; // "Fortsetzung: " is repeated on every later row.
-        return 1 + (text.Length - 56 + continuationCapacity - 1) / continuationCapacity;
-    }
+    private static int CommentLineCount(string _) => 1;
 
     private static readonly Lazy<System.Xml.Schema.XmlSchemaSet> Schemas = new(() =>
     {
@@ -314,8 +310,20 @@ public static class X31Writer
     }
     private static void ValidateXml(XDocument document)
     {
+        foreach (var explanation in document.Descendants(BvbsNs + "Explanation"))
+        {
+            if (explanation.Parent?.Name != Ns + "QDetermItem"
+                || explanation.Parent.Elements(Ns + "QTakeoff").Count() != 1
+                || !explanation.Value.StartsWith("Revit-ElementID: ", StringComparison.Ordinal)
+                || explanation.Value.Length > 200)
+                throw new InvalidDataException("Ungültige BVBS-Ergänzung: Revit-Element-ID muss an genau einer Berechnungszeile stehen.");
+        }
+        // CaliforniaX's supplied DA31 export uses this vendor extension in addition to
+        // the base GAEB schema. Validate the GAEB core unchanged and the extension above.
+        var gaebCore = new XDocument(document);
+        gaebCore.Descendants(BvbsNs + "Explanation").Remove();
         var errors = new List<string>();
-        System.Xml.Schema.Extensions.Validate(document, Schemas.Value, (_, e) => errors.Add(e.Message));
+        System.Xml.Schema.Extensions.Validate(gaebCore, Schemas.Value, (_, e) => errors.Add(e.Message));
         if (errors.Count != 0) throw new InvalidDataException("Ungültiges GAEB DA31/3.3 XML: " + string.Join("; ", errors));
     }
 

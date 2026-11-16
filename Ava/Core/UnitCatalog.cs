@@ -12,6 +12,7 @@ public static class UnitCatalog
     };
     public static IReadOnlyList<string> AllUnits => Units.Values.SelectMany(units => units).Distinct(StringComparer.Ordinal).ToArray();
     public static IReadOnlyList<string> ForSpec(string spec) => Units.TryGetValue(spec, out var units) ? units : [];
+    public static IReadOnlyList<string> ForQuantitySpec(string spec) => ForSpec(spec);
     public static IReadOnlyList<string> ForFormulaInputSpec(string spec) => spec is "NUMBER" or "INTEGER" ? ["1"] : ForSpec(spec);
     public static bool AllowsFormulaInput(string spec, string unit) => ForFormulaInputSpec(spec).Contains(unit, StringComparer.Ordinal);
     public static bool Allows(string spec, string unit) => ForSpec(spec).Contains(unit, StringComparer.Ordinal);

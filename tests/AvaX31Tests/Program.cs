@@ -54,7 +54,7 @@ internal static class Program
             legacy["LvCatalog"]!["Source"]!.AsObject().Remove("X82SnapshotBase64");
             Require(TemplateJson.Deserialize(legacy.ToJsonString()).SchemaVersion == 3, "Legacy schema changed");
         });
-        Test("production X31 independently validates against unmodified official 2023-01 schema", () =>
+        Test("production X31 GAEB core validates against official schema; BVBS extension is row-scoped", () =>
         {
             var type = typeof(AvaTemplate).Assembly.GetType("BIMassist.Ava.Core.X31Writer");
             Require(type != null, "X31Writer is missing");
@@ -83,7 +83,7 @@ internal static class Program
         {
             Reject(() => X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m", "unit mismatch")]));
         });
-        Test("X31 places labeled Revit ID remarks before quantity rows and preserves the compact row ID", () =>
+        Test("X31 writes the full Revit ID as a BVBS explanation on its own calculation row", () =>
         {
             var explanation = "Revit ElementId=42 UniqueId=source&<element>; " + new string('x', 130);
             var template = Read(Fixture);
@@ -91,51 +91,61 @@ internal static class Program
             Validate(xml);
             var doc = XDocument.Parse(xml);
             var first = doc.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == "FirstItem");
-            var lines = first.Descendants(Ns + "QTakeoff").Select(x => x.Attribute("Row")!.Value).ToArray();
-            Equal(3, lines.Length);
+            var firstItems = first.Descendants(Ns + "QDetermItem").ToArray();
+            var lines = firstItems.Select(x => x.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value).ToArray();
+            Equal(2, lines.Length);
             Require(lines[0][12] == '*' && lines[0].Substring(13, 56).TrimEnd() == "Baubereich: Erdgeschoss", "Grouping row does not match screenshot layout");
-            Require(lines[1][12] == '*' && lines[1].Substring(13, 56).TrimEnd() == "Revit-ElementID: 42", "Labeled element remark missing");
             var firstQuantity = lines.Single(x => x[12] != '*');
-            Equal("42", firstQuantity.Substring(13, 9).Trim());
+            Equal("Revit-Ele", firstQuantity.Substring(13, 9));
             Equal("2,5=", firstQuantity.Substring(31, 38).Trim());
+            Equal("Revit-ElementID: 42", (string?)firstItems.Single(x => x.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value[12] != '*')
+                .Element(XName.Get("Explanation", "BVBS")));
             var second = doc.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == "SecondItem");
-            var secondRows = second.Descendants(Ns + "QTakeoff").Select(x => x.Attribute("Row")!.Value).ToArray();
-            Equal(2, secondRows.Length);
-            Require(secondRows[0][12] == '*' && secondRows[0].Substring(13, 56).TrimEnd() == "Revit-ElementID: 43", "Second labeled element remark missing");
-            var secondQuantity = secondRows.Single(x => x[12] != '*');
-            Equal("43", secondQuantity.Substring(13, 9).Trim());
+            var secondItems = second.Descendants(Ns + "QDetermItem").ToArray();
+            var secondRows = secondItems.Select(x => x.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value).ToArray();
+            Equal(1, secondRows.Length);
+            var secondQuantity = secondRows.Single();
+            Equal("Revit-Ele", secondQuantity.Substring(13, 9));
             Equal("0,0045=", secondQuantity.Substring(31,38).Trim());
+            Equal("Revit-ElementID: 43", (string?)secondItems.Single().Element(XName.Get("Explanation", "BVBS")));
             Require(lines.All(x => x.Length == 80), "Line width changed");
             Equal("m2", template.LvCatalog.Entries[0].Unit);
-            Require(!xml.Contains("BVBS") && !xml.Contains("QU>") && !xml.Contains(explanation), "Non-screenshot source details or reassigned LV unit leaked");
+            Require(!xml.Contains("QU>") && !xml.Contains(explanation), "Non-screenshot source details or reassigned LV unit leaked");
         });
-        Test("X31 groups element quantities within each LV position and emits group and Revit-ID remarks", () =>
+        Test("X31 emits each group header once across positions, truncates it, and keeps IDs with calculations", () =>
         {
             var rows = new[]
             {
-                new QuantityTakeoffRow("FirstItem", 1m, "m2", "trace 101", "101", "Erdgeschoss", "Baubereich"),
-                new QuantityTakeoffRow("FirstItem", 2m, "m2", "trace 102", "102", "Erdgeschoss", "Baubereich"),
-                new QuantityTakeoffRow("FirstItem", 3m, "m2", "trace 103", "103", "Obergeschoss", "Baubereich"),
-                new QuantityTakeoffRow("SecondItem", 4m, "m3", "trace 104", "104", "Rohbau", "Gewerk")
+                new QuantityTakeoffRow("FirstItem", 1m, "m2", "trace 101", "101", new string('x', 80), "Baubereich"),
+                new QuantityTakeoffRow("FirstItem", 2m, "m2", "trace 102", "102", new string('x', 80), "Baubereich"),
+                new QuantityTakeoffRow("FirstItem", 3m, "m2", "trace 103", "103", "M-Technik2", "Baubereich"),
+                new QuantityTakeoffRow("FirstItem", 4m, "m2", "trace 104", "104", "M-Technik2", "Baubereich"),
+                new QuantityTakeoffRow("SecondItem", 5m, "m3", "trace 105", "105", new string('x', 80), "Baubereich"),
+                new QuantityTakeoffRow("SecondItem", 6m, "m3", "trace 106", "106", new string('x', 80), "Baubereich"),
+                new QuantityTakeoffRow("SecondItem", 7m, "m3", "trace 107", "107", "M-Technik2", "Baubereich"),
+                new QuantityTakeoffRow("SecondItem", 8m, "m3", "trace 108", "108", "M-Technik2", "Baubereich")
             };
             var xml = X31Writer.Serialize(Read(Fixture), rows); Validate(xml);
             var doc = XDocument.Parse(xml);
             var first = doc.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == "FirstItem");
             var firstRows = first.Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
             var comments = firstRows.Where(x => x[12] == '*').Select(x => x.Substring(13, 56).TrimEnd()).ToArray();
-            Equal(1, comments.Count(x => x == "Baubereich: Erdgeschoss"));
-            Equal(1, comments.Count(x => x == "Baubereich: Obergeschoss"));
+            Equal(2, comments.Length);
+            Equal(new string('x', 56 - "Baubereich: ".Length), comments.Single(x => x.StartsWith("Baubereich: x", StringComparison.Ordinal))["Baubereich: ".Length..]);
             foreach (var row in firstRows.Where(x => x[12] != '*'))
-                Require(!string.IsNullOrWhiteSpace(row.Substring(13, 9).Trim()), "Revit element ID missing from the quantity-row remark field");
-            Equal("1=", firstRows.First(x => x[12] != '*').Substring(31, 38).Trim());
+                Equal("Revit-Ele", row.Substring(13, 9));
+            Require(firstRows.Where(x => x[12] != '*').Any(x => x.Substring(31, 38).Trim() == "1="), "Expected the 1-unit formula line");
             var second = doc.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == "SecondItem");
-            Require(second.Descendants(Ns + "QTakeoff").Select(x => x.Attribute("Row")!.Value)
-                .Any(x => x[12] == '*' && x.Substring(13, 56).TrimEnd() == "Gewerk: Rohbau"), "Trade header missing");
+            var secondItems = second.Descendants(Ns + "QDetermItem").ToArray();
+            Equal(4, secondItems.Length);
+            Equal("Revit-ElementID: 107", (string?)secondItems.First().Element(XName.Get("Explanation", "BVBS")));
+            var allHeaders = doc.Descendants(Ns + "QTakeoff").Select(x => x.Attribute("Row")!.Value)
+                .Where(x => x[12] == '*').ToArray();
+            Equal(2, allHeaders.Length);
             var ungrouped = X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m2", "trace", "77")]);
             var ungroupedRows = XDocument.Parse(ungrouped).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
-            Equal(2, ungroupedRows.Length);
-            Require(ungroupedRows[0][12] == '*' && ungroupedRows[0].Substring(13, 56).TrimEnd() == "Revit-ElementID: 77", "Ungrouped ID remark missing or mislabeled");
-            Equal("77", ungroupedRows.Single(x => x[12] != '*').Substring(13, 9).Trim());
+            Equal(1, ungroupedRows.Length);
+            Equal("Revit-Ele", ungroupedRows.Single().Substring(13, 9));
         });
         Test("blank unknown null and empty row input fail with domain errors", () =>
         {
@@ -146,7 +156,8 @@ internal static class Program
             foreach (var id in new[] { "", " ", "unknown", null! }) Reject(() => X31Writer.Serialize(t, [new(id, 1, "m", "")]));
             Reject(() => X31Writer.Serialize(t, [null!]));
             foreach (var unit in new[] { "", " ", "kg\n91", null!, new string('u', 41) }) Reject(() => X31Writer.Serialize(t, [new("FirstItem", 1, unit, "")]));
-            Reject(() => X31Writer.Serialize(t, [new("FirstItem", 1, "m", "", "4294967296")]));
+            Require(X31Writer.Serialize(t, [new("FirstItem", 1, "m2", "", "4294967296")]).Contains("Revit-ElementID: 4294967296"),
+                "Full Revit ID was not retained in the BVBS explanation");
             foreach (var explanation in new[] { null!, "a\nb", "a\tb", "\0", "\uD800", new string('e', 4097) }) Reject(() => X31Writer.Serialize(t, [new("FirstItem", 1, "m", explanation)]));
         });
         Test("embedded snapshot is mandatory bounded hash-verified safe XML and never a filename fallback", () =>
@@ -238,8 +249,10 @@ internal static class Program
                         var lines = XDocument.Parse(xml).Descendants(Ns+"QTakeoff").Select(x => x.Attribute("Row")!.Value).ToArray();
                         Require(!xml.Contains(explanation), "Internal formula explanation leaked into screenshot-oriented output");
                         var numeric = lines.Single(x => x.Substring(29, 2) == "91");
-                        Require(lines.Any(x => x[12] == '*' && x.Substring(13, 56).TrimEnd() == "Revit-ElementID: 42"), "Labeled Revit ID remark missing");
-                        Require(numeric[..12].All(x => x == ' ') && numeric.Substring(13, 9).Trim() == "42"
+                        var numericItem = XDocument.Parse(xml).Descendants(Ns + "QDetermItem")
+                            .Single(x => x.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value == numeric);
+                        Equal("Revit-ElementID: 42", (string?)numericItem.Element(XName.Get("Explanation", "BVBS")));
+                        Require(numeric[..12].All(x => x == ' ') && numeric.Substring(13, 9) == "Revit-Ele"
                             && numeric.Substring(22, 7).All(x => x == ' '), "Unexpected quantity remark/sign prefix");
                         Equal("91", numeric.Substring(29, 2));
                         Equal(value, decimal.Parse(numeric.Substring(31, 38).Trim().TrimEnd('='), CultureInfo.GetCultureInfo("de-DE")));
@@ -255,11 +268,11 @@ internal static class Program
             var xml = X31Writer.Serialize(Read(Fixture), [new QuantityTakeoffRow("FirstItem", 1m, "m2", explanation, "42")]);
             Validate(xml);
             var rows = XDocument.Parse(xml).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
-            Equal(2, rows.Length);
-            Require(rows[0][12] == '*' && rows[0].Substring(13, 56).TrimEnd() == "Revit-ElementID: 42", "Long-explanation row lost its labeled ID remark");
+            Equal(1, rows.Length);
+            Equal("Revit-Ele", rows[0].Substring(13, 9));
             Require(!xml.Contains(explanation), "Internal explanation leaked into output");
         });
-        Test("long grouping comments cannot turn continuation chunks into REB directives", () =>
+        Test("long group labels are truncated without continuation rows", () =>
         {
             const string groupPrefix = "Baubereich: ";
             var groupLabel = new string('x', 56 - groupPrefix.Length) + "#Bild ../../group.png";
@@ -267,11 +280,9 @@ internal static class Program
             Validate(xml);
             var comments = XDocument.Parse(xml).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!)
                 .Where(row => row[12] == '*').Select(row => row.Substring(13, 56)).ToArray();
-            Require(comments.Length >= 2, "Test input did not produce group continuation chunks");
-            Require(comments.All(comment => !comment.TrimStart().StartsWith("#Bild", StringComparison.Ordinal)),
-                "A continuation comment begins with a REB image directive");
-            Require(comments.Any(comment => comment.StartsWith("Fortsetzung: ", StringComparison.Ordinal)),
-                "Continuation chunks are not explicitly marked as safe comments");
+            Equal(1, comments.Length);
+            Equal(56, comments[0].Length);
+            Require(!comments[0].Contains("Fortsetzung:", StringComparison.Ordinal), "Group label was split into continuation rows");
         });
         Test("optional X82 metadata does not weaken strict legacy schema3 deserialization", () =>
         {
@@ -363,7 +374,9 @@ internal static class Program
         schemas.Add(Ns.NamespaceName, Path.Combine(AppContext.BaseDirectory, "Fixtures/Official/GAEB_DA_XML_31_3.3_2023-01.xsd"));
         schemas.Compile();
         var errors = new List<string>();
-        XDocument.Parse(xml).Validate(schemas, (_, e) => errors.Add(e.Message));
+        var document = XDocument.Parse(xml);
+        document.Descendants(XName.Get("Explanation", "BVBS")).Remove();
+        document.Validate(schemas, (_, e) => errors.Add(e.Message));
         Require(errors.Count == 0, string.Join("\n", errors));
     }
     static AvaTemplate WithSnapshot(AvaTemplate t, string xml)

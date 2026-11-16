@@ -85,14 +85,47 @@ internal static class Program
             Reject<InvalidDataException>(() => UnitCatalog.Convert(1m, "m", "St"));
             Reject<InvalidDataException>(() => UnitCatalog.Convert(decimal.MaxValue, "km", "mm"));
         });
-        Test("a NUMBER parameter cannot claim an unverifiable physical Revit unit", () =>
+        Test("a NUMBER/INTEGER parameter may explicitly carry the exact LV unit as an unconverted direct quantity", () =>
         {
-            var template = Template();
-            template.Mappings[0].Conditions = [new() { Source = Local("LengthNumber", "NUMBER"),
-                Operand = OperandKind.Numeric, Operator = ConditionOperator.Equal, Number = 2, Unit = "m", AllowCustomUnit = true }];
-            var result = QuantityTakeoff.Calculate(template, [Element("e1", template, (_, _) => new(Number: 2))]);
-            Equal(0, result.Rows.Count); Equal(1, result.Errors.Count);
-            Contains("nicht verifizierbar", result.Errors.Single().Message);
+            foreach (var spec in new[] { "NUMBER", "INTEGER" })
+            {
+                var template = Template();
+                template.LvCatalog.Entries[0] = template.LvCatalog.Entries[0] with { Unit = "h" };
+                template.Mappings[0].Positions[0].Quantity = new() { Source = Local("AVA_Anzahl", spec), Unit = "h", AllowCustomUnit = true };
+                var expected = spec == "INTEGER" ? 7m : 7.5m;
+                var result = QuantityTakeoff.Calculate(template, [Element("e1", template, (_, unit) =>
+                {
+                    Equal("1", unit); return new(Number: expected);
+                })]);
+                Equal(0, result.Errors.Count); Equal(expected, result.Rows.Single().Value);
+                Equal("h", result.Rows.Single().Unit);
+                Contains("Rohwert ohne Umrechnung", result.Rows.Single().Explanation);
+                var diagnostics = TemplateValidator.Validate(template);
+                if (diagnostics.Any(d => d.Code == "QUANTITY_UNIT_UNVERIFIABLE"))
+                    throw new Exception("Explicit direct scalar unit was incorrectly reported as an export-blocking unverifiable unit");
+
+                template.LvCatalog.Entries[0] = template.LvCatalog.Entries[0] with { Unit = "min" };
+                result = QuantityTakeoff.Calculate(template, [Element("e1", template, (_, _) => new(Number: expected))]);
+                Equal(0, result.Rows.Count); Equal(1, result.Errors.Count);
+                Contains("Manuell deklarierte Einheit", result.Errors.Single().Message);
+                Contains("bleibt unverändert", result.Errors.Single().Message);
+            }
+        });
+        Test("NUMBER/INTEGER retain established direct St and psch quantities", () =>
+        {
+            foreach (var spec in new[] { "NUMBER", "INTEGER" })
+            foreach (var unit in new[] { "St", "psch" })
+            {
+                var template = Template();
+                template.LvCatalog.Entries[0] = template.LvCatalog.Entries[0] with { Unit = unit };
+                template.Mappings[0].Positions[0].Quantity = new() { Source = Local("AVA_Anzahl", spec), Unit = unit };
+                var expected = spec == "INTEGER" ? 7m : 7.5m;
+                var result = QuantityTakeoff.Calculate(template, [Element("e1", template, (_, requestedUnit) =>
+                {
+                    Equal(unit, requestedUnit); return new(Number: expected);
+                })]);
+                Equal(0, result.Errors.Count); Equal(expected, result.Rows.Single().Value); Equal(unit, result.Rows.Single().Unit);
+            }
         });
         Test("invalid templates are rejected before enumerating elements", () =>
         {
@@ -533,7 +566,7 @@ internal static class Program
         Test("fractional INTEGER adapter values are type errors", () =>
         {
             var template = Template();
-            template.Mappings[0].Positions[0].Quantity = new() { Source = Local("Count", "INTEGER"), Unit = "St" };
+            template.Mappings[0].Positions[0].Quantity = new() { Source = Local("Count", "INTEGER"), Unit = "St", AllowCustomUnit = true };
             var result = QuantityTakeoff.Calculate(template, [Element("e1", template, (_, _) => new(Number: 1.5m))]);
             Equal(0, result.Rows.Count); Equal(1, result.Errors.Count);
             Contains("INTEGER", result.Errors[0].Message);

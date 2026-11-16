@@ -20,7 +20,7 @@ internal sealed class PositionEditorWindow : Window
     private readonly W.TextBox lvDetail = new() { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, Height = 180,
         VerticalScrollBarVisibility = W.ScrollBarVisibility.Auto, Margin = new Thickness(0, 12, 0, 0) };
     private readonly W.CheckBox hasQuantity = new() { Content = "Menge ausdrücklich definieren", Margin = new Thickness(0, 8, 0, 12) };
-    private readonly W.CheckBox allowCustomUnit = new() { Content = "Freie Einheit manuell interpretieren", ToolTip = "NUMBER/INTEGER hat keine Revit-Einheit. Nicht verifizierbare freie Einheiten blockieren den Export; für m usw. eine physikalische Revit-Spezifikation verwenden.", Margin = new Thickness(0, 0, 0, 8) };
+    private readonly W.CheckBox allowCustomUnit = new() { Content = "Freie Einheit manuell interpretieren", ToolTip = "Nur für direkte NUMBER/INTEGER-Mengen. Der Rohwert wird ohne Umrechnung als diese Einheit ausgegeben; Quell- und LV-Einheit müssen exakt gleich sein.", Margin = new Thickness(0, 0, 0, 8) };
     private readonly ParameterSourceEditor quantity;
     private readonly W.ComboBox quantityKind;
     private readonly W.TextBox constantValue;
@@ -98,7 +98,7 @@ internal sealed class PositionEditorWindow : Window
         quantity = new ParameterSourceEditor(template.ParameterCatalog.Entries, draft.Quantity?.Source ?? new()); panel.Children.Add(quantity);
         panel.Children.Add(quantityUnitLabel); panel.Children.Add(quantityUnit);
         panel.Children.Add(allowCustomUnit);
-        panel.Children.Add(EditorUi.Text("Die Revit-Spezifikation muss zur Leseeinheit passen. NUMBER/INTEGER hat keine nachprüfbare physikalische Einheit: freie Einheiten wie h, kg oder m blockieren den Export für passende Positionen. Für physikalische Mengen einen entsprechend typisierten Revit-Parameter verwenden. Kompatible Mengen- und LV-Einheiten werden bei der Ermittlung umgerechnet, inkompatible blockieren den Export."));
+        panel.Children.Add(EditorUi.Text("Revit NUMBER/INTEGER ist einheitenlos. Für direkte Mengen darfst du mit der aktivierten Option eine Bedeutung wie Stunden manuell festlegen: Der Zahlenwert wird unverändert gelesen, nicht umgerechnet und nur exportiert, wenn die deklarierte Einheit exakt der Einheit der LV-Position entspricht. Bei physikalisch typisierten Parametern prüft Revit die Spezifikation und kompatible Einheiten werden in die unveränderte LV-Einheit umgerechnet."));
         expression.Text = draft.Quantity?.Expression ?? ""; expression.MinHeight = 60; expression.AcceptsReturn = true; expression.TextWrapping = TextWrapping.Wrap;
         EditorUi.Field(formulaPanel, "Formel: +, −, *, / und Klammern; z. B. 2 * AVA_Laenge + 0.5", expression);
         formulaPanel.Children.Add(EditorUi.Text("Jeder Parameter muss zuerst über 'Parameter hinzufügen…' einer Revit-Quelle und Eingabeeinheit zugeordnet werden. Einfache Namen ohne Leerzeichen dürfen direkt stehen (Volumen); Namen mit Leerzeichen müssen in [Klammern] stehen. 'Name in Formel einfügen' setzt den ausgewählten Namen ein. Parametrisierte Formeln prüfen Dimensionen und rechnen physikalische Eingänge vor der Auswertung auf Basiseinheiten um; Zahlen bei Addition gelten in der Ergebniseinheit. NUMBER/INTEGER hat keine physikalische Revit-Einheit. Parameterfreie Zahlenformeln sind ausdrücklich deklarierte Konstanten."));
@@ -132,13 +132,17 @@ internal sealed class PositionEditorWindow : Window
         void RefreshQuantity()
         {
             bool enabled = hasQuantity.IsChecked == true;
-            var kind = EditorUi.Selected<QuantityKind>(quantityKind);
-            quantityKind.IsEnabled = enabled; constantValue.IsEnabled = enabled && kind == QuantityKind.Constant;
-            quantity.IsEnabled = enabled && kind == QuantityKind.Parameter; quantity.Visibility = kind == QuantityKind.Parameter ? Visibility.Visible : Visibility.Collapsed;
+            var kindSelector = quantityKind;
+            var valueEditor = constantValue;
+            var sourceEditor = quantity;
+            if (kindSelector == null || valueEditor == null || sourceEditor == null) return;
+            var kind = EditorUi.Selected<QuantityKind>(kindSelector);
+            kindSelector.IsEnabled = enabled; valueEditor.IsEnabled = enabled && kind == QuantityKind.Constant;
+            sourceEditor.IsEnabled = enabled && kind == QuantityKind.Parameter; sourceEditor.Visibility = kind == QuantityKind.Parameter ? Visibility.Visible : Visibility.Collapsed;
             bool manualUnitEligible = false;
             if (kind == QuantityKind.Parameter)
             {
-                try { manualUnitEligible = quantity.ReadSource().Spec is "INTEGER" or "NUMBER"; }
+                try { manualUnitEligible = sourceEditor.ReadSource().Spec is "INTEGER" or "NUMBER"; }
                 catch (InvalidDataException) { }
             }
             allowCustomUnit.IsEnabled = enabled && kind == QuantityKind.Parameter && (manualUnitEligible || allowCustomUnit.IsChecked == true);
@@ -146,7 +150,7 @@ internal sealed class PositionEditorWindow : Window
             allowCustomUnit.Content = manualUnitEligible ? "Freie Einheit manuell interpretieren"
                 : allowCustomUnit.IsChecked == true ? "Nicht verfügbar: nur für NUMBER/INTEGER" : "Freie Einheit nur für NUMBER/INTEGER";
             allowCustomUnit.ToolTip = manualUnitEligible
-                ? "Nur dimensionslose Einheiten können ohne Revit-Physikspezifikation übernommen werden. Andere freie Einheiten blockieren den Export."
+                ? "Manuelle Bedeutung der Zahl, nicht aus Revit verifiziert. Rohwert ohne Umrechnung; Export nur bei exakter Übereinstimmung mit der LV-Einheit."
                 : "Diese Option setzt eine NUMBER- oder INTEGER-Quelle voraus. Bei bestehender ungültiger Auswahl deaktivieren Sie sie vor dem Speichern.";
             quantityUnitLabel.Text = kind == QuantityKind.Parameter
                 ? allowCustomUnit.IsChecked == true ? "Manuell deklarierte Einheit (physikalische Einheit nicht verifizierbar)" : "Parameter-Leseeinheit"
@@ -162,7 +166,7 @@ internal sealed class PositionEditorWindow : Window
             updatingUnits = true;
             try
             {
-                try { quantityUnit.ItemsSource = kind == QuantityKind.Parameter ? UnitCatalog.ForSpec(quantity.ReadSource().Spec)
+                try { quantityUnit.ItemsSource = kind == QuantityKind.Parameter ? UnitCatalog.ForQuantitySpec(sourceEditor.ReadSource().Spec)
                         .Concat(allowCustomUnit.IsChecked == true && !string.IsNullOrWhiteSpace(selectedUnit) ? new[] { selectedUnit } : [])
                         .Distinct(StringComparer.Ordinal).ToArray()
                     : new[] { "NUMBER", "LENGTH", "AREA", "VOLUME", "ANGLE", "MASS_DENSITY" }.SelectMany(UnitCatalog.ForSpec)

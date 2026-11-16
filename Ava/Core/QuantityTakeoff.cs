@@ -201,18 +201,24 @@ public static class QuantityTakeoff
         else
         {
             if (quantity.Kind == QuantityKind.Parameter && quantity.AllowCustomUnit
-                && !UnitCatalog.Allows(quantity.Source!.Spec, quantity.Unit))
-                throw new InvalidDataException($"Einheit '{quantity.Unit}' für {quantity.Source.Spec} in Revit nicht verifizierbar; einen Parameter mit physikalischer Spezifikation verwenden.");
+                && quantity.Source!.Spec is not ("NUMBER" or "INTEGER"))
+                throw new InvalidDataException("Eine manuell interpretierte Einheit ist nur für direkte NUMBER/INTEGER-Parameter zulässig.");
             value = quantity.Kind == QuantityKind.Constant ? quantity.ConstantValue!.Value
                 : Numeric(read(quantity.Source!, quantity.AllowCustomUnit ? "1" : quantity.Unit), quantity.Source!);
             expression = quantity.Kind == QuantityKind.Constant ? "constant" : quantity.Source!.ToString()
                 + (quantity.AllowCustomUnit ? "; explizit manuelle Einheit, Rohwert ohne Umrechnung" : "");
         }
         var sourceValue = value;
-        value = UnitCatalog.Convert(value, quantity.Unit, lvUnit);
+        if (quantity.AllowCustomUnit)
+        {
+            if (!string.Equals(quantity.Unit, lvUnit, StringComparison.Ordinal))
+                throw new InvalidDataException($"Manuell deklarierte Einheit '{quantity.Unit}' kann nicht in die LV-Einheit '{lvUnit}' umgerechnet werden. Die Zahl bleibt unverändert; Quell- und LV-Einheit müssen exakt übereinstimmen.");
+        }
+        else value = UnitCatalog.Convert(value, quantity.Unit, lvUnit);
         return new(position.LvItemId, value, lvUnit,
             $"Element {elementId}; " + (string.IsNullOrEmpty(sourceIdentity) ? "" : sourceIdentity + "; ") +
             $"Rule {ruleId}; Position {position.Id}; {expression} = {sourceValue.ToString(CultureInfo.InvariantCulture)} {quantity.Unit}"
+            + (quantity.AllowCustomUnit ? " (Rohwert ohne Umrechnung; Einheit manuell deklariert)" : "")
             + (quantity.Unit == lvUnit ? "" : $" → {value.ToString(CultureInfo.InvariantCulture)} {lvUnit} (LV-Einheit)"), elementId);
     }
 

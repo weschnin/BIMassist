@@ -126,8 +126,7 @@ public static class TemplateValidator
                                 Error("QUANTITY_UNIT", path, quantity.AllowCustomUnit
                                     ? "Freie Einheit nur für NUMBER/INTEGER; Wert wird dabei ohne Umrechnung übernommen."
                                     : $"Mengeneinheit '{quantity.Unit}' passt nicht zur Parameterspezifikation {source.Spec}. Zulässig: {string.Join(", ", UnitCatalog.ForSpec(source.Spec))}. Für eine Formel mit Umrechnung bitte die Quelleneinheit und Ergebniseinheit getrennt festlegen.");
-                            if (quantity.AllowCustomUnit && !UnitCatalog.Allows(source.Spec, quantity.Unit))
-                                Warn("QUANTITY_UNIT_UNVERIFIABLE", path, "NUMBER/INTEGER hat in Revit keine physikalische Einheit. Diese freie Einheit kann nicht verifiziert werden; eine passende Position blockiert den Export bis zur Klärung der Quelle.");
+
                         }
                     }
                     else if (quantity.Kind == QuantityKind.Constant)
@@ -156,7 +155,10 @@ public static class TemplateValidator
                     }
                     else Error("QUANTITY_MODE", path, "Unbekannte Mengenart.");
                     if (lv != null && !string.Equals(quantity.Unit, lv.Unit, StringComparison.Ordinal))
-                        Warn("LV_UNIT", path, "Mengeneinheit " + quantity.Unit + " und LV-Einheit " + lv.Unit + " weichen ab. Kompatible Einheiten werden bei der Mengenermittlung umgerechnet; nicht umrechenbare Einheiten blockieren den Export.");
+                        Warn(quantity.AllowCustomUnit ? "LV_UNIT_MANUAL" : "LV_UNIT", path,
+                            quantity.AllowCustomUnit
+                                ? "Manuell deklarierte Einheit " + quantity.Unit + " weicht von der LV-Einheit " + lv.Unit + " ab. NUMBER/INTEGER-Rohwerte werden nicht umgerechnet; diese Mengenzeile kann so nicht exportiert werden."
+                                : "Mengeneinheit " + quantity.Unit + " und LV-Einheit " + lv.Unit + " weichen ab. Kompatible Einheiten werden bei der Mengenermittlung umgerechnet; nicht umrechenbare Einheiten blockieren den Export.");
                 }
                 else Warn("QUANTITY_MISSING", path, "Für diese LV-Position ist noch keine Mengenart (Parameter, feste Zahl oder Formel) festgelegt; Zuordnung ist ein Entwurf.");
             }
@@ -219,7 +221,7 @@ public static class ChecklistBuilder
                     { Kind: QuantityKind.Formula } quantity => "Formel: " + quantity.Expression + "; deklarierte Ergebniseinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + ". Eingänge: " +
                         string.Join("; ", quantity.Variables.Select(v => v.Name + " = Lesen: " + v.Source + "; Eingabeeinheit " + v.Unit)) +
                         ". Revit-Eingänge werden in ihren deklarierten Einheiten gelesen; parametrisierte Formeln rechnen physikalische Eingänge auf Basiseinheiten um und prüfen die Ergebnisdimension. Zahlenkonstanten in einer Addition gelten in der Ergebniseinheit; parameterfreie Formeln deklarieren ihre Einheit ausdrücklich. Kompatible Ergebnisse werden in die LV-Einheit umgerechnet, sonst blockiert. Fehlende / ungültige Eingänge sind Fehler, kein Fallback.",
-                    { AllowCustomUnit: true } quantity => "Lesen: " + quantity.Source + "; manuell deklarierte Einheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + ". Physikalische NUMBER/INTEGER-Einheiten sind in Revit nicht verifizierbar und blockieren passende Mengenzeilen. Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen.",
+                    { AllowCustomUnit: true } quantity => "Lesen: " + quantity.Source + "; manuell interpretierter Rohwert als " + quantity.Unit + "; nur bei exakt gleicher LV-Katalogeinheit " + lv?.Unit + " und ohne Umrechnung exportierbar. Die Einheit stammt aus der Vorlage, nicht aus Revit. Fehlende / ungültige Werte melden; Null/Negativwerte fachlich prüfen.",
                     { } quantity => "Lesen: " + quantity.Source + "; deklarierte Leseeinheit " + quantity.Unit + "; LV-Katalogeinheit " + lv?.Unit + ". Revit-Spezifikation wird geprüft, interne Revit-Einheit in die Leseeinheit und kompatible Mengeneinheit in die LV-Einheit umgerechnet; sonst blockiert der Export. Null/Negativwerte fachlich prüfen.",
                     null => "Menge nicht definiert; Zuordnung ist ein Entwurf."
                 };

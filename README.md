@@ -160,10 +160,13 @@ Mengenquelle gespeicherte Zieleinheit überführt. Bedingungen vergleichen damit
 in ihrer ausdrücklich gespeicherten Einheit. Direkte Mengen und Formelergebnisse
 werden vor dem X31-Schreiben in die unveränderte Einheit der LV-Position
 umgerechnet; inkompatible Einheiten blockieren den Export. NUMBER/INTEGER sind
-Revit-seitig dimensionslos. Eine ausdrücklich aktivierte freie Mengeneinheit
-bleibt eine manuelle Deklaration ohne Revit-Umrechnung und darf keine
-physikalische Revit-Spezifikation vortäuschen. Parametrisierte Formeln prüfen
-Dimensionen und normalisieren ihre physikalischen Eingänge vor der Rechnung.
+Revit-seitig dimensionslos. Das ist kein pauschales Exportverbot: Bei einer direkten
+Parameter-Menge kann der Nutzer die Bedeutung (z. B. Stunden) ausdrücklich festlegen.
+Der Rohwert wird nicht umgerechnet und nur exportiert, wenn die deklarierte Einheit
+exakt der LV-Einheit entspricht. Formeln bleiben separat dimensionsgeprüft:
+Einheitenlose NUMBER/INTEGER-Formelwerte dürfen nicht stillschweigend zu einer
+Länge, Fläche, Stückzahl oder Pauschale werden. Parametrisierte Formeln normalisieren
+physikalische Eingänge vor der Rechnung.
 Die Projekteinstellung dient als Umrechnungsbasis, nicht als Rundung der
 angezeigten Zahl.
 
@@ -213,8 +216,9 @@ den gesamten Export statt einer stillen Teil- oder Nullmengenausgabe.
 
 Die Ausgabe verwendet **GAEB DA XML X31 / 3.3, Ausgabe 2023-01**,
 Verfahrensbeschreibung **REB23003-2009**. Berechnete Einzelmengen werden als
-REB-Formel 91 ausgegeben; Standard-Kommentarzeilen erläutern Quelle und eigene
-Ergebniseinheit. Die ursprünglichen LV-IDs, Teil-OZ und Gliederungsbreiten werden
+REB-Formel 91 ausgegeben. Der volle Revit-Elementbezug steht als
+BVBS:Explanation an derselben Berechnungszeile; Gruppierungskommentare erscheinen
+einmal je Gruppe, lange Gruppentexte werden auf das REB-Feld gekürzt. Die ursprünglichen LV-IDs, Teil-OZ und Gliederungsbreiten werden
 aus dem unveränderten X82-Snapshot übernommen, nicht aus Punktfolgen geraten.
 Der neue X82-Import bettet dafür die Originalbytes mit SHA-256 in die portable
 Vorlage ein. Bei älteren Vorlagen ohne diesen Snapshot das ursprüngliche

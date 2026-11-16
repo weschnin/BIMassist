@@ -14,7 +14,7 @@ internal static class Program
         Test("Constants freely declare arbitrary nonempty result labels", () => ArbitraryResultLabels("constant"));
         Test("Numeric formulas freely declare arbitrary nonempty result labels", () => ArbitraryResultLabels("numeric formula"));
         Test("Bound formulas freely declare arbitrary nonempty result labels", () => ArbitraryResultLabels("bound formula"));
-        Test("Unverifiable INTEGER/NUMBER physical output units block takeoff", ManualIntegerUnit);
+        Test("Mismatched manual INTEGER/NUMBER direct units block takeoff without conversion", ManualIntegerUnit);
         Test("Blank result labels and invalid typed parameter or formula inputs still reject transactionally", InvalidDeclarationsReject);
         Test("Checklist states LV conversion/blocking and separate formula input units", IndependentChecklist);
         Console.WriteLine($"{passed} passed; {failed} failed");
@@ -105,14 +105,14 @@ internal static class Program
             };
         });
         var result = QuantityTakeoff.Calculate(reopened, [element]);
-        Check(result.Errors.Count == 1 && result.Rows.Count == 0 && result.Errors[0].Message.Contains("nicht verifizierbar"), "unverifiable integer unit was exported");
-        Check(!reads.Any(read => read.Name == "Days"), "unverifiable integer was read before the unit check");
+        Check(result.Errors.Count == 1 && result.Rows.Count == 0 && result.Errors[0].Message.Contains("müssen exakt übereinstimmen", StringComparison.Ordinal), "mismatched manual integer unit was not blocked");
+        Check(reads.Count(read => read.Name == "Days") == 1, "manually interpreted integer quantity was not read exactly once");
         reads.Clear();
         var numberTemplate = TemplateJson.Copy(reopened);
         numberTemplate.Mappings[0].Positions[0].Quantity!.Source!.Spec = "NUMBER";
         var numberResult = QuantityTakeoff.Calculate(numberTemplate, [element]);
         Check(numberResult.Errors.Count == 1 && numberResult.Rows.Count == 0
-            && !reads.Any(read => read.Name == "Days"), "unverifiable NUMBER unit was exported");
+            && reads.Count(read => read.Name == "Days") == 1, "mismatched manual NUMBER unit was exported or read more than once");
 
         var strict = TemplateJson.Copy(template); strict.Mappings[0].Positions[0].Quantity!.AllowCustomUnit = false;
         Check(TemplateValidator.Validate(strict).Any(d => d.Code == "QUANTITY_UNIT" && d.Severity == DiagnosticSeverity.Error), "strict unit validation stopped rejecting custom units");
