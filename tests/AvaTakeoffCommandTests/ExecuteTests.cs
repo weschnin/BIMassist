@@ -56,6 +56,23 @@ internal static class ExecuteTests
             var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
             Equal(1, rows.Count(r => r[12] != '*'));
         });
+        Test("successful takeoff reveals per-element identification and mapping skips in expanded confirmation", f =>
+        {
+            var unmatchedType = new FamilySymbol { Id = new(701) };
+            unmatchedType.BuiltIns[BuiltInParameter.ASSEMBLY_CODE] = new("BGK", SpecTypeId.String.Text, "999", StorageType.String);
+            unmatchedType.BuiltIns[BuiltInParameter.ALL_MODEL_TYPE_COMMENTS] = new("Typ", SpecTypeId.String.Text, "99", StorageType.String);
+            f.Document.Elements.Add(unmatchedType);
+            var unmarkedType = new FamilySymbol { Id = new(702) };
+            f.Document.Elements.Add(unmarkedType);
+            for (var id = 500; id <= 520; id++) f.Document.Elements.Add(new FamilyInstance { Id = new(id), TypeId = unmarkedType.Id });
+            for (var id = 600; id <= 609; id++) f.Document.Elements.Add(new FamilyInstance { Id = new(id), TypeId = unmatchedType.Id });
+            f.Remember(f.Template()); f.ApproveAndSave();
+            Equal(Result.Succeeded, f.Execute());
+            var details = TaskDialog.Confirmations.Single().ExpandedContent;
+            Contains("Elemente ohne Mengenzeile", details);
+            Contains("Element 520: BGK '' / Typ '' unvollständig", details);
+            Contains("Element 609: BGK '999' / Typ '99': keine exakte Zuordnung.", details);
+        });
         Test("visible-only scope rejects a template active view without producing output", f =>
         {
             f.Data.Application.ActiveUIDocument!.ActiveView.IsTemplate = true;

@@ -109,6 +109,12 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                 r.ElementId, grouping.Mode == QuantityGroupingMode.Position ? null : labels[r.ElementId],
                 grouping.Mode == QuantityGroupingMode.Position ? null : grouping.GroupKind)).ToList();
             var warnings = TemplateValidator.Validate(template).Where(d => d.Severity == DiagnosticSeverity.Warning).ToList();
+            var expandedDetails = warnings.Select(w => w.ToString()).ToList();
+            if (result.Skipped.Count > 0)
+            {
+                expandedDetails.Add("Elemente ohne Mengenzeile (Diagnosedetails, maximal 100):");
+                expandedDetails.AddRange(result.Skipped.Select(skip => skip.Message));
+            }
             var confirm = new TaskDialog("AVA – Mengenermittlung")
             {
                 MainInstruction = "Mengenermittlung als X31 exportieren?",
@@ -120,7 +126,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                     + "\n\nUmfang: " + scopeDescription
                     + "; keine verknüpften Modelle. Der textuelle Prüfumfang ist kein Kategorienfilter; dies ist keine vollständige Modellprüfung."
                     + "\nAlle zutreffenden Regeln werden additiv ausgewertet. Verwendet wird die gespeicherte Vorlage. Keine Revit-Schreibzugriffe.",
-                ExpandedContent = string.Join("\n", warnings.Select(w => w.ToString())),
+                ExpandedContent = string.Join("\n", expandedDetails),
                 CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No,
                 DefaultButton = TaskDialogResult.No
             };

@@ -20,6 +20,7 @@ public sealed record TakeoffResult(IReadOnlyList<TakeoffLine> Rows, IReadOnlyLis
 public static class QuantityTakeoff
 {
     private const int MaxSkipDetailLength = 600;
+    private const int MaxSkipDetails = 100;
     public static TakeoffResult Calculate(AvaTemplate template, IEnumerable<TakeoffElement> elements)
     {
         TemplateEditor.EnsureValid(template);
@@ -29,7 +30,7 @@ public static class QuantityTakeoff
         var skipped = new List<TakeoffSkip>();
         void Skip(TakeoffElement element, string reason)
         {
-            if (skipped.Count < 20)
+            if (skipped.Count < MaxSkipDetails)
             {
                 var message = $"Element {element.Id}: {reason}";
                 if (message.Length > MaxSkipDetailLength) message = message[..(MaxSkipDetailLength - 1)] + "…";
