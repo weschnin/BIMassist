@@ -71,9 +71,25 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
             try
             {
                 var uiDocument = app.ActiveUIDocument;
-                if (uiDocument == null || !sourceDocument.IsValidObject || !ReferenceEquals(uiDocument.Document, sourceDocument))
+                if (uiDocument == null)
                 {
-                    window?.ShowStatus("Das ursprüngliche Revit-Dokument ist nicht mehr aktiv. Öffnen Sie die X31-Prüfung für das aktuelle Dokument erneut.");
+                    window?.ShowStatus("Es ist kein Revit-Projektdokument aktiv. Öffnen Sie eines und starten Sie die X31-Prüfung erneut.");
+                    return;
+                }
+                if (!sourceDocument.IsValidObject)
+                {
+                    window?.ShowStatus("Das Revit-Dokument, für das diese X31-Prüfung geöffnet wurde, ist nicht mehr gültig. Öffnen Sie die Prüfung für das aktuelle Dokument erneut.");
+                    return;
+                }
+                var activeDocument = uiDocument.Document;
+                if (!activeDocument.IsValidObject)
+                {
+                    window?.ShowStatus("Das aktive Revit-Dokument ist nicht mehr gültig. Öffnen Sie die X31-Prüfung für das aktuelle Dokument erneut.");
+                    return;
+                }
+                if (!sourceDocument.Equals(activeDocument))
+                {
+                    window?.ShowStatus($"Die X31-Prüfung gehört zu '{sourceDocument.Title}', aktiv ist '{activeDocument.Title}'. Öffnen Sie die Prüfung für das aktive Dokument erneut.");
                     return;
                 }
                 if (plan == null || plan.ElementIds.Count == 0)

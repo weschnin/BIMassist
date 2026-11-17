@@ -42,4 +42,13 @@ int takeoff = segment.IndexOf("new PushButtonData(\"AVA Mengenermittlung\", \"Me
 int review = segment.IndexOf("new PushButtonData(\"AVA Mengenermittlung kontrollieren oder prüfen\", \"Mengenermittlung kontrollieren oder prüfen\"", StringComparison.Ordinal);
 if (takeoff < 0 || review <= takeoff || !segment[review..].Contains("BIMassist.Commands.AvaX31ReviewCommand", StringComparison.Ordinal))
     throw new Exception("X31 review command must be the final entry in the AVA group after quantity export.");
+string reviewCommand = File.ReadAllText(Path.Combine(root, "Commands", "AvaX31ReviewCommand.cs"));
+if (!reviewCommand.Contains("sourceDocument.Equals(activeDocument)", StringComparison.Ordinal)
+    || reviewCommand.Contains("ReferenceEquals(uiDocument.Document, sourceDocument)", StringComparison.Ordinal))
+    throw new Exception("X31 review must compare Revit documents by their API equality, not managed wrapper reference identity.");
+int activeValidityGuard = reviewCommand.IndexOf("if (!activeDocument.IsValidObject)", StringComparison.Ordinal);
+int documentMatchGuard = reviewCommand.IndexOf("if (!sourceDocument.Equals(activeDocument))", StringComparison.Ordinal);
+if (activeValidityGuard < 0 || documentMatchGuard <= activeValidityGuard
+    || reviewCommand[activeValidityGuard..documentMatchGuard].Contains("activeDocument.Title", StringComparison.Ordinal))
+    throw new Exception("An invalid active Revit document must be handled before reading its title.");
 Console.WriteLine("PASS AVA ribbon placement, icon-free BGK-Manager entry and read-only AVA template command wiring (test doubles, not Revit runtime)");
