@@ -11,6 +11,8 @@ public static class AvaFileDialogs
     public static OpenFileDialog OpenTemplate(bool import = false) => Open(
         import ? "Portable Vorlage importieren" : "AVA-Vorlage öffnen", "AVA-Vorlage", ".json");
 
+    public static OpenFileDialog OpenX31() => Open("X31-Mengenermittlung öffnen", "GAEB DA31/3.3", ".x31");
+
     public static OpenFileDialog OpenCatalog(string kind) => kind switch
     {
         "bgk" => Open("BGK-XML importieren", "BGK-Katalog", ".xml"),
@@ -30,5 +32,12 @@ public static class AvaFileDialogs
         Title = title, Filter = Filter("AVA-Vorlage", ".json"), FilterIndex = 1,
         DefaultExt = ".json", AddExtension = true, OverwritePrompt = true, CheckPathExists = true,
         FileName = workingPath == null ? "AVA-Vorlage.json" : Path.GetFileName(workingPath)
+    };
+
+    public static SaveFileDialog SaveBgkCatalog(string? configuredPath = null) => new()
+    {
+        Title = "BGK-Manager-XML exportieren", Filter = Filter("BGK-Manager-Katalog", ".xml"), FilterIndex = 1,
+        DefaultExt = ".xml", AddExtension = true, OverwritePrompt = true, CheckPathExists = true,
+        FileName = configuredPath == null ? "BGK-Katalog.xml" : Path.GetFileName(configuredPath)
     };
 }

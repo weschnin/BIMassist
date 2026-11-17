@@ -3,7 +3,10 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Xml.Serialization;
+using BIMassist;
 using BIMassist.Ava.Core;
+using BIMassist.Ava.Views;
 
 internal static class Program
 {
@@ -341,6 +344,124 @@ internal static class Program
                 var c = Read("ReadBgk", Encoding.UTF8.GetBytes("<Baugruppe><Key>01-02</Key><Description>Root</Description><Typmarkierungen><Typmarkierung><Typnummer>001</Typnummer><Typbezeichnung>Type</Typbezeichnung></Typmarkierung></Typmarkierungen><Baugruppen><Baugruppe><Key>01-02-03</Key><Typmarkierungen/></Baugruppe></Baugruppen></Baugruppe>"));
                 Check(c["Entries"]!.AsArray().Count == 2 && c["Entries"]![0]!["Types"]![0]!["Number"]!.GetValue<string>() == "001", "BGK/type keys changed");
             });
+            Test("BGK export deserializes in the BGK Manager model and retains AVA hierarchy", () => {
+                var catalog = new Catalog<BgkEntry>(new("source.xml", "Baugruppe XML", new string('a', 64)), [
+                    new("01", "Hauptgruppe & Rohr", "Los A", []),
+                    new("01-10", "Teilgruppe", "Rohrbau", [new("001", "Typ <A>")]),
+                    new("02", "Zweite Hauptgruppe", "Los B", [])]);
+                var xml = BgkManagerCatalogWriter.Serialize(catalog);
+                var serializer = new XmlSerializer(typeof(Baugruppe));
+                using var text = new StringReader(xml);
+                var root = (Baugruppe?)serializer.Deserialize(text) ?? throw new Exception("BGK Manager root could not be deserialized");
+                Check(root.Key == "///" && root.RootNode && root.Level == 0, "multi-root catalog was not wrapped in a valid hidden Manager root");
+                var parent = root.Baugruppen.Single(node => node.Key == "01");
+                var leaf = parent.Baugruppen.Single(node => node.Key == "01-10");
+                Check(parent.Description == "Hauptgruppe & Rohr" && parent.Category == "Los A", "Manager root-node description/category changed");
+                Check(leaf.Typmarkierungen.Single().Typnummer == 1 && leaf.Typmarkierungen.Single().Typbezeichnung == "Typ <A>", "Manager type mark did not deserialize");
+                Check(xml.Contains("<Typnummer>001</Typnummer>", StringComparison.Ordinal), "leading zero was not retained in XML lexical form");
+                var imported = CatalogReaders.ReadBgk(new MemoryStream(Encoding.UTF8.GetBytes(xml)), "export.xml");
+                Check(imported.Entries.Count == 4 && imported.Entries.Single(entry => entry.Key == "01-10").Types.Single().Number == "001", "BGK XML could not round-trip through the AVA reader");
+            });
+            Test("BGK Manager export rejects type numbers the Manager cannot represent", () => {
+                var catalog = new Catalog<BgkEntry>(new("source.xml", "Baugruppe XML", new string('a', 64)), [
+                    new("01", "Hauptgruppe", "", [new("A-1", "Nicht numerisch")])]);
+                bool rejected = false;
+                try { BgkManagerCatalogWriter.Serialize(catalog); }
+                catch (InvalidDataException) { rejected = true; }
+                Check(rejected, "non-numeric type number was silently exported to the BGK Manager");
+            });
+            Test("BGK XML save dialog is explicit and separate from portable JSON export", () => {
+                var dialog = BIMassist.Ava.Views.AvaFileDialogs.SaveBgkCatalog();
+                Check(dialog.Title.Contains("BGK-Manager", StringComparison.Ordinal) && dialog.FilterIndex == 1
+                    && dialog.Filter.Contains("*.xml", StringComparison.Ordinal) && dialog.Filter.Contains("*.*", StringComparison.Ordinal)
+                    && "." + dialog.DefaultExt.TrimStart('.') == ".xml" && dialog.AddExtension && dialog.OverwritePrompt && dialog.CheckPathExists,
+                    "BGK Manager export dialog does not explicitly select safe XML save settings");
+            });
+            Test("BGK export cancellation preserves the configured Manager file and editor state", () => {
+                var directory = Path.Combine(Environment.GetEnvironmentVariable("TMPDIR")!, "bgk-cancel-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(directory);
+                try {
+                    var managerPath = Path.Combine(directory, "manager.xml"); File.WriteAllText(managerPath, "original-manager-file");
+                    var window = new BIMassist.Ava.Views.AvaTemplateWindow(new AvaWorkspace(Path.Combine(directory, "workspace.json")), UnitCatalog.AllUnits, () => managerPath);
+                    window.ErrorReporter = error => throw error;
+                    var editor = (TemplateEditor)typeof(BIMassist.Ava.Views.AvaTemplateWindow).GetField("editor", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+                    var template = ValidTemplate(); template.BgkCatalog.Entries.Add(new("11", "Weitere Gruppe", "", []));
+                    editor.ImportJson(TemplateJson.Serialize(template));
+                    var originalPath = editor.FilePath; var originalDirty = editor.IsDirty; var savePickerCalls = 0;
+                    window.BgkExportChoicePrompt = () => BgkManagerExportChoice.Cancel;
+                    window.BgkSeparateSavePathSelector = () => { savePickerCalls++; return Path.Combine(directory, "separate.xml"); };
+                    window.ExportBgkCatalog();
+                    Check(File.ReadAllText(managerPath) == "original-manager-file" && savePickerCalls == 0, "cancel changed a catalog or continued to a save dialog");
+                    Check(editor.FilePath == originalPath && editor.IsDirty == originalDirty, "cancel changed the active AVA editor state");
+                } finally { Directory.Delete(directory, true); }
+            });
+            Test("BGK export choices replace only the configured file or save a separate copy", () => {
+                var directory = Path.Combine(Environment.GetEnvironmentVariable("TMPDIR")!, "bgk-choices-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(directory);
+                try {
+                    var managerPath = Path.Combine(directory, "manager.xml"); var separatePath = Path.Combine(directory, "separate.xml");
+                    File.WriteAllText(managerPath, "original-manager-file");
+                    var window = new BIMassist.Ava.Views.AvaTemplateWindow(new AvaWorkspace(Path.Combine(directory, "workspace.json")), UnitCatalog.AllUnits, () => managerPath);
+                    window.ErrorReporter = error => throw error;
+                    var editor = (TemplateEditor)typeof(BIMassist.Ava.Views.AvaTemplateWindow).GetField("editor", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+                    var template = ValidTemplate(); template.BgkCatalog.Entries.Add(new("11", "Weitere Gruppe", "", []));
+                    editor.ImportJson(TemplateJson.Serialize(template));
+                    var originalPath = editor.FilePath; var originalDirty = editor.IsDirty;
+                    window.BgkExportChoicePrompt = () => BgkManagerExportChoice.ReplaceConfigured;
+                    window.BgkSeparateSavePathSelector = () => throw new Exception("separate-save picker must not run for replace");
+                    window.ExportBgkCatalog();
+                    var replaced = ReadBgkFile(managerPath);
+                    Check(replaced.Entries.Any(entry => entry.Key == "09-25") && replaced.Entries.Any(entry => entry.Key == "11"), "replace did not write the current AVA BGK catalog to the Manager path");
+                    Check(editor.FilePath == originalPath && editor.IsDirty == originalDirty, "replace changed the active AVA editor state");
+
+                    File.WriteAllText(managerPath, "manager-file-must-remain-unchanged");
+                    window.BgkExportChoicePrompt = () => BgkManagerExportChoice.SaveSeparately;
+                    window.BgkSeparateSavePathSelector = () => separatePath;
+                    window.ExportBgkCatalog();
+                    var separate = ReadBgkFile(separatePath);
+                    Check(File.ReadAllText(managerPath) == "manager-file-must-remain-unchanged" && separate.Entries.Any(entry => entry.Key == "11"), "separate export changed the configured Manager file or omitted the AVA catalog");
+                    Check(editor.FilePath == originalPath && editor.IsDirty == originalDirty, "separate export changed the active AVA editor state");
+                } finally { Directory.Delete(directory, true); }
+            });
+            Test("X31 selection plan unions quantity and group IDs and preserves incomplete-group warning", () =>
+            {
+                var group = new X31ReviewRow(1, "44.20.0200", "item-1", X31ReviewRowKind.GroupComment,
+                    "Baubereich: M-Technik1", "", null, "Baubereich", "M-Technik1", ["101", "102"], true);
+                var quantity = new X31ReviewRow(2, "44.31.0200", "item-2", X31ReviewRowKind.Quantity,
+                    "Revit-ElementID: 103", "1,235=", "103", "Baubereich", "M-Technik1", ["103"], false);
+                var plan = X31ElementSelectionPlanner.FromRows([group, quantity]);
+                Check(new HashSet<string>(plan.ElementIds, StringComparer.Ordinal).SetEquals(["101", "102", "103"]),
+                    "Selected rows did not produce the union of their full ElementIDs.");
+                Check(plan.SelectionIncomplete, "Incomplete group mapping was lost from the selection plan.");
+            });
+            Test("X31 group expansion recursively includes nested Revit-group members without cycles", () =>
+            {
+                var groups = new Dictionary<long, long[]> { [100] = [200, 300], [200] = [400], [400] = [100] };
+                var expanded = X31ElementSelectionPlanner.ExpandGroupMembers([100, 500],
+                    id => groups.TryGetValue(id, out var members) ? members : Array.Empty<long>());
+                Check(new HashSet<long>(expanded).SetEquals([100, 200, 300, 400, 500]),
+                    "Nested group members were omitted or duplicated indefinitely.");
+            });
+            Test("X31 review table sends selected rows to its injected action without Revit API calls", () =>
+            {
+                var group = new X31ReviewRow(1, "44.20.0200", "item-1", X31ReviewRowKind.GroupComment,
+                    "Baubereich: M-Technik1", "", null, "Baubereich", "M-Technik1", ["101", "102"], false);
+                var quantity = new X31ReviewRow(2, "44.31.0200", "item-2", X31ReviewRowKind.Quantity,
+                    "Revit-ElementID: 103", "1=", "103", "Baubereich", "M-Technik1", ["103"], false);
+                X31SelectionPlan? request = null; bool isolate = false;
+                var window = new X31ReviewWindow(new X31ReviewDocument("sample.x31", [group, quantity], []),
+                    (plan, isolateRequested) => { request = plan; isolate = isolateRequested; });
+                try
+                {
+                    window.ActionMode.SelectedIndex = 1;
+                    window.ReviewGrid.SelectedItems.Add(group);
+                    window.ReviewGrid.SelectedItems.Add(quantity);
+                    Check(request is not null && new HashSet<string>(request.ElementIds, StringComparer.Ordinal).SetEquals(["101", "102", "103"]),
+                        "Selected X31 rows were not forwarded as the combined ID request.");
+                    Check(isolate, "The temporary-isolate mode was not forwarded to the external-event boundary.");
+                }
+                finally { window.Close(); }
+            });
             Test("UTF16 parameters keep GUID and spec", () => {
                 var text = "*PARAM\tGUID\tNAME\tDATATYPE\tGROUP\nPARAM\t9af4d36c-6267-47f9-af4b-eb8ac2a0fc49\tAVA_Anzahl\tINTEGER\t1\n";
                 var c = Read("ReadSharedParameters", Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes(text)).ToArray());
@@ -400,6 +521,11 @@ internal static class Program
         p.LvCatalog.Entries.Add(new("id", "b", ["09", "25", "0100"], "09.25.0100", "Rohr", "", "St"));
         p.Mappings.Add(new() { BgkKey = "09-25", TypeNumber = "100", Positions = [new() { LvItemId = "id", Quantity = new() { Source = new() { Kind = ParameterKind.LocalFamily, Name = "AVA_Anzahl", Spec = "NUMBER", Scope = ParameterScope.Instance }, Unit = "St" } }] });
         return p;
+    }
+    private static Catalog<BgkEntry> ReadBgkFile(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return CatalogReaders.ReadBgk(stream, path);
     }
     private static void Check(bool value, string message) { if (!value) throw new Exception(message); }
     private static void Reject(Action action) { try { action(); } catch (InvalidDataException) { return; } throw new Exception("Expected InvalidDataException"); }

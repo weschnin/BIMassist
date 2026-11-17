@@ -16,7 +16,11 @@ namespace BIMassist.Commands
             try
             {
                 // File-based template work only: no Document is held and no model values are written.
-                WpfOwner.ShowDialog(new AvaTemplateWindow(RevitUnitCatalog.GetManualUnitChoices()), commandData.Application);
+                var window = new AvaTemplateWindow(RevitUnitCatalog.GetManualUnitChoices())
+                {
+                    BgkManagerCatalogPathProvider = () => BIMassist.Properties.Settings.Default.PfadBGKDatei
+                };
+                WpfOwner.ShowDialog(window, commandData.Application);
                 return Result.Succeeded;
             }
             catch (Exception ex)

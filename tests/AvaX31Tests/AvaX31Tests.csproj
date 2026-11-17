@@ -14,6 +14,8 @@
     <Compile Include="../../Ava/Core/UnitCatalog.cs" Link="Core/UnitCatalog.cs" />
     <Compile Include="../../Ava/Core/QuantityTakeoff.cs" Link="Core/QuantityTakeoff.cs" />
     <Compile Include="../../Ava/Core/X31Writer*.cs" LinkBase="Core" />
+    <Compile Include="../../Ava/Core/X31ReviewReader.cs" Link="Core/X31ReviewReader.cs" />
+    <Compile Include="../../Ava/Core/X31ElementSelectionPlanner.cs" Link="Core/X31ElementSelectionPlanner.cs" />
     <None Update="Fixtures/**/*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

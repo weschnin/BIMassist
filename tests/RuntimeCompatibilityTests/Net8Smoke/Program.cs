@@ -83,7 +83,7 @@ internal static class Program
                 try
                 {
                     window.Measure(new Size(1200, 820)); window.Arrange(new Rect(0, 0, 1200, 820)); window.UpdateLayout();
-                    Require(window.FindName("EditorTabs") is System.Windows.Controls.TabControl { Items.Count: 5 }, "WPF editor did not initialize");
+                    Require(window.FindName("EditorTabs") is System.Windows.Controls.TabControl { Items.Count: 7 }, "WPF editor did not initialize");
                     // The production position dialog is intentionally internal; test the real
                     // artifact without widening its API merely for the external smoke harness.
                     var positionType = typeof(AvaTemplateWindow).Assembly.GetType("BIMassist.Ava.Views.PositionEditorWindow", throwOnError: true)!;

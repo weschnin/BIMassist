@@ -6,11 +6,14 @@ using W = System.Windows.Controls;
 
 namespace BIMassist.Ava.Views;
 
+internal enum BgkManagerExportChoice { ReplaceConfigured, SaveSeparately, Cancel }
+
 /// <summary>Modal, file-only AVA editor. No Revit API objects, model access, binding or transactions.</summary>
 public sealed class AvaTemplateWindow : Window
 {
     private TemplateEditor editor = new();
     private readonly AvaWorkspace workspace;
+    internal Func<string?>? BgkManagerCatalogPathProvider { get; set; }
     private readonly IReadOnlyList<string> manualUnitChoices;
     private readonly W.TextBlock workspaceWarning = EditorUi.Text("");
     private readonly W.TextBox profileName = EditorUi.Input();
@@ -52,6 +55,8 @@ public sealed class AvaTemplateWindow : Window
     internal Func<MappingRule, MappingRule?>? DiagnosticMappingEditor { get; set; }
     internal Func<BgkEntry, BgkEntry?>? BgkEditPrompt { get; set; }
     internal Func<BgkEntry, string?, BgkEntry?>? BgkEditTargetPrompt { get; set; }
+    internal Func<BgkManagerExportChoice>? BgkExportChoicePrompt { get; set; }
+    internal Func<string?>? BgkSeparateSavePathSelector { get; set; }
     internal Action<Exception>? ErrorReporter { get; set; }
 
     public AvaTemplateWindow() : this(new AvaWorkspace()) { }
@@ -62,9 +67,13 @@ public sealed class AvaTemplateWindow : Window
     public AvaTemplateWindow(AvaWorkspace workspace) : this(workspace, UnitCatalog.AllUnits) { }
 
     public AvaTemplateWindow(AvaWorkspace workspace, IReadOnlyList<string> manualUnitChoices)
+        : this(workspace, manualUnitChoices, null) { }
+
+    internal AvaTemplateWindow(AvaWorkspace workspace, IReadOnlyList<string> manualUnitChoices, Func<string?>? bgkManagerCatalogPathProvider)
     {
         this.workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         this.manualUnitChoices = manualUnitChoices ?? throw new ArgumentNullException(nameof(manualUnitChoices));
+        this.BgkManagerCatalogPathProvider = bgkManagerCatalogPathProvider;
         bgkExpandAll = EditorUi.Button("Alles aufklappen", () => ExpandCatalogs(bgkCatalogTree, bgkCatalogTreeExpansion, true));
         bgkCollapseAll = EditorUi.Button("Alles zuklappen", () => ExpandCatalogs(bgkCatalogTree, bgkCatalogTreeExpansion, false));
         lvExpandAll = EditorUi.Button("Alles aufklappen", () => ExpandCatalogs(lvCatalogTree, lvCatalogTreeExpansion, true));
@@ -175,8 +184,9 @@ public sealed class AvaTemplateWindow : Window
             buttons.Children.Add(EditorUi.Button("BGK hinzufügen…", AddBgkEntry));
             buttons.Children.Add(EditorUi.Button("BGK bearbeiten…", EditSelectedBgk));
             buttons.Children.Add(EditorUi.Button("BGK / Typ entfernen…", RemoveSelectedBgk));
-            buttons.Children.Add(EditorUi.Button("Vorlage mit BGK-Katalog exportieren…", Export));
-            buttons.Children.Add(EditorUi.Text("Der Export erzeugt eine vollständige portable AVA-JSON-Vorlage einschließlich des bearbeiteten BGK-Katalogs, nicht eine separate BGK-XML-Datei."));
+            buttons.Children.Add(EditorUi.Button("BGK-Manager-XML exportieren…", ExportBgkCatalog));
+            buttons.Children.Add(EditorUi.Button("AVA-JSON-Vorlage mit BGK-Katalog exportieren…", Export));
+            buttons.Children.Add(EditorUi.Text("BGK-Manager-XML exportiert nur den aktuellen BGK-Katalog. Der separate JSON-Export enthält die vollständige portable AVA-Vorlage."));
         }
         sourceInfo.Margin = new Thickness(4);
         W.DockPanel.SetDock(sourceInfo, W.Dock.Top); panel.Children.Add(sourceInfo);
@@ -514,6 +524,68 @@ public sealed class AvaTemplateWindow : Window
         editor.Export(path);
         status.Text = "JSON-Kopie exportiert und zurückgelesen. Aktueller Speicherpfad / Änderungsstatus bleiben unverändert.";
     }
+    internal void ExportBgkCatalog()
+    {
+        try
+        {
+            var choice = BgkExportChoicePrompt?.Invoke() ?? PromptBgkManagerExportChoice();
+            if (choice == BgkManagerExportChoice.Cancel) return;
+
+            string? path;
+            if (choice == BgkManagerExportChoice.ReplaceConfigured)
+            {
+                path = BgkManagerCatalogPathProvider?.Invoke();
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                    throw new InvalidDataException("Es ist kein vorhandener BGK-Manager-Katalog unter dem konfigurierten Pfad gespeichert. Wählen Sie beim Export „Gesondert speichern“. ");
+            }
+            else if (choice == BgkManagerExportChoice.SaveSeparately)
+            {
+                if (BgkSeparateSavePathSelector != null) path = BgkSeparateSavePathSelector();
+                else
+                {
+                    var dialog = AvaFileDialogs.SaveBgkCatalog();
+                    if (dialog.ShowDialog(this) != true) return;
+                    path = dialog.FileName;
+                }
+                if (string.IsNullOrWhiteSpace(path)) return;
+            }
+            else throw new InvalidDataException("Unbekannte BGK-Exportauswahl.");
+
+            var fullPath = Path.GetFullPath(path);
+            EnsureBgkExportDestinationIsSafe(fullPath);
+            BgkManagerCatalogWriter.Save(fullPath, editor.Document.BgkCatalog);
+            status.Text = "BGK-Manager-XML exportiert. AVA-Datei, Arbeitsbereich und Änderungsstatus bleiben unverändert.";
+        }
+        catch (Exception ex) when (EditorUi.IsInputError(ex) || ex is NotSupportedException or System.Security.SecurityException)
+        {
+            ReportError(ex);
+        }
+    }
+    private BgkManagerExportChoice PromptBgkManagerExportChoice()
+    {
+        var answer = System.Windows.MessageBox.Show(this,
+            "Den BGK-Katalog aus der aktuellen AVA-Vorlage als BGK-Manager-XML exportieren?\n\nJa: den unter PfadBGKDatei hinterlegten BGK-Manager-Katalog ersetzen.\nNein: den Katalog gesondert als neue XML-Datei speichern.\nAbbrechen: keinen Export ausführen.",
+            "BGK-Manager-Export", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+        return answer switch
+        {
+            MessageBoxResult.Yes => BgkManagerExportChoice.ReplaceConfigured,
+            MessageBoxResult.No => BgkManagerExportChoice.SaveSeparately,
+            _ => BgkManagerExportChoice.Cancel
+        };
+    }
+    private void EnsureBgkExportDestinationIsSafe(string path)
+    {
+        workspace.EnsureTemplatePath(path);
+        if (!string.IsNullOrWhiteSpace(editor.FilePath) && SamePath(path, editor.FilePath))
+            throw new InvalidDataException("Der BGK-Export darf nicht die aktive AVA-JSON-Vorlage überschreiben.");
+        string parameterChoicesPath = Environment.GetEnvironmentVariable("BIMASSIST_AVA_PARAMETER_CHOICES") is { Length: > 0 } configured
+            ? configured
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BIMassist", "ava-parameter-choices.json");
+        if (SamePath(path, parameterChoicesPath))
+            throw new InvalidDataException("Der BGK-Export darf nicht die gespeicherten AVA-Parameterauswahlen überschreiben.");
+    }
+    private static bool SamePath(string first, string second) =>
+        string.Equals(Path.GetFullPath(first), Path.GetFullPath(second), StringComparison.OrdinalIgnoreCase);
     private Microsoft.Win32.SaveFileDialog SaveDialog(string title) => AvaFileDialogs.SaveTemplate(title, editor.FilePath);
     private bool ConfirmPending()
     {

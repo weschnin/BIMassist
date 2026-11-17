@@ -31,6 +31,15 @@ namespace BIMassist.Ava.Views
     {
         public AvaTemplateWindow() { }
         public AvaTemplateWindow(IReadOnlyList<string> manualUnitChoices) { }
+        public Func<string?>? BgkManagerCatalogPathProvider { get; set; }
+    }
+}
+namespace BIMassist.Properties
+{
+    public sealed class Settings
+    {
+        public static Settings Default { get; } = new();
+        public string PfadBGKDatei { get; set; } = string.Empty;
     }
 }
 namespace BIMassist.Ava.Revit

@@ -47,7 +47,15 @@ public static class X31Writer
                 throw new InvalidDataException($"Mengeneinheit '{row.Unit}' weicht von der unveränderten LV-Einheit '{entriesById[row.LvItemId].Unit}' ab. Die Menge muss vor dem X31-Export in die LV-Einheit umgerechnet werden.");
             CheckText(row.Unit, 40, "Ergebniseinheit", false);
             CheckText(row.Explanation, 4096, "Erläuterung", true);
-            if (!string.IsNullOrEmpty(row.ElementId)) CheckText("Revit-ElementID: " + row.ElementId, 200, "Revit-Element-ID", false);
+            if (!string.IsNullOrEmpty(row.ElementId))
+            {
+                CheckText("Revit-ElementID: " + row.ElementId, 200, "Revit-Element-ID", false);
+                if (row.ElementId.StartsWith("+", StringComparison.Ordinal) ||
+                    !long.TryParse(row.ElementId, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _))
+                    throw new InvalidDataException("Revit-ElementID muss eine gültige 64-Bit-ElementID sein.");
+                if (("Revit-ElementID: " + row.ElementId).Length > 56)
+                    throw new InvalidDataException("Revit-ElementID passt nicht vollständig in die X31-Kommentarzeile.");
+            }
             if (row.GroupLabel != null)
             {
                 CheckText(row.GroupLabel, 4096, "Gewerk/Baubereich", false);
@@ -60,7 +68,6 @@ public static class X31Writer
         var rowsByItem = rows.GroupBy(row => row.LvItemId, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
         long requiredLines = 0;
-        var countedGroups = new HashSet<(string? Kind, string? Label)>();
         foreach (var entry in entries)
         {
             if (!rowsByItem.TryGetValue(entry.Id, out var itemRows)) continue;
@@ -70,12 +77,12 @@ public static class X31Writer
             {
                 if (group.Key.GroupLabel != null)
                 {
-                    if (countedGroups.Add(group.Key))
-                        requiredLines += CommentLineCount(group.Key.GroupKind + ": " + group.Key.GroupLabel);
+                    requiredLines += CommentLineCount(group.Key.GroupKind + ": " + group.Key.GroupLabel);
                 }
                 foreach (var row in group)
                 {
                     requiredLines++;
+                    if (!string.IsNullOrEmpty(row.ElementId)) requiredLines++;
                 }
                 if (requiredLines > 9999 * 260) throw new InvalidDataException("REB-Zeilenadressraum einschließlich Gruppierungskommentaren überschritten.");
             }
@@ -86,7 +93,6 @@ public static class X31Writer
             Skeleton(boq.Element(SourceNs + "BoQBody")!));
         var items = outputBoq.Descendants(Ns + "Item").ToDictionary(x => x.Attribute("ID")!.Value, StringComparer.Ordinal);
         int index = 0;
-        var emittedGroups = new HashSet<(string? Kind, string? Label)>();
         foreach (var entry in entries)
         {
             if (!rowsByItem.TryGetValue(entry.Id, out var itemRows)) continue;
@@ -97,20 +103,25 @@ public static class X31Writer
                          .OrderBy(group => group.Key.GroupKind ?? "", StringComparer.Ordinal)
                          .ThenBy(group => group.Key.GroupLabel ?? "", StringComparer.Ordinal))
             {
-                if (group.Key.GroupLabel != null && emittedGroups.Add(group.Key))
+                if (group.Key.GroupLabel != null)
                     AddComment(determination, group.Key.GroupKind + ": " + group.Key.GroupLabel, ref index);
                 foreach (var row in group)
                 {
                     // CaliforniaX reads the full identifier from BVBS:Explanation attached
                     // to this calculation row; REB's fixed remark field contains the example token.
-                    var formula = row.Value.ToString("0.############################", CultureInfo.InvariantCulture).Replace('.', ',') + "=";
+                    var formula = decimal.Round(row.Value, 3, MidpointRounding.AwayFromZero)
+                        .ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ',') + "=";
                     var remark = string.IsNullOrEmpty(row.ElementId) ? new string(' ', 9) : "Revit-Ele";
                     var line = new string(' ', 13) + remark + new string(' ', 7) + "91" + formula.PadRight(38);
                     var itemLine = new XElement(Ns + "QDetermItem", new XElement(Ns + "QTakeoff",
                         new XAttribute("Row", line + FormatAddress(index++) + new string(' ', 5))));
                     if (!string.IsNullOrEmpty(row.ElementId))
+                    {
                         itemLine.Add(new XElement(BvbsNs + "Explanation", "Revit-ElementID: " + row.ElementId));
+                    }
                     determination.Add(itemLine);
+                    if (!string.IsNullOrEmpty(row.ElementId))
+                        AddComment(determination, "Revit-ElementID: " + row.ElementId, ref index);
                 }
             }
         }

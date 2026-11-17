@@ -79,6 +79,8 @@ namespace BIMassist
                 { ToolTip = "AVA-Vorlagen verwalten", LongDescription = "Bearbeitet portable AVA-Vorlagen und Prüfvorschriften." });
                 bgkGroup.AddPushButton(new PushButtonData("AVA Mengenermittlung", "Mengenermittlung / X31", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaQuantityTakeoffCommand")
                 { ToolTip = "Mengen gemäß gespeicherter AVA-Vorlage ermitteln und als X31 speichern" });
+                bgkGroup.AddPushButton(new PushButtonData("AVA Mengenermittlung kontrollieren oder prüfen", "Mengenermittlung kontrollieren oder prüfen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaX31ReviewCommand")
+                { ToolTip = "Vorhandene X31-Datei tabellarisch prüfen und zugehörige Revit-Elemente selektieren oder temporär isolieren" });
 
                 //Matadata-Funktionen
 

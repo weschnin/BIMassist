@@ -83,6 +83,30 @@ internal static class Program
         {
             Reject(() => X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m", "unit mismatch")]));
         });
+        Test("X31 export rounds to at most three fractional places using commercial midpoint rounding", () =>
+        {
+            var values = new[] { 1.2344m, 1.2345m, -1.2345m, 0.0004m, 0.0005m, -0.0005m, 25.5m };
+            var rows = values.Select((value, index) => new QuantityTakeoffRow("FirstItem", value, "m2", "", (100 + index).ToString(CultureInfo.InvariantCulture))).ToArray();
+            var previous = CultureInfo.CurrentCulture;
+            try
+            {
+                CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("en-US");
+                var xml = X31Writer.Serialize(Read(Fixture), rows); Validate(xml);
+                var numeric = XDocument.Parse(xml).Descendants(Ns + "QTakeoff")
+                    .Select(x => x.Attribute("Row")!.Value).Where(x => x.Substring(29, 2) == "91").ToArray();
+                Equal(values.Length, numeric.Length);
+                for (int i = 0; i < values.Length; i++)
+                {
+                    var expected = decimal.Round(values[i], 3, MidpointRounding.AwayFromZero)
+                        .ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ',') + "=";
+                    var actual = numeric[i].Substring(31, 38).Trim();
+                    Equal(expected, actual);
+                    var fraction = actual.Split('=')[0].Split(',').Skip(1).FirstOrDefault() ?? "";
+                    Require(fraction.Length <= 3, "Export contains more than three fractional digits");
+                }
+            }
+            finally { CultureInfo.CurrentCulture = previous; }
+        });
         Test("X31 writes the full Revit ID as a BVBS explanation on its own calculation row", () =>
         {
             var explanation = "Revit ElementId=42 UniqueId=source&<element>; " + new string('x', 130);
@@ -93,7 +117,7 @@ internal static class Program
             var first = doc.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == "FirstItem");
             var firstItems = first.Descendants(Ns + "QDetermItem").ToArray();
             var lines = firstItems.Select(x => x.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value).ToArray();
-            Equal(2, lines.Length);
+            Equal(3, lines.Length);
             Require(lines[0][12] == '*' && lines[0].Substring(13, 56).TrimEnd() == "Baubereich: Erdgeschoss", "Grouping row does not match screenshot layout");
             var firstQuantity = lines.Single(x => x[12] != '*');
             Equal("Revit-Ele", firstQuantity.Substring(13, 9));
@@ -103,16 +127,28 @@ internal static class Program
             var second = doc.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == "SecondItem");
             var secondItems = second.Descendants(Ns + "QDetermItem").ToArray();
             var secondRows = secondItems.Select(x => x.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value).ToArray();
-            Equal(1, secondRows.Length);
-            var secondQuantity = secondRows.Single();
+            Equal(2, secondRows.Length);
+            var secondQuantity = secondRows.Single(row => row[12] != '*');
             Equal("Revit-Ele", secondQuantity.Substring(13, 9));
-            Equal("0,0045=", secondQuantity.Substring(31,38).Trim());
-            Equal("Revit-ElementID: 43", (string?)secondItems.Single().Element(XName.Get("Explanation", "BVBS")));
+            Equal("0,005=", secondQuantity.Substring(31,38).Trim());
+            Equal("Revit-ElementID: 43", (string?)secondItems.Single(item => item.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value[12] != '*').Element(XName.Get("Explanation", "BVBS")));
             Require(lines.All(x => x.Length == 80), "Line width changed");
             Equal("m2", template.LvCatalog.Entries[0].Unit);
             Require(!xml.Contains("QU>") && !xml.Contains(explanation), "Non-screenshot source details or reassigned LV unit leaked");
         });
-        Test("X31 emits each group header once across positions, truncates it, and keeps IDs with calculations", () =>
+        Test("X31 writes a full ElementID comment row for California and the review table", () =>
+        {
+            var xml = X31Writer.Serialize(Read(Fixture), [new("FirstItem", 2.5m, "m2", "", "42")]);
+            var rows = XDocument.Parse(xml).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
+            var idComments = rows.Where(row => row[12] == '*' && row.Substring(13, 56).TrimEnd().StartsWith("Revit-ElementID:", StringComparison.Ordinal)).ToArray();
+            Equal(1, idComments.Length);
+            Equal("Revit-ElementID: 42", idComments[0].Substring(13, 56).TrimEnd());
+        });
+        Test("X31 rejects an ElementID that cannot be represented by a Revit 64-bit ID", () =>
+        {
+            Reject(() => X31Writer.Serialize(Read(Fixture), [new("FirstItem", 2.5m, "m2", "", new string('9', 40))]));
+        });
+        Test("X31 repeats each group header per LV position, truncates it, and keeps IDs with calculations", () =>
         {
             var rows = new[]
             {
@@ -129,7 +165,7 @@ internal static class Program
             var doc = XDocument.Parse(xml);
             var first = doc.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == "FirstItem");
             var firstRows = first.Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
-            var comments = firstRows.Where(x => x[12] == '*').Select(x => x.Substring(13, 56).TrimEnd()).ToArray();
+            var comments = firstRows.Where(x => x[12] == '*' && x.Substring(13, 56).StartsWith("Baubereich:", StringComparison.Ordinal)).Select(x => x.Substring(13, 56).TrimEnd()).ToArray();
             Equal(2, comments.Length);
             Equal(new string('x', 56 - "Baubereich: ".Length), comments.Single(x => x.StartsWith("Baubereich: x", StringComparison.Ordinal))["Baubereich: ".Length..]);
             foreach (var row in firstRows.Where(x => x[12] != '*'))
@@ -137,16 +173,73 @@ internal static class Program
             Require(firstRows.Where(x => x[12] != '*').Any(x => x.Substring(31, 38).Trim() == "1="), "Expected the 1-unit formula line");
             var second = doc.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == "SecondItem");
             var secondItems = second.Descendants(Ns + "QDetermItem").ToArray();
-            Equal(4, secondItems.Length);
-            Equal("Revit-ElementID: 107", (string?)secondItems.First().Element(XName.Get("Explanation", "BVBS")));
+            Equal(10, secondItems.Length);
+            var secondQuantities = secondItems.Where(x => x.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value[12] != '*').ToArray();
+            var expectedIds = new[] { "Revit-ElementID: 105", "Revit-ElementID: 106", "Revit-ElementID: 107", "Revit-ElementID: 108" };
+            var actualIds = secondQuantities.Select(x => (string?)x.Element(XName.Get("Explanation", "BVBS"))).ToArray();
+            Require(expectedIds.ToHashSet(StringComparer.Ordinal).SetEquals(actualIds.OfType<string>()), $"Second item ElementIDs changed: {string.Join(",", actualIds)}");
             var allHeaders = doc.Descendants(Ns + "QTakeoff").Select(x => x.Attribute("Row")!.Value)
-                .Where(x => x[12] == '*').ToArray();
-            Equal(2, allHeaders.Length);
+                .Where(x => x[12] == '*' && x.Substring(13, 56).StartsWith("Baubereich:", StringComparison.Ordinal)).ToArray();
+            Equal(4, allHeaders.Length);
             var ungrouped = X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m2", "trace", "77")]);
             var ungroupedRows = XDocument.Parse(ungrouped).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
-            Equal(1, ungroupedRows.Length);
-            Equal("Revit-Ele", ungroupedRows.Single().Substring(13, 9));
+            Equal(2, ungroupedRows.Length);
+            Equal("Revit-Ele", ungroupedRows.Single(row => row[12] != '*').Substring(13, 9));
         });
+        Test("X31 review associates a group comment with all full ElementIDs across positions", () =>
+        {
+            var rows = new[]
+            {
+                new QuantityTakeoffRow("FirstItem", 1m, "m2", "", "101", "M-Technik1", "Baubereich"),
+                new QuantityTakeoffRow("FirstItem", 2m, "m2", "", "102", "M-Technik1", "Baubereich"),
+                new QuantityTakeoffRow("FirstItem", 3m, "m2", "", "103", "Kälte", "Gewerk"),
+                new QuantityTakeoffRow("SecondItem", 1.2345m, "m3", "", "4294967296", "M-Technik1", "Baubereich"),
+                new QuantityTakeoffRow("SecondItem", 5m, "m3", "", "105", "Kälte", "Gewerk")
+            };
+            var xml = X31Writer.Serialize(Read(Fixture), rows);
+            using var input = new MemoryStream(Encoding.UTF8.GetBytes(xml));
+            var review = X31ReviewReader.Read(input, "technical-fixture.x31");
+            var groups = review.Rows.Where(row => row.Kind == X31ReviewRowKind.GroupComment
+                && row.GroupKind == "Baubereich" && row.GroupLabel == "M-Technik1").ToArray();
+            Equal(2, groups.Length);
+            var expected = new[] { "101", "102", "4294967296" };
+            foreach (var group in groups)
+                Require(new HashSet<string>(group.ElementIdsForSelection, StringComparer.Ordinal).SetEquals(expected),
+                    "Group comment did not aggregate all full ElementIDs across LV positions.");
+            var quantity = review.Rows.Single(row => row.Kind == X31ReviewRowKind.Quantity && row.ElementId == "4294967296");
+            Equal("1,235=", quantity.Formula);
+            Require(!string.IsNullOrWhiteSpace(quantity.Position), "LV position was not preserved for the table.");
+            Require(quantity.ElementIdsForSelection.SequenceEqual(["4294967296"]), "Quantity row did not retain its full 64-bit ElementID.");
+        });
+        Test("X31 selection planner de-duplicates IDs and expands nested groups without cycles", () =>
+        {
+            var groupMembers = new Dictionary<long, long[]>
+            {
+                [10] = [11, 12],
+                [11] = [13],
+                [13] = [10]
+            };
+            var expanded = X31ElementSelectionPlanner.ExpandGroupMembers([10L, 12L], id =>
+                groupMembers.TryGetValue(id, out var members) ? members : null);
+            Require(expanded.SequenceEqual([10L, 11L, 12L, 13L]), "Nested group expansion lost members or did not stop on a cycle.");
+
+            var first = new X31ReviewRow(1, "1", "item", X31ReviewRowKind.Quantity, "", "1=", "42", null, null, ["42"], false);
+            var second = first with { Number = 2, ElementIdsForSelection = ["42", "43"], SelectionIncomplete = true };
+            var plan = X31ElementSelectionPlanner.FromRows([first, second]);
+            Require(plan.ElementIds.SequenceEqual(["42", "43"]) && plan.SelectionIncomplete,
+                "Selection plan must de-duplicate element IDs and preserve incomplete-group state.");
+        });
+        if (Environment.GetEnvironmentVariable("BIMASSIST_AVA_X31_REVIEW_FILES") is { Length: > 0 } reviewFiles)
+        {
+            foreach (var path in reviewFiles.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                Test("X31 review parses supplied real file " + Path.GetFileName(path), () =>
+                {
+                    var review = X31ReviewReader.ReadFile(path);
+                    Require(review.Rows.Count > 0, "The real X31 file produced no table rows.");
+                    var knownIds = review.Rows.SelectMany(row => row.ElementIdsForSelection).Distinct(StringComparer.Ordinal).Count();
+                    Console.WriteLine($"  {review.Rows.Count} Zeilen; {knownIds} unterschiedliche ElementIDs; {review.Warnings.Count} Hinweise");
+                });
+        }
         Test("blank unknown null and empty row input fail with domain errors", () =>
         {
             var t = Read(Fixture);
@@ -255,7 +348,7 @@ internal static class Program
                         Require(numeric[..12].All(x => x == ' ') && numeric.Substring(13, 9) == "Revit-Ele"
                             && numeric.Substring(22, 7).All(x => x == ' '), "Unexpected quantity remark/sign prefix");
                         Equal("91", numeric.Substring(29, 2));
-                        Equal(value, decimal.Parse(numeric.Substring(31, 38).Trim().TrimEnd('='), CultureInfo.GetCultureInfo("de-DE")));
+                        Equal(decimal.Round(value, 3, MidpointRounding.AwayFromZero), decimal.Parse(numeric.Substring(31, 38).Trim().TrimEnd('='), CultureInfo.GetCultureInfo("de-DE")));
                         Require(lines.All(x => x.Length == 80), "Literal crossed field boundary");
                     }
                 }
@@ -268,8 +361,8 @@ internal static class Program
             var xml = X31Writer.Serialize(Read(Fixture), [new QuantityTakeoffRow("FirstItem", 1m, "m2", explanation, "42")]);
             Validate(xml);
             var rows = XDocument.Parse(xml).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
-            Equal(1, rows.Length);
-            Equal("Revit-Ele", rows[0].Substring(13, 9));
+            Equal(2, rows.Length);
+            Equal("Revit-Ele", rows.Single(row => row[12] != '*').Substring(13, 9));
             Require(!xml.Contains(explanation), "Internal explanation leaked into output");
         });
         Test("long group labels are truncated without continuation rows", () =>
@@ -279,7 +372,8 @@ internal static class Program
             var xml = X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m2", "", "42", groupLabel, "Baubereich")]);
             Validate(xml);
             var comments = XDocument.Parse(xml).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!)
-                .Where(row => row[12] == '*').Select(row => row.Substring(13, 56)).ToArray();
+                .Where(row => row[12] == '*' && row.Substring(13, 56).StartsWith("Baubereich:", StringComparison.Ordinal))
+                .Select(row => row.Substring(13, 56)).ToArray();
             Equal(1, comments.Length);
             Equal(56, comments[0].Length);
             Require(!comments[0].Contains("Fortsetzung:", StringComparison.Ordinal), "Group label was split into continuation rows");
@@ -314,10 +408,10 @@ internal static class Program
                 Equal(expected, File.ReadAllText(path, new UTF8Encoding(false, true)));
                 Validate(File.ReadAllText(path));
                 Require(!File.ReadAllBytes(path).Take(3).SequenceEqual(new byte[] { 239, 187, 191 }), "Unexpected BOM");
-                Save(path, template, [new("SecondItem", -0.0000000000000000000000000001m, "m3", "replacement fixture")]);
+                Save(path, template, [new("SecondItem", -0.0005m, "m3", "replacement fixture")]);
                 var saved = File.ReadAllText(path);
                 Validate(saved);
-                Require(saved.Contains("-0,0000000000000000000000000001="), "Decimal was rounded");
+                Require(saved.Contains("-0,001="), "Saved decimal was not rounded to three places");
                 Equal(1, Directory.GetFiles(directory).Length);
             });
         });

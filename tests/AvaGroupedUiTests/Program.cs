@@ -314,7 +314,7 @@ internal static class Program
                 var catalogTree = (TreeView)main.FindName("CatalogTree");
                 editorTabs.SelectedIndex = Array.FindIndex(headers, h => h!.Contains("BGK-Katalog", StringComparison.Ordinal)); Layout(main);
                 var bgkActions = ((DockPanel)editorTabs.SelectedContent).Children.OfType<WrapPanel>().First().Children.OfType<Button>().Select(button => button.Content?.ToString()).ToArray();
-                Check(new[] { "BGK hinzufügen…", "BGK bearbeiten…", "BGK / Typ entfernen…", "Vorlage mit BGK-Katalog exportieren…" }.All(label => bgkActions.Contains(label)),
+                Check(new[] { "BGK hinzufügen…", "BGK bearbeiten…", "BGK / Typ entfernen…", "BGK-Manager-XML exportieren…", "AVA-JSON-Vorlage mit BGK-Katalog exportieren…" }.All(label => bgkActions.Contains(label)),
                     "BGK catalog CRUD and portable-template export actions are not available");
                 Check(((TreeViewItem)catalogTree.Items[0]).Items.Count == 1, "BGK catalog is not displayed as a hierarchy");
                 var bgkRoot = (TreeViewItem)catalogTree.Items[0]; var bgkType = (TreeViewItem)bgkRoot.Items[0];

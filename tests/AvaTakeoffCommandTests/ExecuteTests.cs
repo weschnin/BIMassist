@@ -162,7 +162,8 @@ internal static class ExecuteTests
         {
             f.Instance.Id = new(4294967296); f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
-            var item = XDocument.Load(f.Output).Descendants(Ns + "QDetermItem").Single();
+            var item = XDocument.Load(f.Output).Descendants(Ns + "QDetermItem")
+                .Single(candidate => candidate.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(29, 2) == "91");
             Equal("Revit-ElementID: 4294967296", (string?)item.Element(XName.Get("Explanation", "BVBS")));
             Equal("Revit-Ele", item.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(13, 9));
         });
@@ -340,7 +341,7 @@ internal static class ExecuteTests
             var confirmation = TaskDialog.Confirmations.Single();
             Contains("zur LV-Einheit umgerechnet", confirmation.MainContent); Contains("Parametrisierte Formeln werden dimensional geprüft", confirmation.MainContent); Contains("Mengeneinheit cm und LV-Einheit m", confirmation.ExpandedContent);
             var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToList();
-            Check(rows.Any(r => r.Contains("910,6096=")), "Converted metric quantity missing in X31");
+            Check(rows.Any(r => r.Contains("910,61=")), "Converted metric quantity was not rounded to three decimals in X31");
             Check(!rows.Any(r => r.Contains("Info:")), "Screenshot-oriented output includes extra explanation rows");
         });
         Test("incompatible quantity and LV unit blocks before confirmation", f =>
@@ -418,7 +419,8 @@ internal static class ExecuteTests
         Test("screenshot-oriented export attaches full Revit ID to its calculation row", f =>
         {
             f.Remember(f.Template()); f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
-            var item = XDocument.Load(f.Output).Descendants(Ns + "QDetermItem").Single();
+            var item = XDocument.Load(f.Output).Descendants(Ns + "QDetermItem")
+                .Single(candidate => candidate.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(29, 2) == "91");
             Equal("Revit-Ele", item.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(13, 9));
             Equal("Revit-ElementID: 429496", (string?)item.Element(XName.Get("Explanation", "BVBS")));
         });
