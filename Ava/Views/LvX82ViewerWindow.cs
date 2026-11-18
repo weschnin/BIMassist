@@ -71,8 +71,14 @@ internal sealed class LvX82ViewerWindow : Window
             Padding = new Thickness(8),
             FontFamily = new WpfFontFamily("Segoe UI")
         };
-        PositionTree.SelectedItemChanged += (_, args) => longText.Text = args.NewValue is TreeViewItem selected && selected.Tag is ViewerPosition position
-            ? position.Description : string.Empty;
+        PositionTree.SelectedItemChanged += (_, args) => longText.Text = args.NewValue is TreeViewItem selected
+            ? selected.Tag switch
+            {
+                ViewerPosition position => position.Description,
+                ViewerNarrative narrative => narrative.Text,
+                _ => string.Empty
+            }
+            : string.Empty;
         Grid.SetRow(longText, 4); layout.Children.Add(longText);
         Content = layout;
     }
@@ -111,7 +117,8 @@ internal sealed class LvX82ViewerWindow : Window
     {
         foreach (var child in body.Elements())
         {
-            if (child.Name == Ns + "BoQCtgy")
+            if (child.Name == Ns + "Remark" || child.Name == Ns + "PerfDescr") AddNarrative(child, target);
+            else if (child.Name == Ns + "BoQCtgy")
             {
                 var part = (string?)child.Attribute("RNoPart") ?? "";
                 var label = child.Elements().Where(element => element.Name == Ns + "LblTx" || element.Name == Ns + "OutlineText" || element.Name == Ns + "DetailTxt")
@@ -122,8 +129,14 @@ internal sealed class LvX82ViewerWindow : Window
             }
             else if (child.Name == Ns + "Itemlist")
             {
-                foreach (var item in child.Elements(Ns + "Item"))
+                foreach (var item in child.Elements())
                 {
+                    if (item.Name == Ns + "Remark" || item.Name == Ns + "PerfDescr")
+                    {
+                        AddNarrative(item, target);
+                        continue;
+                    }
+                    if (item.Name != Ns + "Item") continue;
                     var ordinal = string.Join(".", item.Ancestors(Ns + "BoQCtgy").Reverse()
                         .Select(category => (string?)category.Attribute("RNoPart") ?? "")
                         .Append((string?)item.Attribute("RNoPart") ?? "")
@@ -131,8 +144,8 @@ internal sealed class LvX82ViewerWindow : Window
                         .Where(value => !string.IsNullOrWhiteSpace(value)));
                     var shortText = ReadText(item.Descendants(Ns + "OutlineText").FirstOrDefault());
                     var description = ReadText(item.Descendants(Ns + "DetailTxt").FirstOrDefault());
-                    var quantityText = item.Element(Ns + "Qty")?.Value
-                        ?? item.Element(Ns + "QtyDeterm")?.Element(Ns + "Qty")?.Value ?? "";
+                    var quantityText = item.Element(Ns + "QtyDeterm")?.Element(Ns + "Qty")?.Value
+                        ?? item.Element(Ns + "Qty")?.Value ?? "";
                     var quantity = decimal.TryParse(quantityText, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var value)
                         ? value.ToString("0.###", CultureInfo.CurrentCulture) : quantityText;
                     var unit = item.Element(Ns + "QU")?.Value ?? "";
@@ -140,6 +153,21 @@ internal sealed class LvX82ViewerWindow : Window
                 }
             }
         }
+    }
+
+    private static void AddNarrative(XElement source, List<ViewerNode> target)
+    {
+        var description = source.Element(Ns + "Description");
+        var outline = ReadText(description?.Descendants(Ns + "OutlineText").FirstOrDefault());
+        var detail = ReadText(description?.Descendants(Ns + "DetailTxt").FirstOrDefault());
+        var body = string.IsNullOrWhiteSpace(detail) ? outline : detail;
+        var label = source.Name == Ns + "Remark" ? "Hinweistext" : "Ausführungsbeschreibung";
+        var number = ReadText(source.Element(Ns + "PerfNo"));
+        var shortText = ReadText(source.Element(Ns + "PerfLbl"));
+        if (!string.IsNullOrWhiteSpace(number)) label += " " + number;
+        if (!string.IsNullOrWhiteSpace(shortText)) label += " – " + shortText;
+        if (!string.IsNullOrWhiteSpace(outline)) label += " – " + outline;
+        target.Add(new ViewerNode(new ViewerNarrative(label, body)));
     }
 
     private static TreeViewItem BuildNode(ViewerNode node)
@@ -160,6 +188,7 @@ internal sealed class LvX82ViewerWindow : Window
             item.Header = row;
         }
         else item.Header = node.Label;
+        if (node.Narrative is { } narrative) item.Tag = narrative;
         foreach (var child in node.Children) item.Items.Add(BuildNode(child));
         return item;
     }
@@ -188,8 +217,11 @@ internal sealed class LvX82ViewerWindow : Window
     private sealed record ViewerNode(string Label)
     {
         public ViewerNode(ViewerPosition position) : this(position.Ordinal + " " + position.ShortText + "    " + position.Quantity + " " + position.Unit) => Position = position;
+        public ViewerNode(ViewerNarrative narrative) : this(narrative.Label) => Narrative = narrative;
         public ViewerPosition? Position { get; }
+        public ViewerNarrative? Narrative { get; }
         public List<ViewerNode> Children { get; } = [];
     }
     private sealed record ViewerPosition(string Ordinal, string ShortText, string Quantity, string Unit, string Description);
+    private sealed record ViewerNarrative(string Label, string Text);
 }

@@ -29,6 +29,16 @@ if (!ava.Success || info <= ava.Index) throw new Exception("AVA group must prece
 int nextGroup = ribbon.IndexOf("new PushButtonData(\"Metadaten\"", ava.Index, StringComparison.Ordinal);
 if (nextGroup <= ava.Index || nextGroup >= info) throw new Exception("Metadata ribbon group boundary was not found.");
 string segment = ribbon[ava.Index..nextGroup];
+int viewer = segment.IndexOf("new PushButtonData(\"AVA LV-Viewer\", \"LV-Viewer / X82\"", StringComparison.Ordinal);
+if (viewer < 0 || !segment[viewer..].Contains("BIMassist.Commands.AvaLvViewerCommand", StringComparison.Ordinal)
+    || segment.IndexOf("new PushButtonData(\"AVA Vorlagen\"", StringComparison.Ordinal) >= viewer
+    || viewer >= segment.IndexOf("new PushButtonData(\"AVA Mengenermittlung\"", StringComparison.Ordinal))
+    throw new Exception("The X82 LV viewer must be available in BGK/GAEB before quantity takeoff.");
+string viewerCommand = File.ReadAllText(Path.Combine(root, "Commands", "AvaLvViewerCommand.cs"));
+if (!viewerCommand.Contains("TransactionMode.ReadOnly", StringComparison.Ordinal)
+    || !viewerCommand.Contains("new FileOpenDialog(\"GAEB-LV (*.x82)", StringComparison.Ordinal)
+    || !viewerCommand.Contains("LvX82ViewerWindow.Show(path", StringComparison.Ordinal))
+    throw new Exception("The LV viewer command must open a selected X82 through the read-only Revit file dialog.");
 if (!segment.Contains("Image = GetImageSource(\"label_16px.png\")", StringComparison.Ordinal)
     || !segment.Contains("LargeImage = GetImageSource(\"label_24px.png\")", StringComparison.Ordinal)
     || segment.IndexOf("Image = GetImageSource", StringComparison.Ordinal) > segment.IndexOf("new PushButtonData(\"BGK-Manager\"", StringComparison.Ordinal)

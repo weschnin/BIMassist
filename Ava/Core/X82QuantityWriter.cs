@@ -62,6 +62,9 @@ public static class X82QuantityWriter
         }
         if (totals.Keys.Any(id => !items.ContainsKey(id)))
             throw new InvalidDataException("Mindestens eine X82-Position fehlt im eingebetteten Quell-LV.");
+        PruneUnrelatedMarkup(document.Root!, totals.Keys.ToHashSet(StringComparer.Ordinal));
+        foreach (var masterItems in document.Descendants(Ns + "MastAgrItems").Reverse().ToArray())
+            if (!masterItems.Descendants(Ns + "Item").Any()) masterItems.Remove();
         PruneEmptyContainers(document.Root!);
         using var output = new MemoryStream();
         using (var writer = XmlWriter.Create(output, new XmlWriterSettings { Encoding = new UTF8Encoding(false, true), Indent = true, NewLineHandling = NewLineHandling.Entitize }))
@@ -120,13 +123,46 @@ public static class X82QuantityWriter
     private static void PruneEmptyContainers(XElement root)
     {
         foreach (var itemlist in root.Descendants(Ns + "Itemlist").Reverse().ToArray())
-            if (!itemlist.Elements().Any()) itemlist.Remove();
+            if (!itemlist.Descendants(Ns + "Item").Any()) itemlist.Remove();
         foreach (var body in root.Descendants(Ns + "BoQBody").Reverse().ToArray())
-            foreach (var category in body.Elements(Ns + "BoQCtgy").Reverse().ToArray())
+            if (!body.Descendants(Ns + "Item").Any())
+                body.Elements().Where(element => element.Name == Ns + "Remark" || element.Name == Ns + "PerfDescr").Remove();
+        foreach (var category in root.Descendants(Ns + "BoQCtgy").Reverse().ToArray())
+            if (!category.Descendants(Ns + "Item").Any()) category.Remove();
+    }
+
+    private static void PruneUnrelatedMarkup(XElement root, IReadOnlySet<string> includedItemIds)
+    {
+        // A Zuschlagsposition is retained only while its GAEB IDREF still targets an included service or in-scope description.
+        var relevantPerformanceDescriptions = root.Descendants(Ns + "PerfDescr")
+            .Where(description =>
             {
-                var nestedBody = category.Element(Ns + "BoQBody");
-                if (nestedBody != null && !nestedBody.Elements().Any()) category.Remove();
+                var itemlist = description.Ancestors(Ns + "Itemlist").FirstOrDefault();
+                if (itemlist != null) return itemlist.Descendants(Ns + "Item").Any();
+                var body = description.Ancestors(Ns + "BoQBody").FirstOrDefault();
+                return body?.Descendants(Ns + "Item").Any() == true;
+            })
+            .Select(description => (string?)description.Attribute("ID"))
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var markup in root.Descendants(Ns + "MarkupItem").ToArray())
+        {
+            foreach (var reference in markup.Descendants(Ns + "RefRNo").Concat(markup.Descendants(Ns + "RefItem")).ToArray())
+            {
+                var id = (string?)reference.Attribute("IDRef");
+                if (id != null && includedItemIds.Contains(id)) continue;
+                var subQuantity = reference.Ancestors(Ns + "MarkupSubQty").FirstOrDefault();
+                if (subQuantity != null) subQuantity.Remove();
+                else reference.Remove();
             }
+            foreach (var reference in markup.Descendants(Ns + "RefPerfNo").ToArray())
+                if (!relevantPerformanceDescriptions.Contains((string?)reference.Attribute("IDRef") ?? "")) reference.Remove();
+            if (!markup.Descendants(Ns + "RefRNo").Any()
+                && !markup.Descendants(Ns + "RefItem").Any()
+                && !markup.Descendants(Ns + "RefPerfNo").Any())
+                markup.Remove();
+        }
     }
 
     private static void ValidateSerializedResult(string content, IReadOnlyDictionary<string, decimal> totals, IReadOnlyDictionary<string, LvEntry> catalog)

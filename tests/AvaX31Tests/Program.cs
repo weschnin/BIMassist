@@ -88,6 +88,73 @@ internal static class Program
             Reject(() => X82QuantityWriter.Serialize(template, [new("MissingItem", 1m, "m2", "")]));
             Reject(() => X82QuantityWriter.Serialize(template, [new("FirstItem", 1m, "m", "")]));
         });
+        Test("X82 export retains measured hierarchy and attached text while pruning unrelated branches and positions", () =>
+        {
+            var source = XDocument.Parse(Fixture);
+            var ns = SourceNs;
+            var list = source.Descendants(ns + "Itemlist").Single();
+            var second = list.Elements(ns + "Item").Single(item => (string?)item.Attribute("ID") == "SecondItem");
+            second.Remove();
+            static XElement TextDescription(XNamespace ns, string text) => new(ns + "Description",
+                new XElement(ns + "CompleteText", new XElement(ns + "DetailTxt",
+                    new XElement(ns + "Text", new XElement(ns + "p", new XElement(ns + "span", text))))));
+            static XElement MarkupPosition(XNamespace ns, string id, string ordinal, string reference, string text) =>
+                new(ns + "MarkupItem", new XAttribute("ID", id), new XAttribute("RNoPart", ordinal),
+                    new XElement(ns + "RefRNo", new XAttribute("IDRef", reference)), new XElement(ns + "MarkupType", "IdentAsMark"),
+                    TextDescription(ns, text));
+            list.AddFirst(new XElement(ns + "Remark", new XAttribute("ID", "RelevantRemark"), TextDescription(ns, "Relevanter Hinweistext")));
+            list.Add(new XElement(ns + "PerfDescr", new XAttribute("ID", "RelevantPerf"),
+                new XElement(ns + "PerfNo", "01"), new XElement(ns + "PerfLbl", "Ausführungsbeschreibung"),
+                TextDescription(ns, "Ausführungsdetail")));
+            var originalCategory = source.Descendants(ns + "BoQCtgy").Single(category => (string?)category.Attribute("ID") == "OriginalCategory");
+            originalCategory.Remove();
+            var parentCategory = new XElement(ns + "BoQCtgy", new XAttribute("ID", "ParentCategory"), new XAttribute("RNoPart", "01"),
+                new XElement(ns + "LblTx", new XElement(ns + "p", new XElement(ns + "span", "Übergeordneter Titel"))),
+                new XElement(ns + "BoQBody", originalCategory));
+            source.Descendants(ns + "BoQBody").First().AddFirst(parentCategory);
+            list.Add(MarkupPosition(ns, "SelectedMarkup", "0090", "FirstItem", "Zuschlag zu gemessener Position"));
+            var unrelated = new XElement(ns + "BoQCtgy", new XAttribute("ID", "UnrelatedCategory"), new XAttribute("RNoPart", "02"),
+                new XElement(ns + "LblTx", new XElement(ns + "p", new XElement(ns + "span", "Unbeteiligter Titel"))),
+                new XElement(ns + "BoQBody", new XElement(ns + "Itemlist",
+                    new XElement(ns + "Remark", new XAttribute("ID", "UnrelatedRemark"), TextDescription(ns, "Unbeteiligter Fließtext")),
+                    new XElement(ns + "Item", new XAttribute("ID", "SecondItem"), new XAttribute("RNoPart", "0020"),
+                        new XElement(ns + "Qty", "888"), new XElement(ns + "QU", "m3")))));
+            unrelated.Descendants(ns + "Itemlist").Single().Add(MarkupPosition(ns, "UnselectedMarkup", "0091", "SecondItem", "Zuschlag zu nicht gemessener Position"));
+            source.Descendants(ns + "BoQBody").First().Add(unrelated);
+            var template = Read(source.ToString(SaveOptions.DisableFormatting));
+            var output = X82QuantityWriter.Serialize(template, [new("FirstItem", 3.5m, "m2", "", "101")]);
+            var result = XDocument.Parse(output);
+            var items = result.Descendants(ns + "Item").ToArray();
+            Equal(1, items.Length);
+            Equal("FirstItem", (string?)items[0].Attribute("ID"));
+            var markupItems = result.Descendants(ns + "MarkupItem").ToArray();
+            Equal(1, markupItems.Length);
+            Equal("SelectedMarkup", (string?)markupItems[0].Attribute("ID"));
+            var categories = result.Descendants(ns + "BoQCtgy").ToArray();
+            Equal(2, categories.Length);
+            Require(categories.Select(category => (string?)category.Attribute("ID")).ToHashSet(StringComparer.Ordinal)
+                .SetEquals(["ParentCategory", "OriginalCategory"]), "The source LV parent-title hierarchy was not retained exactly.");
+            Require(output.Contains("Relevanter Hinweistext", StringComparison.Ordinal)
+                && output.Contains("Ausführungsdetail", StringComparison.Ordinal)
+                && output.Contains("Übergeordneter Titel", StringComparison.Ordinal)
+                && output.Contains("Original Category", StringComparison.Ordinal),
+                "The measured LV hierarchy or its applicable text context was lost.");
+            Require(!output.Contains("SecondItem", StringComparison.Ordinal)
+                && !output.Contains("UnselectedMarkup", StringComparison.Ordinal)
+                && !output.Contains("Unbeteiligter Titel", StringComparison.Ordinal)
+                && !output.Contains("Unbeteiligter Fließtext", StringComparison.Ordinal),
+                "An unmeasured service position or unrelated branch text remained in the X82 output.");
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("BIMASSIST_AVA_X82_SCHEMA")))
+            {
+                var schemas = new XmlSchemaSet { XmlResolver = new XmlUrlResolver() };
+                using var schemaReader = XmlReader.Create(Environment.GetEnvironmentVariable("BIMASSIST_AVA_X82_SCHEMA")!,
+                    new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = new XmlUrlResolver() });
+                schemas.Add(null, schemaReader);
+                var issues = new List<string>();
+                result.Validate(schemas, (_, args) => issues.Add(args.Message), true);
+                Require(issues.Count == 0, string.Join(Environment.NewLine, issues));
+            }
+        });
         Test("X82 reduced quantity output validates against the official DA82 schema when supplied", () =>
         {
             var schemaPath = Environment.GetEnvironmentVariable("BIMASSIST_AVA_X82_SCHEMA");

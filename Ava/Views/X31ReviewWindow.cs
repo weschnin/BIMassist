@@ -23,7 +23,7 @@ internal sealed class X31ReviewWindow : Window
     {
         ArgumentNullException.ThrowIfNull(document);
         this.postSelectionRequest = postSelectionRequest ?? throw new ArgumentNullException(nameof(postSelectionRequest));
-        Title = "Mengenermittlung kontrollieren oder prüfen";
+        Title = "Prüfung der Mengenermittlung";
         Width = 1120;
         Height = 680;
         MinWidth = 760;
@@ -38,7 +38,7 @@ internal sealed class X31ReviewWindow : Window
         var header = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
         header.Children.Add(new TextBlock
         {
-            Text = "Mengenermittlung kontrollieren oder prüfen",
+            Text = "Prüfung der Mengenermittlung",
             FontSize = 18,
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 0, 0, 4)
@@ -104,8 +104,6 @@ internal sealed class X31ReviewWindow : Window
             Width = new DataGridLength(115)
         });
         ReviewGrid.Columns.Add(TextColumn("Stichwort / Bemerkung", nameof(X31ReviewRow.Comment), 2));
-        ReviewGrid.Columns.Add(TextColumn("Revit-ElementID", nameof(X31ReviewRow.ElementId), 150));
-        ReviewGrid.Columns.Add(TextColumn("Bereich / Gewerk", nameof(X31ReviewRow.GroupLabel), 150));
         ReviewGrid.Columns.Add(TextColumn("Formel / Menge", nameof(X31ReviewRow.Formula), 130));
         var groupStyle = new Style(typeof(DataGridRow));
         groupStyle.Triggers.Add(new DataTrigger

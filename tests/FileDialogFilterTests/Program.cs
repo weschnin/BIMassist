@@ -25,7 +25,8 @@ internal static class Program
             ("Void family RFT picker", () => FamilyTemplates("Services/VoidGeometryFamilyBuilder.cs", 1)),
             ("Core geometry RFT pickers", () => FamilyTemplates("Core/FamilyGeometryTools.cs", 2)),
             ("AVA takeoff opens only JSON templates plus All Files", TakeoffOpen),
-            ("AVA takeoff saves only X31 plus All Files", TakeoffSave),
+            ("AVA takeoff saves X31 plus All Files", TakeoffSave),
+            ("AVA LV viewer opens GAEB X82 plus All Files", LvViewerOpen),
         };
         int failed = 0;
         foreach (var test in tests)
@@ -50,13 +51,29 @@ internal static class Program
     private static void TakeoffSave()
     {
         var dialog = Dialogs("Commands/AvaQuantityTakeoffCommand.cs", "Execute")
-            .Single(d => d.TypeName == "Autodesk.Revit.UI.FileSaveDialog");
+            .Single(d => d.TypeName == "Autodesk.Revit.UI.FileSaveDialog"
+                && d.Creation.ArgumentList!.Arguments.Single().Expression.ToString().Contains("*.x31", StringComparison.Ordinal));
         string filter = (string)((LiteralExpressionSyntax)dialog.Creation.ArgumentList!.Arguments.Single().Expression).Token.Value!;
         string[] parts = filter.Split('|');
         Check(parts.Length == 4 && parts[1] == "*.x31" && parts[3] == "*.*"
             && parts[0].Contains("*.x31", StringComparison.Ordinal), "Native Revit picker must offer X31 and All Files");
         Expect(dialog, "DefaultFilterEntry", "*.x31");
         Expect(dialog, "InitialFileName", "Mengenermittlung.x31");
+    }
+
+    private static void LvViewerOpen()
+    {
+        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(Root, "Commands/AvaLvViewerCommand.cs")));
+        var creation = tree.GetRoot().DescendantNodes().OfType<ObjectCreationExpressionSyntax>()
+            .Single(item => item.Type.ToString() == "FileOpenDialog");
+        var filter = (string)((LiteralExpressionSyntax)creation.ArgumentList!.Arguments.Single().Expression).Token.Value!;
+        string[] parts = filter.Split('|');
+        Check(parts.Length == 4 && parts[1] == "*.x82" && parts[3] == "*.*"
+            && parts[0].Contains("*.x82", StringComparison.Ordinal), "Native Revit picker must offer X82 and All Files");
+        var defaultFilter = creation.Initializer!.Expressions.OfType<AssignmentExpressionSyntax>()
+            .Single(item => item.Left.ToString() == "DefaultFilterEntry");
+        Check(((LiteralExpressionSyntax)defaultFilter.Right).Token.ValueText == "*.x82",
+            "The Revit open dialog must default to X82.");
     }
 
     private static void BgkOpen()

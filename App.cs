@@ -77,6 +77,8 @@ namespace BIMassist
                 { ToolTip = "BGK-Werte passender Familien und Typen aus einem geöffneten Referenzprojekt übernehmen" });
                 bgkGroup.AddPushButton(new PushButtonData("AVA Vorlagen", "AVA-Vorlagen verwalten", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaTemplateCommand")
                 { ToolTip = "AVA-Vorlagen verwalten", LongDescription = "Bearbeitet portable AVA-Vorlagen und Prüfvorschriften." });
+                bgkGroup.AddPushButton(new PushButtonData("AVA LV-Viewer", "LV-Viewer / X82", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaLvViewerCommand")
+                { ToolTip = "GAEB DA82/3.3-LV öffnen und Mengen, Positionstexte sowie Hierarchie prüfen" });
                 bgkGroup.AddPushButton(new PushButtonData("AVA Mengenermittlung", "Mengenermittlung / X31", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaQuantityTakeoffCommand")
                 { ToolTip = "Mengen gemäß gespeicherter AVA-Vorlage ermitteln und als X31 speichern" });
                 bgkGroup.AddPushButton(new PushButtonData("AVA Mengenermittlung kontrollieren oder prüfen", "Mengenermittlung kontrollieren oder prüfen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaX31ReviewCommand")

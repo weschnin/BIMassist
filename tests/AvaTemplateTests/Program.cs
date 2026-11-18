@@ -453,6 +453,11 @@ internal static class Program
                     (plan, isolateRequested) => { request = plan; isolate = isolateRequested; });
                 try
                 {
+                    Check(window.Title == "Prüfung der Mengenermittlung", "The X31 review window title is not the requested name.");
+                    var headers = window.ReviewGrid.Columns.Select(column => column.Header?.ToString()).ToArray();
+                    Check(!headers.Contains("Revit-ElementID", StringComparer.Ordinal)
+                        && !headers.Contains("Bereich / Gewerk", StringComparer.Ordinal),
+                        "The review table must not show the Revit ElementID or group-label columns.");
                     window.ReviewGrid.SelectedItems.Add(group);
                     window.ReviewGrid.SelectedItems.Add(quantity);
                     Check(request is null, "Changing the list selection executed a Revit action before a button click.");
@@ -466,18 +471,22 @@ internal static class Program
             Test("X82 LV viewer displays OZ, short text, quantity and unit and updates the selected long text", () =>
             {
                 var path = Path.Combine(AppContext.BaseDirectory, "bimassist-viewer-" + Guid.NewGuid().ToString("N") + ".x82");
-                File.WriteAllText(path, "<GAEB xmlns=\"http://www.gaeb.de/GAEB_DA_XML/DA82/3.3\"><Award><BoQ ID=\"B\"><BoQInfo><Name>Test-LV</Name></BoQInfo><BoQBody><Itemlist><Item ID=\"I\" RNoPart=\"0010\"><OutlineText><p><span>Kurztext</span></p></OutlineText><Qty>2.5</Qty><QU>m2</QU><DetailTxt><p><span>Langtext-Inhalt</span></p></DetailTxt></Item></Itemlist></BoQBody></BoQ></Award></GAEB>");
+                File.WriteAllText(path, "<GAEB xmlns=\"http://www.gaeb.de/GAEB_DA_XML/DA82/3.3\"><Award><BoQ ID=\"B\"><BoQInfo><Name>Test-LV</Name></BoQInfo><BoQBody><Itemlist><Remark ID=\"R1\"><Description><OutlineText><p><span>Relevanter Hinweistext</span></p></OutlineText></Description></Remark><Item ID=\"I\" RNoPart=\"0010\"><OutlineText><p><span>Kurztext</span></p></OutlineText><Qty>2.5</Qty><QtyDeterm><Qty>9.75</Qty></QtyDeterm><QU>m2</QU><DetailTxt><p><span>Langtext-Inhalt</span></p></DetailTxt></Item></Itemlist></BoQBody></BoQ></Award></GAEB>");
                 var window = LvX82ViewerWindow.Create(path);
                 try
                 {
                     var boq = (System.Windows.Controls.TreeViewItem)window.PositionTree.Items[0];
-                    var position = (System.Windows.Controls.TreeViewItem)boq.Items[0];
+                    var position = boq.Items.Cast<System.Windows.Controls.TreeViewItem>().Single(item => item.Header is System.Windows.Controls.Grid);
                     var cells = ((System.Windows.Controls.Grid)position.Header).Children.OfType<System.Windows.Controls.TextBlock>().Select(cell => cell.Text).ToArray();
                     Check(cells.Length == 4 && cells[0] == "0010" && cells[1] == "Kurztext"
-                        && decimal.TryParse(cells[2], System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.CurrentCulture, out var quantity) && quantity == 2.5m
+                        && decimal.TryParse(cells[2], System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.CurrentCulture, out var quantity) && quantity == 9.75m
                         && cells[3] == "m2", "LV tree position cells were not populated from the X82 file: " + string.Join("|", cells));
                     position.IsSelected = true;
                     Check(window.LongTextView.Text.Contains("Langtext-Inhalt", StringComparison.Ordinal), "Selecting an LV position did not display its long text below the tree.");
+                    var note = boq.Items.Cast<System.Windows.Controls.TreeViewItem>().Single(item => item.Header?.ToString()?.Contains("Relevanter Hinweistext", StringComparison.Ordinal) == true);
+                    note.IsSelected = true;
+                    Check(window.LongTextView.Text.Contains("Relevanter Hinweistext", StringComparison.Ordinal),
+                        "The LV viewer omitted the retained GAEB note text.");
                 }
                 finally { window.Close(); File.Delete(path); }
             });
