@@ -51,4 +51,32 @@ int documentMatchGuard = reviewCommand.IndexOf("if (!sourceDocument.Equals(activ
 if (activeValidityGuard < 0 || documentMatchGuard <= activeValidityGuard
     || reviewCommand[activeValidityGuard..documentMatchGuard].Contains("activeDocument.Title", StringComparison.Ordinal))
     throw new Exception("An invalid active Revit document must be handled before reading its title.");
+int isolateCall = reviewCommand.IndexOf("IsolateElementsTemporary(allIds)", StringComparison.Ordinal);
+int transactionStart = reviewCommand.IndexOf("transaction.Start()", StringComparison.Ordinal);
+int transactionCommit = reviewCommand.IndexOf("transaction.Commit()", StringComparison.Ordinal);
+if (isolateCall < 0 || transactionStart < 0 || transactionCommit < 0
+    || !(transactionStart < isolateCall && isolateCall < transactionCommit)
+    || !reviewCommand.Contains("TransactionStatus.Committed", StringComparison.Ordinal))
+    throw new Exception("Temporary isolation must execute in a checked Revit transaction within the external event.");
+if (!reviewCommand.Contains("TransactionStatus.Pending", StringComparison.Ordinal)
+    || !reviewCommand.Contains("transaction.RollBack()", StringComparison.Ordinal))
+    throw new Exception("Pending Revit failure handling cannot be reported as a final failure; failed isolation must roll back explicitly.");
+if (reviewCommand.Contains("using var transaction =", StringComparison.Ordinal)
+    || !reviewCommand.Contains("app.Idling += OnIsolationTransactionIdling", StringComparison.Ordinal)
+    || !reviewCommand.Contains("app.Idling -= OnIsolationTransactionIdling", StringComparison.Ordinal)
+    || !reviewCommand.Contains("SetForcedModalHandling(true)", StringComparison.Ordinal))
+    throw new Exception("An unfinished Revit transaction must be retained until failure handling finishes, not disposed on Pending.");
+if (!reviewCommand.Contains("catch (Exception rollbackError)", StringComparison.Ordinal)
+    || !reviewCommand.Contains("catch (Exception statusError)", StringComparison.Ordinal)
+    || reviewCommand.Contains("pendingIsolationNeedsRollback", StringComparison.Ordinal)
+    || !reviewCommand.Contains("Rücknahme nicht bestätigt", StringComparison.Ordinal)
+    || !reviewCommand.Contains("handler.Window = null", StringComparison.Ordinal))
+    throw new Exception("A failed synchronous rollback must not await Idling while a transaction remains Started or report success; a closed window must be released.");
+if (reviewCommand.IndexOf("app.Idling += OnIsolationTransactionIdling", StringComparison.Ordinal) > transactionStart
+    || !reviewCommand.Contains("pendingIsolationFinalStatus", StringComparison.Ordinal)
+    || !reviewCommand.Contains("catch (Exception cleanupError)", StringComparison.Ordinal))
+    throw new Exception("Subscribe to Idling before committing; keep the final status and retry cleanup if an event or Dispose call fails.");
+if (reviewCommand.Contains("window?.ShowStatus(", StringComparison.Ordinal)
+    || !reviewCommand.Contains("Revit hat die Isolation übernommen;", StringComparison.Ordinal))
+    throw new Exception("A closing status window must not throw into Revit, and a cleanup error must not misreport a confirmed commit as failure.");
 Console.WriteLine("PASS AVA ribbon placement, icon-free BGK-Manager entry and read-only AVA template command wiring (test doubles, not Revit runtime)");

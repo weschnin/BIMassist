@@ -145,7 +145,7 @@ internal static class ExecuteTests
             Equal(Result.Succeeded, f.Execute());
             var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
             Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).TrimEnd() == "Baubereich: Erdgeschoss Nord"), "Selected group label missing");
-            Check(rows.Any(r => r[12] != '*' && r.Substring(13, 9) == "Revit-Ele"), "CaliforniaX remark token missing on the quantity row");
+            Check(rows.Any(r => r[12] != '*' && r.Substring(13, 9).Trim() == f.Instance.Id.Value.ToString()), "Full ElementID missing from quantity remark");
             Contains("Baubereich nach Parameter „Teilbereich (Instanz)“", TaskDialog.Confirmations.Single().MainContent);
         });
         Test("family and type grouping uses exact Revit family/type names", f =>
@@ -155,17 +155,15 @@ internal static class ExecuteTests
             Equal(Result.Succeeded, f.Execute());
             var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
             Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).TrimEnd() == "Familie und Typ: Rohrfamilie — DN 20"), "Exact family/type grouping comment missing");
-            Check(rows.Any(r => r[12] != '*' && r.Substring(13, 9) == "Revit-Ele"), "CaliforniaX remark token missing on quantity row");
+            Check(rows.Any(r => r[12] != '*' && r.Substring(13, 9).Trim() == f.Instance.Id.Value.ToString()), "Full ElementID missing from quantity remark");
             Contains("Gruppierung: nach Familienname und Typ", TaskDialog.Confirmations.Single().MainContent);
         });
-        Test("X31 retains full Revit IDs longer than the nine-character California remark token", f =>
+        Test("X31 refuses a Revit ID too long for its nine-character quantity remark", f =>
         {
             f.Instance.Id = new(4294967296); f.Remember(f.Template()); f.ApproveAndSave();
-            Equal(Result.Succeeded, f.Execute());
-            var item = XDocument.Load(f.Output).Descendants(Ns + "QDetermItem")
-                .Single(candidate => candidate.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(29, 2) == "91");
-            Equal("Revit-ElementID: 4294967296", (string?)item.Element(XName.Get("Explanation", "BVBS")));
-            Equal("Revit-Ele", item.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(13, 9));
+            Equal(Result.Failed, f.Execute()); f.NoOutput();
+            Contains("maximal 9 Zeichen", f.Message);
+            Equal(0, TaskDialog.Notices.Count);
         });
         Test("cancelled grouping choice creates no confirmation or X31 file", f =>
         {
@@ -421,7 +419,7 @@ internal static class ExecuteTests
             f.Remember(f.Template()); f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
             var item = XDocument.Load(f.Output).Descendants(Ns + "QDetermItem")
                 .Single(candidate => candidate.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(29, 2) == "91");
-            Equal("Revit-Ele", item.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(13, 9));
+            Equal("429496", item.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(13, 9).Trim());
             Equal("Revit-ElementID: 429496", (string?)item.Element(XName.Get("Explanation", "BVBS")));
         });
         Console.WriteLine($"Execute integration with Revit/UI/Win32 doubles and real core/writer: {passed} passed; {failed} failed (not a Revit-host test)");

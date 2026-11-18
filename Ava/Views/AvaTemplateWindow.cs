@@ -185,8 +185,6 @@ public sealed class AvaTemplateWindow : Window
             buttons.Children.Add(EditorUi.Button("BGK bearbeiten…", EditSelectedBgk));
             buttons.Children.Add(EditorUi.Button("BGK / Typ entfernen…", RemoveSelectedBgk));
             buttons.Children.Add(EditorUi.Button("BGK-Manager-XML exportieren…", ExportBgkCatalog));
-            buttons.Children.Add(EditorUi.Button("AVA-JSON-Vorlage mit BGK-Katalog exportieren…", Export));
-            buttons.Children.Add(EditorUi.Text("BGK-Manager-XML exportiert nur den aktuellen BGK-Katalog. Der separate JSON-Export enthält die vollständige portable AVA-Vorlage."));
         }
         sourceInfo.Margin = new Thickness(4);
         W.DockPanel.SetDock(sourceInfo, W.Dock.Top); panel.Children.Add(sourceInfo);

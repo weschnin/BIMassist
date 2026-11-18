@@ -5,6 +5,7 @@ using System.Linq;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Events;
 using BIMassist.Ava.Core;
 using BIMassist.Ava.Views;
 using BIMassist.Views;
@@ -34,7 +35,11 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
                 externalEvent.Raise();
             });
             handler.Window = window;
-            window.Closed += (_, _) => externalEvent.Dispose();
+            window.Closed += (_, _) =>
+            {
+                handler.Window = null;
+                externalEvent.Dispose();
+            };
             WpfOwner.ShowModeless(window, uiapp);
             return Result.Succeeded;
         }
@@ -50,6 +55,12 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
     {
         private X31SelectionPlan? request;
         private bool isolate;
+        private Transaction? pendingIsolationTransaction;
+        private UIApplication? pendingIsolationApplication;
+        private string? pendingIsolationFailure;
+        private int pendingIsolationCount;
+        private bool pendingIsolationStatusErrorReported;
+        private TransactionStatus? pendingIsolationFinalStatus;
 
         public X31ReviewWindow? Window { get; set; }
 
@@ -67,34 +78,47 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
             var isolateRequest = isolate;
             request = null;
             isolate = false;
-            var window = Window;
             try
             {
+                if (pendingIsolationTransaction != null)
+                {
+                    ReportIsolationStatus("Revit verarbeitet noch die vorherige temporäre Isolation. Bitte warten Sie auf das Ergebnis.");
+                    return;
+                }
+                if (pendingIsolationApplication != null)
+                {
+                    TryUnsubscribeFromIdling();
+                    if (pendingIsolationApplication != null)
+                    {
+                        ReportIsolationStatus("Revit konnte die vorherige Ereignisüberwachung noch nicht beenden.");
+                        return;
+                    }
+                }
                 var uiDocument = app.ActiveUIDocument;
                 if (uiDocument == null)
                 {
-                    window?.ShowStatus("Es ist kein Revit-Projektdokument aktiv. Öffnen Sie eines und starten Sie die X31-Prüfung erneut.");
+                    ReportIsolationStatus("Es ist kein Revit-Projektdokument aktiv. Öffnen Sie eines und starten Sie die X31-Prüfung erneut.");
                     return;
                 }
                 if (!sourceDocument.IsValidObject)
                 {
-                    window?.ShowStatus("Das Revit-Dokument, für das diese X31-Prüfung geöffnet wurde, ist nicht mehr gültig. Öffnen Sie die Prüfung für das aktuelle Dokument erneut.");
+                    ReportIsolationStatus("Das Revit-Dokument, für das diese X31-Prüfung geöffnet wurde, ist nicht mehr gültig. Öffnen Sie die Prüfung für das aktuelle Dokument erneut.");
                     return;
                 }
                 var activeDocument = uiDocument.Document;
                 if (!activeDocument.IsValidObject)
                 {
-                    window?.ShowStatus("Das aktive Revit-Dokument ist nicht mehr gültig. Öffnen Sie die X31-Prüfung für das aktuelle Dokument erneut.");
+                    ReportIsolationStatus("Das aktive Revit-Dokument ist nicht mehr gültig. Öffnen Sie die X31-Prüfung für das aktuelle Dokument erneut.");
                     return;
                 }
                 if (!sourceDocument.Equals(activeDocument))
                 {
-                    window?.ShowStatus($"Die X31-Prüfung gehört zu '{sourceDocument.Title}', aktiv ist '{activeDocument.Title}'. Öffnen Sie die Prüfung für das aktive Dokument erneut.");
+                    ReportIsolationStatus($"Die X31-Prüfung gehört zu '{sourceDocument.Title}', aktiv ist '{activeDocument.Title}'. Öffnen Sie die Prüfung für das aktive Dokument erneut.");
                     return;
                 }
                 if (plan == null || plan.ElementIds.Count == 0)
                 {
-                    window?.ShowStatus("Keine gültigen ElementIDs zum Auswählen vorhanden.");
+                    ReportIsolationStatus("Keine gültigen ElementIDs zum Auswählen vorhanden.");
                     return;
                 }
 
@@ -115,19 +139,19 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
                 seeds = seeds.Distinct().ToList();
                 if (seeds.Count == 0)
                 {
-                    window?.ShowStatus("Keine der ausgewählten ElementIDs ist im aktiven Revit-Dokument vorhanden.");
+                    ReportIsolationStatus("Keine der ausgewählten ElementIDs ist im aktiven Revit-Dokument vorhanden.");
                     return;
                 }
 
                 uiDocument.Selection.SetElementIds(seeds);
                 if (!isolateRequest)
                 {
-                    window?.ShowStatus($"{seeds.Count} Revit-Element(e) selektiert." + (missing.Count > 0 ? $" {missing.Count} IDs fehlen im Dokument." : string.Empty));
+                    ReportIsolationStatus($"{seeds.Count} Revit-Element(e) selektiert." + (missing.Count > 0 ? $" {missing.Count} IDs fehlen im Dokument." : string.Empty));
                     return;
                 }
                 if (plan.SelectionIncomplete || missing.Count > 0)
                 {
-                    window?.ShowStatus("Teil-Isolation verhindert: Die X31-Zuordnung ist unvollständig oder ElementIDs fehlen. Vorhandene Elemente wurden nur selektiert.");
+                    ReportIsolationStatus("Teil-Isolation verhindert: Die X31-Zuordnung ist unvollständig oder ElementIDs fehlen. Vorhandene Elemente wurden nur selektiert.");
                     return;
                 }
 
@@ -136,13 +160,204 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
                     var element = document.GetElement(new ElementId(rawId));
                     return element is Group group ? group.GetMemberIds().Select(member => member.Value) : null;
                 }).Select(id => new ElementId(id)).ToList();
-                uiDocument.ActiveView.IsolateElementsTemporary(allIds);
-                window?.ShowStatus($"{allIds.Count} Revit-Element(e) einschließlich verschachtelter Gruppen temporär isoliert.");
+                // Temporary view isolation changes view state and requires a transaction;
+                // selection alone remains outside it and the takeoff/export stays read-only.
+                var transaction = new Transaction(document, "AVA – X31 temporär isolieren");
+                var retained = false;
+                var subscribed = false;
+                var committed = false;
+                try
+                {
+                    // Register before starting: a failed subscription can never leave
+                    // an unresolved Pending transaction without a completion callback.
+                    app.Idling += OnIsolationTransactionIdling;
+                    subscribed = true;
+                    // Modal failure handling finishes synchronously in Revit. Retain the
+                    // transaction until Idling nevertheless if the API reports Pending.
+                    try
+                    {
+                        if (transaction.Start() != TransactionStatus.Started)
+                            throw new InvalidOperationException("Die Revit-Transaktion für die temporäre Isolation konnte nicht gestartet werden.");
+                        var options = transaction.GetFailureHandlingOptions().SetForcedModalHandling(true);
+                        transaction.SetFailureHandlingOptions(options);
+                        uiDocument.ActiveView.IsolateElementsTemporary(allIds);
+                        var commitStatus = transaction.Commit();
+                        if (commitStatus == TransactionStatus.Pending)
+                        {
+                            RetainPendingIsolation(app, transaction, allIds.Count, null);
+                            retained = true;
+                            ReportIsolationStatus("Revit verarbeitet die temporäre Isolation noch. Das Ergebnis ist nicht bestätigt; bitte Revit-Meldungen prüfen.");
+                            return;
+                        }
+                        if (commitStatus != TransactionStatus.Committed)
+                            throw new InvalidOperationException("Die temporäre Isolation konnte nicht in Revit übernommen werden.");
+                        committed = true;
+                        ReportIsolationStatus($"{allIds.Count} Revit-Element(e) einschließlich verschachtelter Gruppen temporär isoliert.");
+                    }
+                    catch (Exception ex)
+                    {
+                        TransactionStatus status;
+                        try
+                        {
+                            status = transaction.GetStatus();
+                        }
+                        catch (Exception statusError)
+                        {
+                            // The state cannot be read. Try an explicit rollback before
+                            // letting Dispose perform its documented last-resort cleanup.
+                            try
+                            {
+                                status = transaction.RollBack();
+                            }
+                            catch (Exception rollbackError)
+                            {
+                                throw new InvalidOperationException("Transaktionsstatus nicht lesbar; Rücknahme nicht bestätigt: " + statusError.Message + "; " + rollbackError.Message, rollbackError);
+                            }
+                        }
+                        if (status == TransactionStatus.Started)
+                        {
+                            try
+                            {
+                                status = transaction.RollBack();
+                            }
+                            catch (Exception rollbackError)
+                            {
+                                // Idling cannot fire while this transaction is Started.
+                                // Dispose is the last-resort rollback, not proof of success.
+                                throw new InvalidOperationException("Revit konnte die Isolation nicht zurücknehmen; Rücknahme nicht bestätigt: " + rollbackError.Message, rollbackError);
+                            }
+                        }
+                        if (status == TransactionStatus.Pending)
+                        {
+                            RetainPendingIsolation(app, transaction, allIds.Count, ex.Message);
+                            retained = true;
+                            ReportIsolationStatus("Revit verarbeitet die Rücknahme der Isolation noch. Das Ergebnis ist nicht bestätigt; bitte Revit-Meldungen prüfen.");
+                            return;
+                        }
+                        throw;
+                    }
+                }
+                finally
+                {
+                    if (!retained)
+                    {
+                        try
+                        {
+                            if (subscribed) app.Idling -= OnIsolationTransactionIdling;
+                        }
+                        catch (Exception cleanupError)
+                        {
+                            pendingIsolationApplication = app;
+                            ReportIsolationStatus("Revit konnte die Ereignisüberwachung nicht entfernen: " + cleanupError.Message);
+                        }
+                        finally
+                        {
+                            try
+                            {
+                                transaction.Dispose();
+                            }
+                            catch (Exception cleanupError)
+                            {
+                                ReportIsolationStatus(committed
+                                    ? "Revit hat die Isolation übernommen; die Transaktion konnte nicht freigegeben werden: " + cleanupError.Message
+                                    : "Revit konnte die Transaktion nicht freigeben; Rücknahme nicht bestätigt: " + cleanupError.Message);
+                            }
+                        }
+                    }
+                }
             }
             catch (Exception ex)
             {
-                window?.ShowStatus("Revit konnte die Auswahl/Isolation nicht ausführen: " + ex.Message);
+                ReportIsolationStatus("Revit konnte die Auswahl/Isolation nicht ausführen: " + ex.Message);
             }
+        }
+
+        private void RetainPendingIsolation(UIApplication app, Transaction transaction, int count, string? failure)
+        {
+            pendingIsolationTransaction = transaction;
+            pendingIsolationApplication = app;
+            pendingIsolationCount = count;
+            pendingIsolationFailure = failure;
+            pendingIsolationStatusErrorReported = false;
+            pendingIsolationFinalStatus = null;
+        }
+
+        private void OnIsolationTransactionIdling(object? sender, IdlingEventArgs args)
+        {
+            var transaction = pendingIsolationTransaction;
+            if (transaction == null)
+            {
+                TryUnsubscribeFromIdling();
+                return;
+            }
+            TransactionStatus status;
+            try
+            {
+                status = pendingIsolationFinalStatus ?? transaction.GetStatus();
+                if (status == TransactionStatus.Pending || status == TransactionStatus.Started) return;
+                pendingIsolationFinalStatus = status;
+            }
+            catch (Exception statusError)
+            {
+                // Revit may still be processing failures. Keep the transaction and
+                // retry on a later idle event rather than disposing an unknown state.
+                ReportIsolationErrorOnce("Revit konnte den Status der Isolation noch nicht ermitteln: " + statusError.Message);
+                return;
+            }
+
+            try
+            {
+                transaction.Dispose();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Already closed after Revit completed failure handling.
+            }
+            catch (Exception cleanupError)
+            {
+                ReportIsolationErrorOnce("Revit konnte die abgeschlossene Isolation noch nicht freigeben: " + cleanupError.Message);
+                return;
+            }
+            pendingIsolationTransaction = null;
+            var failure = pendingIsolationFailure;
+            pendingIsolationFailure = null;
+            pendingIsolationFinalStatus = null;
+            pendingIsolationStatusErrorReported = false;
+            TryUnsubscribeFromIdling();
+            if (failure != null)
+                ReportIsolationStatus("Revit konnte die Isolation nicht ausführen: " + failure);
+            else if (status == TransactionStatus.Committed)
+                ReportIsolationStatus($"{pendingIsolationCount} Revit-Element(e) einschließlich verschachtelter Gruppen temporär isoliert.");
+            else
+                ReportIsolationStatus("Die temporäre Isolation wurde von Revit nicht übernommen.");
+        }
+
+        private void TryUnsubscribeFromIdling()
+        {
+            var app = pendingIsolationApplication;
+            if (app == null) return;
+            try
+            {
+                app.Idling -= OnIsolationTransactionIdling;
+                pendingIsolationApplication = null;
+            }
+            catch (Exception cleanupError)
+            {
+                ReportIsolationErrorOnce("Revit konnte die Ereignisüberwachung noch nicht entfernen: " + cleanupError.Message);
+            }
+        }
+
+        private void ReportIsolationErrorOnce(string message)
+        {
+            if (pendingIsolationStatusErrorReported) return;
+            pendingIsolationStatusErrorReported = true;
+            ReportIsolationStatus(message);
+        }
+
+        private void ReportIsolationStatus(string message)
+        {
+            try { Window?.ShowStatus(message); }
+            catch (Exception) { /* The modeless window may be closing during Idling. */ }
         }
     }
 }

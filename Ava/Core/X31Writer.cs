@@ -53,8 +53,8 @@ public static class X31Writer
                 if (row.ElementId.StartsWith("+", StringComparison.Ordinal) ||
                     !long.TryParse(row.ElementId, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _))
                     throw new InvalidDataException("Revit-ElementID muss eine gültige 64-Bit-ElementID sein.");
-                if (("Revit-ElementID: " + row.ElementId).Length > 56)
-                    throw new InvalidDataException("Revit-ElementID passt nicht vollständig in die X31-Kommentarzeile.");
+                if (row.ElementId.Length > 9)
+                    throw new InvalidDataException("Revit-ElementID passt nicht in das REB-Bemerkungsfeld (maximal 9 Zeichen) der Mengenzeile; X31 wurde nicht exportiert.");
             }
             if (row.GroupLabel != null)
             {
@@ -79,11 +79,7 @@ public static class X31Writer
                 {
                     requiredLines += CommentLineCount(group.Key.GroupKind + ": " + group.Key.GroupLabel);
                 }
-                foreach (var row in group)
-                {
-                    requiredLines++;
-                    if (!string.IsNullOrEmpty(row.ElementId)) requiredLines++;
-                }
+                requiredLines += group.Count();
                 if (requiredLines > 9999 * 260) throw new InvalidDataException("REB-Zeilenadressraum einschließlich Gruppierungskommentaren überschritten.");
             }
         }
@@ -107,11 +103,11 @@ public static class X31Writer
                     AddComment(determination, group.Key.GroupKind + ": " + group.Key.GroupLabel, ref index);
                 foreach (var row in group)
                 {
-                    // CaliforniaX reads the full identifier from BVBS:Explanation attached
-                    // to this calculation row; REB's fixed remark field contains the example token.
+                    // Keep the complete ID in this calculation row's nine-character REB remark;
+                    // BVBS:Explanation retains the labelled ID for the review table.
                     var formula = decimal.Round(row.Value, 3, MidpointRounding.AwayFromZero)
                         .ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ',') + "=";
-                    var remark = string.IsNullOrEmpty(row.ElementId) ? new string(' ', 9) : "Revit-Ele";
+                    var remark = string.IsNullOrEmpty(row.ElementId) ? new string(' ', 9) : row.ElementId.PadRight(9);
                     var line = new string(' ', 13) + remark + new string(' ', 7) + "91" + formula.PadRight(38);
                     var itemLine = new XElement(Ns + "QDetermItem", new XElement(Ns + "QTakeoff",
                         new XAttribute("Row", line + FormatAddress(index++) + new string(' ', 5))));
@@ -120,8 +116,6 @@ public static class X31Writer
                         itemLine.Add(new XElement(BvbsNs + "Explanation", "Revit-ElementID: " + row.ElementId));
                     }
                     determination.Add(itemLine);
-                    if (!string.IsNullOrEmpty(row.ElementId))
-                        AddComment(determination, "Revit-ElementID: " + row.ElementId, ref index);
                 }
             }
         }
