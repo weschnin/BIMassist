@@ -10,11 +10,10 @@ Check(ava >= 0 && info > ava && app[ava..info].Contains("BIMassist.Commands.AvaQ
     && app[ava..info].Contains("BIMassist.Commands.BgkTransferFromReferenceCommand")
     && !app.Contains("new PulldownButtonData(\"BGK\"", StringComparison.Ordinal), "AVA functions are not grouped under AVA or the obsolete BGK group remains");
 var source = File.ReadAllText(Path.Combine(root, "Commands", "AvaQuantityTakeoffCommand.cs"));
-var options = File.ReadAllText(Path.Combine(root, "Commands", "AvaTakeoffOptionsWindow.cs"));
-Check(options.Contains("dauerhaft in der Ansicht oder über ihre Kategorie ausgeblendet")
-    && options.Contains("keine pixelgenaue Sichtbarkeitsprüfung")
-    && options.Contains("Geometrische Überdeckung wird nicht geprüft")
-    && options.Contains("Elemente außerhalb der Grenze liefern"), "Scope options must disclose crop-boundary and pixel-visibility limitations");
+var options = File.ReadAllText(Path.Combine(root, "Ava", "Revit", "AvaGroupingDialog.cs"));
+Check(options.Contains("Nur sichtbare Elemente der aktiven Ansicht berücksichtigen")
+    && source.Contains("grouping.VisibleOnly") && !source.Contains("AvaTakeoffOptionsWindow.Show"),
+    "Visible-only scope must be selected in the grouping window rather than a separate dialog");
 Check(source.Contains("dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen")
     && source.Contains("Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein")
     && source.Contains("keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung"), "Scope results must disclose crop-boundary and pixel-visibility limitations");

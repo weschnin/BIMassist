@@ -98,6 +98,13 @@ namespace BIMassist.Ava.Views
         }
         public static void Reset() { Choices.Clear(); Calls = 0; LastViewId = 0; }
     }
+    internal static class LvX82ViewerWindow
+    {
+        public static string? LastPath;
+        public static int Calls;
+        public static void Show(string path, IntPtr ownerHandle) { LastPath = path; Calls++; }
+        public static void Reset() { LastPath = null; Calls = 0; }
+    }
 }
 namespace Microsoft.Win32
 {

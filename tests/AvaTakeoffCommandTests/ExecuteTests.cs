@@ -28,8 +28,8 @@ internal static class ExecuteTests
             f.Document.Elements.Add(hidden);
             f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
-            Equal(1, BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Calls);
-            Equal(700L, BIMassist.Ava.Views.AvaTakeoffOptionsWindow.LastViewId);
+            Equal(1, AvaGroupingDialog.Calls);
+            Equal(700L, AvaGroupingDialog.LastViewId);
             Contains("Umfang: alle Modellelement-Instanzen im aktuellen Hauptmodell", TaskDialog.Confirmations.Single().MainContent);
             Contains("2 Modellelemente untersucht; 2 Mengenzeilen.", TaskDialog.Confirmations.Single().MainContent);
         });
@@ -38,7 +38,7 @@ internal static class ExecuteTests
             f.Instance.VisibleInViews.Add(700);
             var hidden = new FamilyInstance { Id = new(430000), TypeId = f.Type.Id };
             f.Document.Elements.Add(hidden);
-            BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Choices.Enqueue((true, true));
+            AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.Position, VisibleOnly: true));
             f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
             Contains("Revit-Ansichtssichtbarkeit", TaskDialog.Confirmations.Single().MainContent);
@@ -55,6 +55,20 @@ internal static class ExecuteTests
             Contains("keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung", successNotice);
             var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
             Equal(1, rows.Count(r => r[12] != '*'));
+        });
+        Test("optional X82 is generated after successful X31 and opened in the LV viewer", f =>
+        {
+            var x82 = Path.Combine(f.Directory, "reduced.x82");
+            AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.Position, ExportLvX82: true));
+            f.Remember(f.Template()); f.ApproveAndSave(); CommonDialog.SaveChoices.Enqueue(x82);
+            Equal(Result.Succeeded, f.Execute());
+            Check(File.Exists(f.Output) && File.Exists(x82), "X31 and optional X82 output were not both created");
+            using var input = File.OpenRead(x82);
+            var lv = CatalogReaders.ReadX82(input, x82);
+            Equal(1, lv.Entries.Count);
+            Equal("FirstItem", lv.Entries.Single().Id);
+            Equal(Path.GetFullPath(x82), BIMassist.Ava.Views.LvX82ViewerWindow.LastPath);
+            Equal(1, BIMassist.Ava.Views.LvX82ViewerWindow.Calls);
         });
         Test("successful takeoff reveals per-element identification and mapping skips in expanded confirmation", f =>
         {
@@ -76,7 +90,7 @@ internal static class ExecuteTests
         Test("visible-only scope rejects a template active view without producing output", f =>
         {
             f.Data.Application.ActiveUIDocument!.ActiveView.IsTemplate = true;
-            BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Choices.Enqueue((true, true));
+            AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.Position, VisibleOnly: true));
             f.Remember(f.Template());
             Equal(Result.Failed, f.Execute()); Contains("Ansichtsvorlage", f.Message); f.NoOutput();
             Equal(0, TaskDialog.Confirmations.Count);
@@ -242,7 +256,7 @@ internal static class ExecuteTests
         });
         Test("fatal quantity failure reports complete scope counts in message and dialog without replacing a target", f =>
         {
-            BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Choices.Enqueue((true, true));
+            AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.Position, VisibleOnly: true));
             var template = f.Template();
             template.Mappings[0].Positions.Add(new() { LvItemId = "FirstItem", Quantity = new()
                 { Source = new() { Kind = ParameterKind.LocalFamily, Name = "Absent", Spec = "LENGTH", Scope = ParameterScope.Instance }, Unit = "m" } });
@@ -294,7 +308,7 @@ internal static class ExecuteTests
         {
             f.Document.Elements.Remove(f.Instance);
             f.Document.Elements.Remove(f.Type);
-            BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Choices.Enqueue((true, true));
+            AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.Position, VisibleOnly: true));
             f.Remember(f.Template());
             Equal(Result.Cancelled, f.Execute());
             Contains("Umfang: Revit-Ansichtssichtbarkeit in „Grundriss EG“", TaskDialog.Notices.Single());
@@ -357,7 +371,7 @@ internal static class ExecuteTests
         });
         Test("writer IO error is reported without a partial target", f =>
         {
-            BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Choices.Enqueue((true, true));
+            AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.Position, VisibleOnly: true));
             f.Instance.VisibleInViews.Add(700);
             f.Remember(f.Template()); TaskDialog.Answers.Enqueue(TaskDialogResult.Yes);
             CommonDialog.SaveChoices.Enqueue(Path.Combine(f.Directory, "missing-directory", "takeoff.x31"));
@@ -447,7 +461,7 @@ internal static class ExecuteTests
             previousChoiceSettings = Environment.GetEnvironmentVariable("BIMASSIST_AVA_PARAMETER_CHOICES");
             Environment.SetEnvironmentVariable("BIMASSIST_AVA_WORKSPACE_SETTINGS", Settings);
             Environment.SetEnvironmentVariable("BIMASSIST_AVA_PARAMETER_CHOICES", ChoiceSettings);
-            TaskDialog.Reset(); CommonDialog.Reset(); AvaGroupingDialog.Reset(); BIMassist.Ava.Views.ParameterChoiceWindow.Reset(); BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Reset();
+            TaskDialog.Reset(); CommonDialog.Reset(); AvaGroupingDialog.Reset(); BIMassist.Ava.Views.ParameterChoiceWindow.Reset(); BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Reset(); BIMassist.Ava.Views.LvX82ViewerWindow.Reset();
             System.Windows.Window.Created = System.Windows.Window.Closed = 0;
             var symbol = Type;
             symbol.BuiltIns[BuiltInParameter.ASSEMBLY_CODE] = new("BGK", SpecTypeId.String.Text, "001", StorageType.String);

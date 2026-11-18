@@ -68,6 +68,7 @@ public static class X31Writer
         var rowsByItem = rows.GroupBy(row => row.LvItemId, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
         long requiredLines = 0;
+        var countedGroups = new HashSet<(string? GroupKind, string? GroupLabel)>();
         foreach (var entry in entries)
         {
             if (!rowsByItem.TryGetValue(entry.Id, out var itemRows)) continue;
@@ -75,7 +76,7 @@ public static class X31Writer
                          .OrderBy(group => group.Key.GroupKind ?? "", StringComparer.Ordinal)
                          .ThenBy(group => group.Key.GroupLabel ?? "", StringComparer.Ordinal))
             {
-                if (group.Key.GroupLabel != null)
+                if (group.Key.GroupLabel != null && countedGroups.Add(group.Key))
                 {
                     requiredLines += CommentLineCount(group.Key.GroupKind + ": " + group.Key.GroupLabel);
                 }
@@ -88,6 +89,7 @@ public static class X31Writer
             boq.Element(SourceNs + "BoQInfo")!.Elements(SourceNs + "BoQBkdn").Select(Rename),
             Skeleton(boq.Element(SourceNs + "BoQBody")!));
         var items = outputBoq.Descendants(Ns + "Item").ToDictionary(x => x.Attribute("ID")!.Value, StringComparer.Ordinal);
+        var emittedGroups = new HashSet<(string? GroupKind, string? GroupLabel)>();
         int index = 0;
         foreach (var entry in entries)
         {
@@ -99,7 +101,7 @@ public static class X31Writer
                          .OrderBy(group => group.Key.GroupKind ?? "", StringComparer.Ordinal)
                          .ThenBy(group => group.Key.GroupLabel ?? "", StringComparer.Ordinal))
             {
-                if (group.Key.GroupLabel != null)
+                if (group.Key.GroupLabel != null && emittedGroups.Add(group.Key))
                     AddComment(determination, group.Key.GroupKind + ": " + group.Key.GroupLabel, ref index);
                 foreach (var row in group)
                 {
@@ -113,7 +115,13 @@ public static class X31Writer
                         new XAttribute("Row", line + FormatAddress(index++) + new string(' ', 5))));
                     if (!string.IsNullOrEmpty(row.ElementId))
                     {
-                        itemLine.Add(new XElement(BvbsNs + "Explanation", "Revit-ElementID: " + row.ElementId));
+                        var explanation = new XElement(BvbsNs + "Explanation", "Revit-ElementID: " + row.ElementId);
+                        if (!string.IsNullOrWhiteSpace(row.GroupLabel))
+                        {
+                            explanation.SetAttributeValue("GroupKind", row.GroupKind ?? "");
+                            explanation.SetAttributeValue("GroupLabel", row.GroupLabel);
+                        }
+                        itemLine.Add(explanation);
                     }
                     determination.Add(itemLine);
                 }
@@ -322,6 +330,9 @@ public static class X31Writer
                 || !explanation.Value.StartsWith("Revit-ElementID: ", StringComparison.Ordinal)
                 || explanation.Value.Length > 200)
                 throw new InvalidDataException("Ungültige BVBS-Ergänzung: Revit-Element-ID muss an genau einer Berechnungszeile stehen.");
+            if (explanation.Attributes().Any(attribute => attribute.Name.LocalName is not ("GroupKind" or "GroupLabel"))
+                || (explanation.Attribute("GroupKind") == null) != (explanation.Attribute("GroupLabel") == null))
+                throw new InvalidDataException("Ungültige BVBS-Ergänzung: Gruppenzuordnung muss vollständig und eindeutig sein.");
         }
         // CaliforniaX's supplied DA31 export uses this vendor extension in addition to
         // the base GAEB schema. Validate the GAEB core unchanged and the extension above.

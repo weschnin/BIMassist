@@ -7,7 +7,7 @@ public sealed record GroupingParameterOption(string Name, ParameterScope Scope)
     public string DisplayLabel => Name + " (" + (Scope == ParameterScope.Instance ? "Instanz" : "Typ") + ")";
 }
 
-public sealed record QuantityGroupingSelection(QuantityGroupingMode Mode, GroupingParameterOption? Parameter = null)
+public sealed record QuantityGroupingSelection(QuantityGroupingMode Mode, GroupingParameterOption? Parameter = null, bool VisibleOnly = false, bool ExportLvX82 = false)
 {
     public bool IsGrouped => Mode != QuantityGroupingMode.Position;
     public string GroupKind => Mode switch

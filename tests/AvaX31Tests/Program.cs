@@ -13,11 +13,11 @@ internal static class Program
     static readonly XNamespace SourceNs = "http://www.gaeb.de/GAEB_DA_XML/DA82/3.3";
     static readonly XNamespace Ns = "http://www.gaeb.de/GAEB_DA_XML/DA31/3.3";
     static readonly string Fixture = """
-      <GAEB xmlns="http://www.gaeb.de/GAEB_DA_XML/DA82/3.3"><Award><DP>82</DP><BoQ ID="OriginalBoQ">
-      <BoQInfo><Name>Source only</Name><Date>2026-01-01</Date>
+      <GAEB xmlns="http://www.gaeb.de/GAEB_DA_XML/DA82/3.3"><GAEBInfo><Version>3.3</Version><VersDate>2021-05</VersDate><Date>2026-01-01</Date></GAEBInfo><Award><DP>82</DP><BoQ ID="OriginalBoQ">
+      <BoQInfo><Name>Source only</Name><LblBoQ>Original source catalog</LblBoQ><Date>2026-01-01</Date><OutlCompl>AllTxt</OutlCompl>
       <BoQBkdn><Type>BoQLevel</Type><Length>2</Length><Num>Yes</Num></BoQBkdn>
       <BoQBkdn><Type>Item</Type><Length>4</Length><Num>Yes</Num></BoQBkdn></BoQInfo>
-      <BoQBody><BoQCtgy ID="OriginalCategory" RNoPart="01"><BoQBody><Itemlist>
+      <BoQBody><BoQCtgy ID="OriginalCategory" RNoPart="01"><LblTx><p><span>Original Category</span></p></LblTx><BoQBody><Itemlist>
       <Item ID="FirstItem" RNoPart="0010"><Qty>999</Qty><QU>m2</QU><QtyDeterm><QDetermItem><QTakeoff Row="do not copy me"/></QDetermItem></QtyDeterm></Item>
       <Item ID="SecondItem" RNoPart="0020"><Qty>888</Qty><QU>m3</QU></Item>
       </Itemlist></BoQBody></BoQCtgy></BoQBody></BoQ></Award></GAEB>
@@ -53,6 +53,53 @@ internal static class Program
             var legacy = JsonNode.Parse(json)!.AsObject();
             legacy["LvCatalog"]!["Source"]!.AsObject().Remove("X82SnapshotBase64");
             Require(TemplateJson.Deserialize(legacy.ToJsonString()).SchemaVersion == 3, "Legacy schema changed");
+        });
+        Test("X82 quantity export clones the source, reduces positions, sums quantities and preserves LV text and units", () =>
+        {
+            var template = Read(Fixture);
+            var before = template.LvCatalog.Source.X82SnapshotBase64;
+            var output = X82QuantityWriter.Serialize(template, [
+                new("FirstItem", 1.25m, "m2", "", "101"), new("FirstItem", 2.25m, "m2", "", "102"),
+                new("SecondItem", 4m, "m3", "", "103")]);
+            var doc = XDocument.Parse(output);
+            Equal(2, doc.Descendants(SourceNs + "Item").Count());
+            var first = doc.Descendants(SourceNs + "Item").Single(item => (string?)item.Attribute("ID") == "FirstItem");
+            Equal("999", (string?)first.Element(SourceNs + "Qty"));
+            Equal("3.5", (string?)first.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
+            Equal("m2", (string?)first.Element(SourceNs + "QU"));
+            var second = doc.Descendants(SourceNs + "Item").Single(item => (string?)item.Attribute("ID") == "SecondItem");
+            Equal("888", (string?)second.Element(SourceNs + "Qty"));
+            Equal("4", (string?)second.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
+            Require(!output.Contains("do not copy me", StringComparison.Ordinal), "Stale quantity calculation remained in X82 output");
+            Equal(before, template.LvCatalog.Source.X82SnapshotBase64);
+            using var check = new MemoryStream(Encoding.UTF8.GetBytes(output));
+            Equal(2, CatalogReaders.ReadX82(check, "reduced.x82").Entries.Count);
+        });
+        Test("X82 quantity export keeps only measured positions and refuses unknown IDs or unit changes", () =>
+        {
+            var template = Read(Fixture);
+            var output = X82QuantityWriter.Serialize(template, [new("FirstItem", 5m, "m2", "", "101")]);
+            var doc = XDocument.Parse(output);
+            Equal(1, doc.Descendants(SourceNs + "Item").Count());
+            var first = doc.Descendants(SourceNs + "Item").Single();
+            Equal("FirstItem", (string?)first.Attribute("ID"));
+            Equal("999", (string?)first.Element(SourceNs + "Qty"));
+            Equal("5", (string?)first.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
+            Reject(() => X82QuantityWriter.Serialize(template, [new("MissingItem", 1m, "m2", "")]));
+            Reject(() => X82QuantityWriter.Serialize(template, [new("FirstItem", 1m, "m", "")]));
+        });
+        Test("X82 reduced quantity output validates against the official DA82 schema when supplied", () =>
+        {
+            var schemaPath = Environment.GetEnvironmentVariable("BIMASSIST_AVA_X82_SCHEMA");
+            if (string.IsNullOrWhiteSpace(schemaPath)) return;
+            var schemas = new XmlSchemaSet { XmlResolver = new XmlUrlResolver() };
+            using (var schemaReader = XmlReader.Create(schemaPath, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = new XmlUrlResolver() }))
+                schemas.Add(null, schemaReader);
+            var template = Read(Fixture);
+            var output = X82QuantityWriter.Serialize(template, [new("FirstItem", 5m, "m2", "", "101")]);
+            var issues = new List<string>();
+            XDocument.Parse(output).Validate(schemas, (_, args) => issues.Add(args.Message), true);
+            Require(issues.Count == 0, string.Join(Environment.NewLine, issues));
         });
         Test("production X31 GAEB core validates against official schema; BVBS extension is row-scoped", () =>
         {
@@ -158,7 +205,7 @@ internal static class Program
             try { X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m2", "", "4294967296")]); throw new Exception("A truncated Revit ID was exported"); }
             catch (InvalidDataException ex) { Require(ex.Message.Contains("9", StringComparison.Ordinal), "Missing actionable remark-width diagnostic"); }
         });
-        Test("X31 repeats each group header per LV position, truncates it, and keeps IDs with calculations", () =>
+        Test("X31 emits each unique group header once across LV positions and keeps IDs with calculations", () =>
         {
             var rows = new[]
             {
@@ -183,14 +230,14 @@ internal static class Program
             Require(firstRows.Where(x => x[12] != '*').Any(x => x.Substring(31, 38).Trim() == "1="), "Expected the 1-unit formula line");
             var second = doc.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == "SecondItem");
             var secondItems = second.Descendants(Ns + "QDetermItem").ToArray();
-            Equal(6, secondItems.Length);
+            Equal(4, secondItems.Length);
             var secondQuantities = secondItems.Where(x => x.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value[12] != '*').ToArray();
             var expectedIds = new[] { "Revit-ElementID: 105", "Revit-ElementID: 106", "Revit-ElementID: 107", "Revit-ElementID: 108" };
             var actualIds = secondQuantities.Select(x => (string?)x.Element(XName.Get("Explanation", "BVBS"))).ToArray();
             Require(expectedIds.ToHashSet(StringComparer.Ordinal).SetEquals(actualIds.OfType<string>()), $"Second item ElementIDs changed: {string.Join(",", actualIds)}");
             var allHeaders = doc.Descendants(Ns + "QTakeoff").Select(x => x.Attribute("Row")!.Value)
                 .Where(x => x[12] == '*' && x.Substring(13, 56).StartsWith("Baubereich:", StringComparison.Ordinal)).ToArray();
-            Equal(4, allHeaders.Length);
+            Equal(2, allHeaders.Length);
             var ungrouped = X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m2", "trace", "77")]);
             var ungroupedRows = XDocument.Parse(ungrouped).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
             Equal(1, ungroupedRows.Length);
@@ -211,7 +258,7 @@ internal static class Program
             var review = X31ReviewReader.Read(input, "technical-fixture.x31");
             var groups = review.Rows.Where(row => row.Kind == X31ReviewRowKind.GroupComment
                 && row.GroupKind == "Baubereich" && row.GroupLabel == "M-Technik1").ToArray();
-            Equal(2, groups.Length);
+            Equal(1, groups.Length);
             var expected = new[] { "101", "102", "429496729" };
             foreach (var group in groups)
                 Require(new HashSet<string>(group.ElementIdsForSelection, StringComparer.Ordinal).SetEquals(expected),
@@ -238,6 +285,13 @@ internal static class Program
             var plan = X31ElementSelectionPlanner.FromRows([first, second]);
             Require(plan.ElementIds.SequenceEqual(["42", "43"]) && plan.SelectionIncomplete,
                 "Selection plan must de-duplicate element IDs and preserve incomplete-group state.");
+        });
+        Test("X31 preflight reports distinct missing active-model ElementIDs before opening the review", () =>
+        {
+            var row = new X31ReviewRow(1, "1", "item", X31ReviewRowKind.Quantity, "", "1=", null, null, null, ["42", "43", "42", "44"], false);
+            var review = new X31ReviewDocument("preflight.x31", [row], []);
+            var missing = X31ReviewReader.FindMissingElementIds(review, id => id == "42");
+            Require(missing.SequenceEqual(["43", "44"]), "Missing ElementIDs must be distinct, sorted, and name every missing ID.");
         });
         if (Environment.GetEnvironmentVariable("BIMASSIST_AVA_X31_REVIEW_FILES") is { Length: > 0 } reviewFiles)
         {

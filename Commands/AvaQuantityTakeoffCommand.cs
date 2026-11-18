@@ -16,6 +16,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
     public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
     {
         string? scopeDescription = null;
+        string? createdX31Path = null;
         try
         {
             var uiDocument = commandData.Application.ActiveUIDocument;
@@ -45,8 +46,14 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             }
             var parameterChoices = new AvaParameterChoiceStore();
             var activeView = uiDocument.ActiveView;
-            if (AvaTakeoffOptionsWindow.Show(commandData.Application, activeView, out var visibleOnly) != true)
+            var grouping = AvaGroupingDialog.Show(commandData.Application, document, activeView);
+            if (grouping == null) return Result.Cancelled;
+            if (grouping.ExportLvX82 && string.IsNullOrWhiteSpace(template.LvCatalog.Source.X82SnapshotBase64))
+            {
+                TaskDialog.Show("AVA – Mengenermittlung", "Für den optionalen X82-Export fehlt der eingebettete Quell-LV-Snapshot. Importieren Sie das GAEB-LV erneut und starten Sie die Mengenermittlung danach erneut.");
                 return Result.Cancelled;
+            }
+            var visibleOnly = grouping.VisibleOnly;
             scopeDescription = visibleOnly
                 ? "Revit-Ansichtssichtbarkeit in „" + activeView.Name + "“ (dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen; Zoom-/Pan-Bildausschnitt nicht maßgeblich; Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein; keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung)"
                 : "alle Modellelement-Instanzen im aktuellen Hauptmodell";
@@ -97,8 +104,6 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                     + "\nKeine Datei erstellt. Verknüpfte Modelle werden nicht ausgewertet.");
                 return Result.Cancelled;
             }
-            var grouping = AvaGroupingDialog.Show(commandData.Application, document);
-            if (grouping == null) return Result.Cancelled;
             var labels = grouping.Mode switch
             {
                 QuantityGroupingMode.Position => new Dictionary<string, string>(StringComparer.Ordinal),
@@ -121,6 +126,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                 MainContent = "Projekt: " + document.Title + "\nVorlage: " + template.Name + "\n" + workspace.LastTemplatePath
                     + "\nGruppierung: " + (grouping.Mode == QuantityGroupingMode.Position ? "nach Leistungspositionen" : grouping.Mode == QuantityGroupingMode.FamilyAndType ? "nach Familienname und Typ" : grouping.GroupKind + " nach Parameter „" + grouping.Parameter!.DisplayLabel + "“")
                     + "\n\n" + result.Examined + " Modellelemente untersucht; " + result.Rows.Count + " Mengenzeilen."
+                    + (grouping.ExportLvX82 ? "\nZusätzlich wird das reduzierte GAEB-LV als X82 angeboten." : "")
                     + "\nOhne vollständige Kennzeichnung: " + result.Unmarked + "; ohne BGK-/Typzuordnung: " + result.Unmapped + "."
                     + "\nEinheiten: Revit-Spezifikation wird beim Lesen geprüft; physikalische Parameter werden von internen Einheiten zur Vorlageneinheit und bei Bedarf zur LV-Einheit umgerechnet. Parametrisierte Formeln werden dimensional geprüft; parameterfreie Zahlenformeln sind deklarierte Konstanten. Nicht umrechenbare Mengen blockieren den Export."
                     + "\n\nUmfang: " + scopeDescription
@@ -145,7 +151,36 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                 || string.Equals(outputPath, Path.GetFullPath(AvaWorkspace.DefaultSettingsPath), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Die X31-Ausgabe darf weder die aktive AVA-Vorlage noch die Arbeitsbereich-Einstellungen überschreiben.");
             X31Writer.Save(outputPath, template, exportRows);
+            createdX31Path = outputPath;
+            string? x82Path = null;
+            if (grouping.ExportLvX82)
+            {
+                using var saveX82 = new FileSaveDialog("GAEB-LV (*.x82)|*.x82|Alle Dateien (*.*)|*.*")
+                {
+                    Title = "Reduziertes GAEB-LV speichern",
+                    DefaultFilterEntry = "*.x82",
+                    InitialFileName = Path.GetFileNameWithoutExtension(outputPath) + ".x82"
+                };
+                if (saveX82.Show() == ItemSelectionDialogResult.Confirmed)
+                {
+                    var selectedX82 = saveX82.GetSelectedModelPath();
+                    if (selectedX82 == null) throw new InvalidDataException("Der Revit-Speicherdialog hat keinen X82-Dateipfad zurückgegeben.");
+                    x82Path = Path.GetFullPath(ModelPathUtils.ConvertModelPathToUserVisiblePath(selectedX82));
+                    if (string.Equals(x82Path, outputPath, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(x82Path, Path.GetFullPath(workspace.LastTemplatePath!), StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(x82Path, Path.GetFullPath(AvaWorkspace.DefaultSettingsPath), StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(Path.GetFileName(x82Path), template.LvCatalog.Source.FileName, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException("Die X82-Ausgabe darf weder die X31-Ausgabe noch die aktive AVA-Vorlage, Arbeitsbereich-Einstellungen oder das Quell-LV überschreiben.");
+                    X82QuantityWriter.Save(x82Path, template, exportRows);
+                    try { LvX82ViewerWindow.Show(x82Path, commandData.Application.MainWindowHandle); }
+                    catch (Exception viewerError)
+                    {
+                        TaskDialog.Show("AVA – LV-Viewer", "Die X82-Datei wurde erstellt, der LV-Viewer konnte sie aber nicht öffnen.\n\n" + viewerError.Message + "\n\n" + x82Path);
+                    }
+                }
+            }
             TaskDialog.Show("AVA – Mengenermittlung", "X31-Datei erstellt und zurückgelesen.\n" + result.Rows.Count + " Mengenzeilen.\n\n" + outputPath
+                + (grouping.ExportLvX82 ? x82Path == null ? "\n\nDer optionale X82-Export wurde abgebrochen; die X31-Datei bleibt erstellt." : "\n\nReduziertes X82-LV erstellt:\n" + x82Path : "")
                 + "\n\nDer Import in California ist separat zu prüfen.\n\nUmfang: " + scopeDescription);
             return Result.Succeeded;
         }
@@ -155,7 +190,10 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
         }
         catch (Exception ex)
         {
-            message = "Die AVA-Mengenermittlung konnte nicht abgeschlossen werden.\n\n" + ex.Message
+            message = (createdX31Path == null
+                ? "Die AVA-Mengenermittlung konnte nicht abgeschlossen werden."
+                : "Die X31-Datei wurde erstellt, aber ein nachgelagerter Schritt ist fehlgeschlagen: " + createdX31Path)
+                + "\n\n" + ex.Message
                 + (scopeDescription == null ? "" : "\n\nUmfang: " + scopeDescription);
             return Result.Failed;
         }

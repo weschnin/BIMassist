@@ -16,7 +16,8 @@ internal sealed class X31ReviewWindow : Window
     private readonly Action<X31SelectionPlan, bool> postSelectionRequest;
     private readonly TextBlock statusText;
     internal DataGrid ReviewGrid { get; }
-    internal ComboBox ActionMode { get; }
+    internal Button SelectButton { get; }
+    internal Button IsolateButton { get; }
 
     internal X31ReviewWindow(X31ReviewDocument document, Action<X31SelectionPlan, bool> postSelectionRequest)
     {
@@ -69,11 +70,12 @@ internal sealed class X31ReviewWindow : Window
         }
 
         var actionPanel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        actionPanel.Children.Add(new TextBlock { Text = "Bei Zeilenauswahl:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) });
-        ActionMode = new ComboBox { Width = 190, SelectedIndex = 0, Margin = new Thickness(0, 0, 8, 0) };
-        ActionMode.Items.Add(new ActionModeChoice("Elemente selektieren", false));
-        ActionMode.Items.Add(new ActionModeChoice("Temporär isolieren", true));
-        actionPanel.Children.Add(ActionMode);
+        SelectButton = new Button { Content = "Selektieren", MinWidth = 110, MinHeight = 30, Margin = new Thickness(0, 0, 8, 0) };
+        IsolateButton = new Button { Content = "Isolieren", MinWidth = 110, MinHeight = 30 };
+        SelectButton.Click += (_, _) => ApplySelectedRows(false);
+        IsolateButton.Click += (_, _) => ApplySelectedRows(true);
+        actionPanel.Children.Add(SelectButton);
+        actionPanel.Children.Add(IsolateButton);
         header.Children.Add(actionPanel);
         Grid.SetRow(header, 0);
         layout.Children.Add(header);
@@ -113,8 +115,10 @@ internal sealed class X31ReviewWindow : Window
             Setters = { new Setter(Control.FontWeightProperty, FontWeights.SemiBold), new Setter(Control.BackgroundProperty, WpfBrushes.LemonChiffon) }
         });
         ReviewGrid.RowStyle = groupStyle;
-        ReviewGrid.SelectionChanged += (_, _) => ApplySelectedRows();
-        ActionMode.SelectionChanged += (_, _) => ApplySelectedRows();
+        ReviewGrid.SelectionChanged += (_, _) =>
+            ShowStatus(ReviewGrid.SelectedItems.Count == 0
+                ? "Keine Zeile ausgewählt. Wählen Sie Zeilen und klicken Sie auf Selektieren oder Isolieren."
+                : $"{ReviewGrid.SelectedItems.Count} Zeile(n) ausgewählt. Klicken Sie auf Selektieren oder Isolieren.");
         Grid.SetRow(ReviewGrid, 1);
         layout.Children.Add(ReviewGrid);
 
@@ -136,7 +140,7 @@ internal sealed class X31ReviewWindow : Window
             Dispatcher.BeginInvoke(new Action(() => statusText.Text = message));
     }
 
-    private void ApplySelectedRows()
+    private void ApplySelectedRows(bool isolate)
     {
         var selected = ReviewGrid.SelectedItems.OfType<X31ReviewRow>().ToArray();
         if (selected.Length == 0)
@@ -150,7 +154,6 @@ internal sealed class X31ReviewWindow : Window
             ShowStatus("Für die ausgewählten Zeilen ist keine gültige Revit-ElementID vorhanden.");
             return;
         }
-        var isolate = (ActionMode.SelectedItem as ActionModeChoice)?.Isolate == true;
         if (isolate && plan.SelectionIncomplete)
             ShowStatus("Die Zuordnung ist unvollständig. Es werden nur vorhandene IDs selektiert; eine Teil-Isolation wird verhindert.");
         postSelectionRequest(plan, isolate);
@@ -163,10 +166,6 @@ internal sealed class X31ReviewWindow : Window
         Width = width == 2 ? new DataGridLength(2, DataGridLengthUnitType.Star) : new DataGridLength(width)
     };
 
-    private sealed record ActionModeChoice(string Label, bool Isolate)
-    {
-        public override string ToString() => Label;
-    }
 
     private sealed class RowKindConverter : IValueConverter
     {

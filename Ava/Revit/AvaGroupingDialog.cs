@@ -8,14 +8,14 @@ namespace BIMassist.Ava.Revit;
 /// <summary>Collects output-only grouping choices; it never edits the Revit model.</summary>
 public static class AvaGroupingDialog
 {
-    public static QuantityGroupingSelection? Show(UIApplication application, Autodesk.Revit.DB.Document document)
+    public static QuantityGroupingSelection? Show(UIApplication application, Autodesk.Revit.DB.Document document, Autodesk.Revit.DB.View activeView)
     {
         var options = RevitQuantityReader.GetGroupingParameterOptions(document);
         var window = new Window
         {
             Title = "AVA – Gruppierung der Mengenermittlung",
             Width = 540,
-            Height = 410,
+            Height = 520,
             MinWidth = 500,
             ResizeMode = ResizeMode.NoResize,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -68,6 +68,26 @@ public static class AvaGroupingDialog
         panel.Children.Add(byPosition); panel.Children.Add(byTrade); panel.Children.Add(byArea); panel.Children.Add(byFamilyAndType);
         panel.Children.Add(parameterLabel); panel.Children.Add(parameters); panel.Children.Add(unavailable);
 
+        var visibleOnly = new W.CheckBox
+        {
+            Content = "Nur sichtbare Elemente der aktiven Ansicht berücksichtigen",
+            Margin = new Thickness(0, 12, 0, 2),
+            ToolTip = "Berücksichtigt die Revit-Ansichtssichtbarkeit. Zoom und Verdeckung werden nicht ausgewertet."
+        };
+        panel.Children.Add(visibleOnly);
+        var exportLv = new W.CheckBox
+        {
+            Content = "Reduziertes GAEB-LV zusätzlich als X82 exportieren und im LV-Viewer öffnen",
+            Margin = new Thickness(0, 6, 0, 2),
+            ToolTip = "Erstellt nach erfolgreichem X31-Export eine X82-Datei aus dem eingebetteten Quell-LV mit den ermittelten Positionen und Summenmengen."
+        };
+        panel.Children.Add(exportLv);
+        panel.Children.Add(new W.TextBlock
+        {
+            Text = "Aktive Ansicht: " + (string.IsNullOrWhiteSpace(activeView?.Name) ? "(unbekannt)" : activeView.Name),
+            Margin = new Thickness(20, 0, 0, 4)
+        });
+
         var buttons = new W.WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
         var accept = new W.Button { Content = "Weiter", IsDefault = true, MinWidth = 95, MinHeight = 30, Margin = new Thickness(0, 0, 8, 0) };
         var cancel = new W.Button { Content = "Abbrechen", IsCancel = true, MinWidth = 95, MinHeight = 30 };
@@ -82,9 +102,9 @@ public static class AvaGroupingDialog
                 MessageBox.Show(window, "Für die Gruppierung einen Textparameter auswählen.", "AVA", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            selection = mode == QuantityGroupingMode.Position
-                ? new(mode)
-                : new(mode, mode is QuantityGroupingMode.Trade or QuantityGroupingMode.BuildingArea ? (GroupingParameterOption)parameters.SelectedItem : null);
+            selection = new(mode,
+                mode is QuantityGroupingMode.Trade or QuantityGroupingMode.BuildingArea ? (GroupingParameterOption)parameters.SelectedItem : null,
+                visibleOnly.IsChecked == true, exportLv.IsChecked == true);
             window.DialogResult = true;
         };
         buttons.Children.Add(accept); buttons.Children.Add(cancel); panel.Children.Add(buttons);

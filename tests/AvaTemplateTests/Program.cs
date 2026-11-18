@@ -453,16 +453,36 @@ internal static class Program
                     (plan, isolateRequested) => { request = plan; isolate = isolateRequested; });
                 try
                 {
-                    window.ActionMode.SelectedIndex = 1;
                     window.ReviewGrid.SelectedItems.Add(group);
                     window.ReviewGrid.SelectedItems.Add(quantity);
+                    Check(request is null, "Changing the list selection executed a Revit action before a button click.");
+                    window.IsolateButton.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                     Check(request is not null && new HashSet<string>(request.ElementIds, StringComparer.Ordinal).SetEquals(["101", "102", "103"]),
                         "Selected X31 rows were not forwarded as the combined ID request.");
                     Check(isolate, "The temporary-isolate mode was not forwarded to the external-event boundary.");
                 }
                 finally { window.Close(); }
             });
-            Test("UTF16 parameters keep GUID and spec", () => {
+            Test("X82 LV viewer displays OZ, short text, quantity and unit and updates the selected long text", () =>
+            {
+                var path = Path.Combine(AppContext.BaseDirectory, "bimassist-viewer-" + Guid.NewGuid().ToString("N") + ".x82");
+                File.WriteAllText(path, "<GAEB xmlns=\"http://www.gaeb.de/GAEB_DA_XML/DA82/3.3\"><Award><BoQ ID=\"B\"><BoQInfo><Name>Test-LV</Name></BoQInfo><BoQBody><Itemlist><Item ID=\"I\" RNoPart=\"0010\"><OutlineText><p><span>Kurztext</span></p></OutlineText><Qty>2.5</Qty><QU>m2</QU><DetailTxt><p><span>Langtext-Inhalt</span></p></DetailTxt></Item></Itemlist></BoQBody></BoQ></Award></GAEB>");
+                var window = LvX82ViewerWindow.Create(path);
+                try
+                {
+                    var boq = (System.Windows.Controls.TreeViewItem)window.PositionTree.Items[0];
+                    var position = (System.Windows.Controls.TreeViewItem)boq.Items[0];
+                    var cells = ((System.Windows.Controls.Grid)position.Header).Children.OfType<System.Windows.Controls.TextBlock>().Select(cell => cell.Text).ToArray();
+                    Check(cells.Length == 4 && cells[0] == "0010" && cells[1] == "Kurztext"
+                        && decimal.TryParse(cells[2], System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.CurrentCulture, out var quantity) && quantity == 2.5m
+                        && cells[3] == "m2", "LV tree position cells were not populated from the X82 file: " + string.Join("|", cells));
+                    position.IsSelected = true;
+                    Check(window.LongTextView.Text.Contains("Langtext-Inhalt", StringComparison.Ordinal), "Selecting an LV position did not display its long text below the tree.");
+                }
+                finally { window.Close(); File.Delete(path); }
+            });
+            Test("UTF16 parameters keep GUID and spec", () =>
+            {
                 var text = "*PARAM\tGUID\tNAME\tDATATYPE\tGROUP\nPARAM\t9af4d36c-6267-47f9-af4b-eb8ac2a0fc49\tAVA_Anzahl\tINTEGER\t1\n";
                 var c = Read("ReadSharedParameters", Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes(text)).ToArray());
                 Check(c["Entries"]![0]!["Spec"]!.GetValue<string>() == "INTEGER", "spec changed");

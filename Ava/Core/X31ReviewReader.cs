@@ -31,6 +31,17 @@ public static class X31ReviewReader
 {
     private const int MaxBytes = 32 * 1024 * 1024;
     private const int MaxRows = 200_000;
+
+    public static IReadOnlyList<string> FindMissingElementIds(X31ReviewDocument review, Func<string, bool> exists)
+    {
+        ArgumentNullException.ThrowIfNull(review);
+        ArgumentNullException.ThrowIfNull(exists);
+        return review.Rows.SelectMany(row => row.ElementIdsForSelection)
+            .Distinct(StringComparer.Ordinal)
+            .Where(id => !exists(id))
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToArray();
+    }
     private const string NamespaceUri = "http://www.gaeb.de/GAEB_DA_XML/DA31/3.3";
     private static readonly XNamespace Ns = NamespaceUri;
     private static readonly Regex ElementIdPattern = new(
@@ -148,13 +159,16 @@ public static class X31ReviewReader
 
                 var explanation = takeoff.Elements().FirstOrDefault(element => element.Name.LocalName == "Explanation")?.Value;
                 var elementId = ParseElementId(explanation, warnings, rawRows.Count + 1);
+                var groupExtension = takeoff.Elements().FirstOrDefault(element => element.Name.LocalName == "Explanation");
+                var rowGroupKind = (string?)groupExtension?.Attribute("GroupKind") ?? currentGroupKind;
+                var rowGroupLabel = (string?)groupExtension?.Attribute("GroupLabel") ?? currentGroupLabel;
                 var formula = rowText.Substring(31, Math.Min(38, rowText.Length - 31)).Trim();
                 rawRows.Add(new MutableRow(rawRows.Count + 1, position, itemId, X31ReviewRowKind.Quantity,
                     string.IsNullOrWhiteSpace(explanation) ? "" : explanation.Trim(), formula, elementId,
-                    currentGroupKind, currentGroupLabel));
-                if (currentGroupKind is not null && currentGroupLabel is not null)
+                    rowGroupKind, rowGroupLabel));
+                if (rowGroupKind is not null && rowGroupLabel is not null)
                 {
-                    var group = GetGroup(groupMembership, currentGroupKind, currentGroupLabel);
+                    var group = GetGroup(groupMembership, rowGroupKind, rowGroupLabel);
                     if (elementId is null) group.SelectionIncomplete = true;
                     else group.ElementIds.Add(elementId);
                 }

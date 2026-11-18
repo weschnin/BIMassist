@@ -27,6 +27,16 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
             var dialog = AvaFileDialogs.OpenX31();
             if (dialog.ShowDialog() != true) return Result.Cancelled;
             var review = X31ReviewReader.ReadFile(dialog.FileName);
+            var missingIds = X31ReviewReader.FindMissingElementIds(review, text =>
+                long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var value)
+                && uiDocument.Document.GetElement(new ElementId(value)) != null);
+            if (missingIds.Count > 0)
+            {
+                var shown = string.Join(", ", missingIds.Take(100));
+                if (missingIds.Count > 100) shown += $", … und {missingIds.Count - 100} weitere";
+                TaskDialog.Show("AVA – X31 prüfen", $"Die X31-Mengenermittlung enthält ElementIDs, die im aktiven Revit-Modell nicht vorhanden sind. Die Prüfansicht wird nicht geladen.\n\nFehlende ElementIDs ({missingIds.Count}):\n{shown}");
+                return Result.Cancelled;
+            }
             var handler = new X31ReviewExternalEventHandler(uiDocument.Document);
             var externalEvent = ExternalEvent.Create(handler);
             var window = new X31ReviewWindow(review, (plan, isolate) =>
@@ -123,6 +133,8 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
                 }
 
                 var document = uiDocument.Document;
+                uiDocument.Selection.SetElementIds(Array.Empty<ElementId>());
+                ClearPreviousTemporaryIsolation(uiDocument, document);
                 var seeds = new List<ElementId>();
                 var missing = new List<string>();
                 foreach (var text in plan.ElementIds)
@@ -143,14 +155,15 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
                     return;
                 }
 
-                uiDocument.Selection.SetElementIds(seeds);
                 if (!isolateRequest)
                 {
+                    uiDocument.Selection.SetElementIds(seeds);
                     ReportIsolationStatus($"{seeds.Count} Revit-Element(e) selektiert." + (missing.Count > 0 ? $" {missing.Count} IDs fehlen im Dokument." : string.Empty));
                     return;
                 }
                 if (plan.SelectionIncomplete || missing.Count > 0)
                 {
+                    uiDocument.Selection.SetElementIds(seeds);
                     ReportIsolationStatus("Teil-Isolation verhindert: Die X31-Zuordnung ist unvollständig oder ElementIDs fehlen. Vorhandene Elemente wurden nur selektiert.");
                     return;
                 }
@@ -160,6 +173,7 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
                     var element = document.GetElement(new ElementId(rawId));
                     return element is Group group ? group.GetMemberIds().Select(member => member.Value) : null;
                 }).Select(id => new ElementId(id)).ToList();
+                uiDocument.Selection.SetElementIds(seeds);
                 // Temporary view isolation changes view state and requires a transaction;
                 // selection alone remains outside it and the takeoff/export stays read-only.
                 var transaction = new Transaction(document, "AVA – X31 temporär isolieren");
@@ -269,6 +283,25 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
             catch (Exception ex)
             {
                 ReportIsolationStatus("Revit konnte die Auswahl/Isolation nicht ausführen: " + ex.Message);
+            }
+        }
+
+        private static void ClearPreviousTemporaryIsolation(UIDocument uiDocument, Document document)
+        {
+            if (!uiDocument.ActiveView.IsInTemporaryViewMode(TemporaryViewMode.TemporaryHideIsolate)) return;
+            using var transaction = new Transaction(document, "AVA – vorherige temporäre Isolation aufheben");
+            if (transaction.Start() != TransactionStatus.Started)
+                throw new InvalidOperationException("Die vorherige temporäre Isolation konnte nicht aufgehoben werden.");
+            try
+            {
+                uiDocument.ActiveView.DisableTemporaryViewMode(TemporaryViewMode.TemporaryHideIsolate);
+                if (transaction.Commit() != TransactionStatus.Committed)
+                    throw new InvalidOperationException("Revit hat das Aufheben der vorherigen temporären Isolation nicht bestätigt.");
+            }
+            catch
+            {
+                if (transaction.GetStatus() == TransactionStatus.Started) transaction.RollBack();
+                throw;
             }
         }
 
