@@ -7,6 +7,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Events;
 using BIMassist.Ava.Core;
+using BIMassist.Ava.Revit;
 using BIMassist.Ava.Views;
 using BIMassist.Views;
 
@@ -37,13 +38,27 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
                 TaskDialog.Show("AVA – X31 prüfen", $"Die X31-Mengenermittlung enthält ElementIDs, die im aktiven Revit-Modell nicht vorhanden sind. Die Prüfansicht wird nicht geladen.\n\nFehlende ElementIDs ({missingIds.Count}):\n{shown}");
                 return Result.Cancelled;
             }
-            var handler = new X31ReviewExternalEventHandler(uiDocument.Document);
+            var includedIds = review.Rows.SelectMany(row => row.ElementIdsForSelection)
+                .Select(id => long.Parse(id, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture))
+                .ToHashSet();
+            var handler = new X31ReviewExternalEventHandler(uiDocument.Document, includedIds);
             var externalEvent = ExternalEvent.Create(handler);
-            var window = new X31ReviewWindow(review, (plan, isolate) =>
+            void Post(Action setRequest)
             {
-                handler.SetRequest(plan, isolate);
-                externalEvent.Raise();
-            });
+                try
+                {
+                    setRequest();
+                    if (externalEvent.Raise() != ExternalEventRequest.Accepted)
+                    {
+                        handler.CancelRequest();
+                        handler.Window?.ShowStatus("Revit hat die Anforderung nicht angenommen. Bitte erneut versuchen.");
+                    }
+                }
+                catch (Exception ex) { handler.Window?.ShowStatus("Die Anforderung konnte nicht gesendet werden: " + ex.Message); }
+            }
+            var window = new X31ReviewWindow(review,
+                (plan, isolate) => Post(() => handler.SetRequest(plan, isolate)),
+                isolate => Post(() => handler.SetMissingRequest(isolate)));
             handler.Window = window;
             window.Closed += (_, _) =>
             {
@@ -61,33 +76,50 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
         }
     }
 
-    private sealed class X31ReviewExternalEventHandler(Document sourceDocument) : IExternalEventHandler
+    private sealed class X31ReviewExternalEventHandler(Document sourceDocument, IReadOnlySet<long> includedIds) : IExternalEventHandler
     {
         private X31SelectionPlan? request;
         private bool isolate;
+        private bool missingRequest;
         private Transaction? pendingIsolationTransaction;
         private UIApplication? pendingIsolationApplication;
         private string? pendingIsolationFailure;
         private int pendingIsolationCount;
         private bool pendingIsolationStatusErrorReported;
         private TransactionStatus? pendingIsolationFinalStatus;
+        private bool pendingReset;
 
         public X31ReviewWindow? Window { get; set; }
 
-        public string GetName() => "BIMassist X31 review selection";
+        public string GetName() => "BIMassist X31 review selection and active-view difference";
 
         public void SetRequest(X31SelectionPlan plan, bool isolateRequest)
         {
+            if (request != null || missingRequest) throw new InvalidOperationException("Eine Auswahl/Isolation wartet bereits auf Revit.");
             request = plan ?? throw new ArgumentNullException(nameof(plan));
             isolate = isolateRequest;
+        }
+
+        public void SetMissingRequest(bool isolateRequest)
+        {
+            if (request != null || missingRequest) throw new InvalidOperationException("Eine Auswahl/Isolation wartet bereits auf Revit.");
+            missingRequest = true;
+            isolate = isolateRequest;
+        }
+
+        public void CancelRequest()
+        {
+            request = null;
+            missingRequest = false;
+            isolate = false;
         }
 
         public void Execute(UIApplication app)
         {
             var plan = request;
             var isolateRequest = isolate;
-            request = null;
-            isolate = false;
+            var selectMissing = missingRequest;
+            CancelRequest();
             try
             {
                 if (pendingIsolationTransaction != null)
@@ -126,18 +158,31 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
                     ReportIsolationStatus($"Die X31-Prüfung gehört zu '{sourceDocument.Title}', aktiv ist '{activeDocument.Title}'. Öffnen Sie die Prüfung für das aktive Dokument erneut.");
                     return;
                 }
-                if (plan == null || plan.ElementIds.Count == 0)
+                if (!selectMissing && (plan == null || plan.ElementIds.Count == 0))
                 {
                     ReportIsolationStatus("Keine gültigen ElementIDs zum Auswählen vorhanden.");
                     return;
                 }
 
                 var document = uiDocument.Document;
+                var activeView = uiDocument.ActiveView;
+                if (selectMissing && (activeView.IsTemplate || !FilteredElementCollector.IsViewValidForElementIteration(document, activeView.Id)))
+                {
+                    ReportIsolationStatus("Die aktive Projektansicht unterstützt keine elementbasierte Auswahl. Bitte eine gültige Modellansicht aktivieren.");
+                    return;
+                }
+                // Snapshot while the view still has its user's temporary-hide state;
+                // resetting that mode first would silently include hidden elements.
+                var missingCandidates = selectMissing
+                    ? X31ReviewViewCandidates.Find(document, uiDocument.ActiveView, includedIds)
+                    : Array.Empty<ElementId>();
                 uiDocument.Selection.SetElementIds(Array.Empty<ElementId>());
-                ClearPreviousTemporaryIsolation(uiDocument, document);
+                if (!ClearPreviousTemporaryIsolation(app, uiDocument, document)) return;
                 var seeds = new List<ElementId>();
                 var missing = new List<string>();
-                foreach (var text in plan.ElementIds)
+                if (selectMissing)
+                    seeds.AddRange(missingCandidates);
+                else foreach (var text in plan!.ElementIds)
                 {
                     if (!long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var value))
                     {
@@ -151,7 +196,9 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
                 seeds = seeds.Distinct().ToList();
                 if (seeds.Count == 0)
                 {
-                    ReportIsolationStatus("Keine der ausgewählten ElementIDs ist im aktiven Revit-Dokument vorhanden.");
+                    ReportIsolationStatus(selectMissing
+                        ? "Keine nicht enthaltenen Modellkandidaten im Ansichts- und Zuschneidebereich gefunden (Bounding-Box-Prüfung; keine Garantie für tatsächliche Sichtbarkeit)."
+                        : "Keine der ausgewählten ElementIDs ist im aktiven Revit-Dokument vorhanden.");
                     return;
                 }
 
@@ -161,14 +208,14 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
                     ReportIsolationStatus($"{seeds.Count} Revit-Element(e) selektiert." + (missing.Count > 0 ? $" {missing.Count} IDs fehlen im Dokument." : string.Empty));
                     return;
                 }
-                if (plan.SelectionIncomplete || missing.Count > 0)
+                if (!selectMissing && (plan!.SelectionIncomplete || missing.Count > 0))
                 {
                     uiDocument.Selection.SetElementIds(seeds);
                     ReportIsolationStatus("Teil-Isolation verhindert: Die X31-Zuordnung ist unvollständig oder ElementIDs fehlen. Vorhandene Elemente wurden nur selektiert.");
                     return;
                 }
 
-                var allIds = X31ElementSelectionPlanner.ExpandGroupMembers(seeds.Select(id => id.Value), rawId =>
+                var allIds = selectMissing ? seeds : X31ElementSelectionPlanner.ExpandGroupMembers(seeds.Select(id => id.Value), rawId =>
                 {
                     var element = document.GetElement(new ElementId(rawId));
                     return element is Group group ? group.GetMemberIds().Select(member => member.Value) : null;
@@ -206,7 +253,7 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
                         if (commitStatus != TransactionStatus.Committed)
                             throw new InvalidOperationException("Die temporäre Isolation konnte nicht in Revit übernommen werden.");
                         committed = true;
-                        ReportIsolationStatus($"{allIds.Count} Revit-Element(e) einschließlich verschachtelter Gruppen temporär isoliert.");
+                        ReportIsolationStatus($"{allIds.Count} Revit-Element(e) temporär isoliert.");
                     }
                     catch (Exception ex)
                     {
@@ -286,22 +333,97 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
             }
         }
 
-        private static void ClearPreviousTemporaryIsolation(UIDocument uiDocument, Document document)
+        private bool ClearPreviousTemporaryIsolation(UIApplication app, UIDocument uiDocument, Document document)
         {
-            if (!uiDocument.ActiveView.IsInTemporaryViewMode(TemporaryViewMode.TemporaryHideIsolate)) return;
-            using var transaction = new Transaction(document, "AVA – vorherige temporäre Isolation aufheben");
-            if (transaction.Start() != TransactionStatus.Started)
-                throw new InvalidOperationException("Die vorherige temporäre Isolation konnte nicht aufgehoben werden.");
+            if (!uiDocument.ActiveView.IsInTemporaryViewMode(TemporaryViewMode.TemporaryHideIsolate)) return true;
+            var transaction = new Transaction(document, "AVA – vorherige temporäre Isolation aufheben");
+            var retained = false;
+            var subscribed = false;
+            var committed = false;
             try
             {
-                uiDocument.ActiveView.DisableTemporaryViewMode(TemporaryViewMode.TemporaryHideIsolate);
-                if (transaction.Commit() != TransactionStatus.Committed)
-                    throw new InvalidOperationException("Revit hat das Aufheben der vorherigen temporären Isolation nicht bestätigt.");
+                // The callback must exist before a Commit/RollBack can become Pending.
+                app.Idling += OnIsolationTransactionIdling;
+                subscribed = true;
+                try
+                {
+                    if (transaction.Start() != TransactionStatus.Started)
+                        throw new InvalidOperationException("Die vorherige temporäre Isolation konnte nicht aufgehoben werden.");
+                    transaction.SetFailureHandlingOptions(transaction.GetFailureHandlingOptions().SetForcedModalHandling(true));
+                    uiDocument.ActiveView.DisableTemporaryViewMode(TemporaryViewMode.TemporaryHideIsolate);
+                    var status = transaction.Commit();
+                    if (status == TransactionStatus.Pending)
+                    {
+                        RetainPendingIsolation(app, transaction, 0, null);
+                        pendingReset = true;
+                        retained = true;
+                        ReportIsolationStatus("Revit verarbeitet das Aufheben der vorherigen Isolation noch. Ergebnis unbestätigt; nach Abschluss bitte erneut versuchen.");
+                        return false;
+                    }
+                    if (status != TransactionStatus.Committed)
+                        throw new InvalidOperationException("Revit hat das Aufheben der vorherigen temporären Isolation nicht bestätigt.");
+                    committed = true;
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    TransactionStatus status;
+                    try { status = transaction.GetStatus(); }
+                    catch (Exception statusError)
+                    {
+                        try { status = transaction.RollBack(); }
+                        catch (Exception rollbackError)
+                        {
+                            // Unknown: retain and block subsequent transactions; never dispose
+                            // an object that could still be Pending in Revit failure handling.
+                            RetainPendingIsolation(app, transaction, 0, ex.Message);
+                            pendingReset = retained = true;
+                            ReportIsolationStatus("Status und Rücknahme der vorherigen Isolation unbestätigt: "
+                                + statusError.Message + "; " + rollbackError.Message + ". Bitte Revit-Meldungen prüfen und nach Abschluss erneut versuchen.");
+                            return false;
+                        }
+                    }
+                    if (status == TransactionStatus.Started)
+                    {
+                        try { status = transaction.RollBack(); }
+                        catch (Exception rollbackError)
+                        {
+                            // Started cannot be resolved by Idling; Dispose is the last-resort
+                            // rollback, and this result cannot be reported as a successful reset.
+                            throw new InvalidOperationException("Rücknahme der vorherigen Isolation nicht bestätigt: " + rollbackError.Message, rollbackError);
+                        }
+                    }
+                    if (status == TransactionStatus.Pending)
+                    {
+                        RetainPendingIsolation(app, transaction, 0, ex.Message);
+                        pendingReset = retained = true;
+                        ReportIsolationStatus("Revit verarbeitet die Rücknahme der vorherigen Isolation noch. Ergebnis unbestätigt; nach Abschluss bitte erneut versuchen.");
+                        return false;
+                    }
+                    throw;
+                }
             }
-            catch
+            finally
             {
-                if (transaction.GetStatus() == TransactionStatus.Started) transaction.RollBack();
-                throw;
+                if (!retained)
+                {
+                    try
+                    {
+                        if (subscribed) app.Idling -= OnIsolationTransactionIdling;
+                    }
+                    catch (Exception cleanupError)
+                    {
+                        pendingIsolationApplication = app;
+                        ReportIsolationStatus("Revit konnte die Ereignisüberwachung nicht entfernen: " + cleanupError.Message);
+                    }
+                    try { transaction.Dispose(); }
+                    catch (Exception cleanupError)
+                    {
+                        ReportIsolationStatus(committed
+                            ? "Revit hat das Aufheben der Isolation übernommen; die Transaktion konnte nicht freigegeben werden: " + cleanupError.Message
+                            : "Revit konnte die Rücknahme der vorherigen Isolation nicht bestätigen: " + cleanupError.Message);
+                    }
+                }
             }
         }
 
@@ -323,20 +445,19 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
                 TryUnsubscribeFromIdling();
                 return;
             }
-            TransactionStatus status;
-            try
+            var recovery = X31ReviewTransactionRecovery.Resolve(
+                () => pendingIsolationFinalStatus ?? transaction.GetStatus(), transaction.RollBack,
+                TransactionStatus.Started, TransactionStatus.Pending,
+                candidate => candidate is TransactionStatus.Committed or TransactionStatus.RolledBack);
+            if (recovery.Error is { } recoveryError)
             {
-                status = pendingIsolationFinalStatus ?? transaction.GetStatus();
-                if (status == TransactionStatus.Pending || status == TransactionStatus.Started) return;
-                pendingIsolationFinalStatus = status;
-            }
-            catch (Exception statusError)
-            {
-                // Revit may still be processing failures. Keep the transaction and
-                // retry on a later idle event rather than disposing an unknown state.
-                ReportIsolationErrorOnce("Revit konnte den Status der Isolation noch nicht ermitteln: " + statusError.Message);
+                // Keep the transaction and retry status/rollback on a later idle event.
+                ReportIsolationErrorOnce("Revit konnte die Isolationstransaktion noch nicht abschließen: " + recoveryError.Message);
                 return;
             }
+            if (!recovery.CanDispose) return;
+            var status = recovery.Status;
+            pendingIsolationFinalStatus = status;
 
             try
             {
@@ -353,14 +474,24 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
             }
             pendingIsolationTransaction = null;
             var failure = pendingIsolationFailure;
+            var wasReset = pendingReset;
+            pendingReset = false;
             pendingIsolationFailure = null;
             pendingIsolationFinalStatus = null;
             pendingIsolationStatusErrorReported = false;
             TryUnsubscribeFromIdling();
-            if (failure != null)
+            if (wasReset)
+            {
+                ReportIsolationStatus(failure != null
+                    ? "Das Aufheben der vorherigen Isolation wurde nicht bestätigt: " + failure + ". Bitte Revit-Meldungen prüfen und danach erneut versuchen."
+                    : status == TransactionStatus.Committed
+                        ? "Die vorherige Isolation wurde aufgehoben. Bitte die Auswahl/Isolation erneut ausführen."
+                        : "Die vorherige Isolation wurde nicht aufgehoben. Bitte Revit-Meldungen prüfen und danach erneut versuchen.");
+            }
+            else if (failure != null)
                 ReportIsolationStatus("Revit konnte die Isolation nicht ausführen: " + failure);
             else if (status == TransactionStatus.Committed)
-                ReportIsolationStatus($"{pendingIsolationCount} Revit-Element(e) einschließlich verschachtelter Gruppen temporär isoliert.");
+                ReportIsolationStatus($"{pendingIsolationCount} Revit-Element(e) temporär isoliert.");
             else
                 ReportIsolationStatus("Die temporäre Isolation wurde von Revit nicht übernommen.");
         }

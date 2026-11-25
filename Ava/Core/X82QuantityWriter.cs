@@ -36,6 +36,9 @@ public static class X82QuantityWriter
         }
 
         var items = document.Descendants(Ns + "Item").ToDictionary(item => RequiredAttribute(item, "ID"), StringComparer.Ordinal);
+        var rowsByItem = rows.GroupBy(row => row.LvItemId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+        var address = 0;
         foreach (var item in items.Values.ToArray())
         {
             if (!totals.TryGetValue(item.Attribute("ID")!.Value, out var total))
@@ -59,6 +62,37 @@ public static class X82QuantityWriter
             if (determinationQuantity == null) determination.AddFirst(determinationQuantity = new XElement(Ns + "Qty"));
             determinationQuantity.Value = formatted;
             determination.Elements(Ns + "QDetermItem").Remove();
+            // A bare QtyDeterm/Qty is an optional total; interoperable quantity takeoff also
+            // needs numeric REB rows and the method in the containing LV's BoQInfo.
+            var boqInfo = item.Ancestors(Ns + "BoQ").Single().Element(Ns + "BoQInfo")
+                ?? throw new InvalidDataException("BoQInfo fehlt im X82-Quell-LV.");
+            var info = boqInfo.Element(Ns + "QtyDetermInfo");
+            if (info == null) boqInfo.Add(info = new XElement(Ns + "QtyDetermInfo"));
+            var method = info.Element(Ns + "MethodDescription");
+            if (method == null) info.AddFirst(method = new XElement(Ns + "MethodDescription"));
+            method.Value = "REB23003-2009";
+
+            var measuredRows = rowsByItem[item.Attribute("ID")!.Value];
+            // Round cumulative measured quantities, not each row independently: the
+            // difference is sign-consistent with its input and the final sum is exact.
+            var cumulative = 0m;
+            var allocated = 0m;
+            for (var i = 0; i < measuredRows.Length; i++)
+            {
+                cumulative += measuredRows[i].Value;
+                var next = decimal.Round(cumulative, 3, MidpointRounding.AwayFromZero);
+                var value = next - allocated;
+                allocated = next;
+                var literal = value.ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ',') + "=";
+                if (address >= 9999 * 260 || literal.Length > 38)
+                    throw new InvalidDataException("X82-Mengenermittlung überschreitet den REB-Zeilenadressraum oder das Zahlenfeld.");
+                var row = new string(' ', 29) + "91" + literal.PadRight(38)
+                    + (address / 260 + 1).ToString(CultureInfo.InvariantCulture).PadLeft(4)
+                    + (char)('A' + address % 260 / 10) + (address % 10).ToString(CultureInfo.InvariantCulture)
+                    + new string(' ', 5);
+                determination.Add(new XElement(Ns + "QDetermItem", new XElement(Ns + "QTakeoff", new XAttribute("Row", row))));
+                address++;
+            }
         }
         if (totals.Keys.Any(id => !items.ContainsKey(id)))
             throw new InvalidDataException("Mindestens eine X82-Position fehlt im eingebetteten Quell-LV.");
@@ -180,6 +214,21 @@ public static class X82QuantityWriter
                 || !decimal.TryParse(item.Element(Ns + "QtyDeterm")?.Element(Ns + "Qty")?.Value, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var actual)
                 || actual != decimal.Round(expected, 3, MidpointRounding.AwayFromZero))
                 throw new InvalidDataException("Der X82-Export enthält eine falsche Position oder Menge.");
+            var lines = item.Element(Ns + "QtyDeterm")!.Elements(Ns + "QDetermItem")
+                .Select(line => (string?)line.Element(Ns + "QTakeoff")?.Attribute("Row")).ToArray();
+            if (lines.Length == 0 || lines.Any(line => line is not { Length: 80 } || line.Substring(29, 2) != "91")
+                || item.Ancestors(Ns + "BoQ").Single().Element(Ns + "BoQInfo")?
+                    .Element(Ns + "QtyDetermInfo")?.Element(Ns + "MethodDescription")?.Value != "REB23003-2009")
+                throw new InvalidDataException("Der X82-Export enthält keine lesbaren REB-Mengenzeilen.");
+            var sum = 0m;
+            foreach (var line in lines)
+            {
+                if (!decimal.TryParse(line!.Substring(31, 38).Trim().TrimEnd('=').Replace(',', '.'),
+                    NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var value))
+                    throw new InvalidDataException("Die X82-Mengenzeile enthält keine gültige REB-Zahl.");
+                sum += value;
+            }
+            if (sum != actual) throw new InvalidDataException("REB-Zeilen und X82-Aufmaßmenge weichen voneinander ab.");
         }
     }
 

@@ -61,6 +61,24 @@ internal static class Program
             Equal(1m, QuantityFormula.EvaluateWithUnits("x",
                 new Dictionary<string, (decimal Value, string Unit, string Spec)> { ["x"] = (100m, "cm", "LENGTH") }, "m"));
         });
+        Test("roots and powers obey precedence and preserve physical dimensions", () =>
+        {
+            Equal(3m, QuantityFormula.Evaluate("sqrt(9)", Empty));
+            Equal(512m, QuantityFormula.Evaluate("2^3^2", Empty));
+            Equal(-4m, QuantityFormula.Evaluate("-2^2", Empty));
+            Equal(0.25m, QuantityFormula.Evaluate("2^-2", Empty));
+            QuantityFormula.Validate("sqrt(Volumen/Schnittlänge)*Schnittlänge", ["Volumen", "Schnittlänge"]);
+            var inputs = new Dictionary<string, (decimal Value, string Unit, string Spec)>
+            {
+                ["Volumen"] = (1.30086m, "m3", "VOLUME"), ["Schnittlänge"] = (14.454m, "m", "LENGTH")
+            };
+            Equal(4.3362m, QuantityFormula.EvaluateWithUnits("sqrt(Volumen/Schnittlänge)*Schnittlänge", inputs, "m2"));
+            Reject(() => QuantityFormula.EvaluateWithUnits("Volumen^(1/2)/Schnittlänge", inputs, "m2"));
+            Reject(() => QuantityFormula.EvaluateWithUnits("sqrt(Volumen)", inputs, "m"));
+            Reject(() => QuantityFormula.EvaluateWithUnits("Volumen^Schnittlänge", inputs, "m3"));
+            Reject(() => QuantityFormula.EvaluateWithUnits("sqrt(-1)", inputs, "1"));
+            Reject(() => QuantityFormula.EvaluateWithUnits("0^-1", inputs, "1"));
+        });
         Test("validation requires exact one-to-one bindings and parses without evaluation", () =>
         {
             QuantityFormula.Validate("1 / (x - x)", new[] { "x" });
@@ -88,7 +106,7 @@ internal static class Program
         foreach (var expression in new[]
         {
             "", " ", "()", "(1", "1)", "+", "1+", "*1", "1**2", "1//2", "1 2", "2(3)", "(1)2", "x y",
-            ".", ",", "1.2.3", "1,2,3", "1,234.5", "1.234,5", "1 234", "1e3", "0x10", "2^3", "5%2",
+            ".", ",", "1.2.3", "1,2,3", "1,234.5", "1.234,5", "1 234", "1e3", "0x10", "2^^3", "5%2",
             "[]", "[ ]", "[ x]", "[x ]", "[\tx]", "[x\n]", "[x", "x]", "[[x]]", "[x][y]",
             "Math.Abs(-1)", "System.IO.File.Delete(\"x\")", "new Foo()", "x(1)", "1;2", "1/*comment*/", "1//comment",
             "\"1\"", "'1'", "x=1", "x?1:2", "1<2", "1&2", "{1}", "1\\2", "1\0+2", "1$2"

@@ -9,6 +9,7 @@ namespace BIMassist.Ava.Views;
 internal sealed class LvPositionPickerWindow : Window
 {
     private readonly AvaTemplate template;
+    private readonly IReadOnlyDictionary<string, LvEntry> entriesById;
     private readonly List<CatalogTreeNode> completeTree;
     private readonly Dictionary<string, CatalogTreeNode> nodesByKey = new(StringComparer.Ordinal);
     private readonly HashSet<string> selectedIds = new(StringComparer.Ordinal);
@@ -25,6 +26,7 @@ internal sealed class LvPositionPickerWindow : Window
     internal LvPositionPickerWindow(AvaTemplate template, IEnumerable<string>? initiallySelected = null)
     {
         this.template = template;
+        entriesById = template.LvCatalog.Entries.ToDictionary(entry => entry.Id, StringComparer.Ordinal);
         completeTree = CatalogTreeModel.BuildLv(template);
         Index(completeTree);
         if (initiallySelected != null)
@@ -50,7 +52,7 @@ internal sealed class LvPositionPickerWindow : Window
         search.Width = 360; search.ToolTip = "LV nach OZ oder Leistungstext filtern";
         toolbar.Children.Add(search);
         W.DockPanel.SetDock(toolbar, W.Dock.Top); root.Children.Add(toolbar);
-        var hint = EditorUi.Text("Mehrere OZ können über ihre Kontrollkästchen gewählt werden. Ein Titel wählt alle darunterliegenden Positionen nach Bestätigung aus.");
+        var hint = EditorUi.Text("Mehrere OZ können über ihre Kontrollkästchen gewählt werden. Ein Titel wählt alle darunterliegenden Positionen nach Bestätigung aus. Doppelklick auf eine Position zeigt ihren vollständigen Quell-Langtext.");
         W.DockPanel.SetDock(hint, W.Dock.Top); root.Children.Add(hint);
         root.Children.Add(tree);
         search.TextChanged += (_, _) => RefreshTree();
@@ -105,6 +107,14 @@ internal sealed class LvPositionPickerWindow : Window
     private W.TreeViewItem CreateItem(CatalogTreeNode node)
     {
         var item = new W.TreeViewItem { Tag = node, IsExpanded = !collapsedNodeKeys.Contains(node.Key) };
+        if (node.Key.StartsWith("item:", StringComparison.Ordinal))
+            item.MouseDoubleClick += (_, args) =>
+            {
+                if (args.Handled || args.OriginalSource is W.CheckBox) return;
+                if (!entriesById.TryGetValue(node.SourceId, out var source)) return;
+                ShowLongText(source);
+                args.Handled = true;
+            };
         EditorUi.SelectTreeItemOnClick(item);
         item.Collapsed += (_, _) => collapsedNodeKeys.Add(node.Key);
         item.Expanded += (_, _) => collapsedNodeKeys.Remove(node.Key);
@@ -119,11 +129,31 @@ internal sealed class LvPositionPickerWindow : Window
             check.Click += (_, _) => OnCheckChanged(check, check.IsChecked != false);
             header.Children.Add(check);
         }
-        header.Children.Add(new W.TextBlock { Text = node.Label, TextWrapping = TextWrapping.Wrap, MaxWidth = 850,
+        LvEntry? source = null;
+        if (node.Key.StartsWith("item:", StringComparison.Ordinal)) entriesById.TryGetValue(node.SourceId, out source);
+        header.Children.Add(new W.TextBlock { Text = source is { Unit.Length: > 0 }
+                ? node.Label + "   [" + source.Unit + "]" : node.Label,
+            TextWrapping = TextWrapping.Wrap, MaxWidth = 850,
             VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 4, 2, 4) });
         item.Header = header;
         foreach (var child in node.Children) item.Items.Add(CreateItem(child));
         return item;
+    }
+
+    private void ShowLongText(LvEntry source)
+    {
+        var detail = new Window { Title = "LV-Langtext – " + source.Ordinal + " " + source.Text,
+            Width = 780, Height = 600, MinWidth = 480, MinHeight = 320,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, Owner = this };
+        var root = new W.DockPanel { Margin = new Thickness(14) };
+        var close = EditorUi.Button("Schließen", detail.Close);
+        W.DockPanel.SetDock(close, W.Dock.Bottom); root.Children.Add(close);
+        root.Children.Add(new W.TextBox { Text = source.Description, IsReadOnly = true,
+            AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+            VerticalScrollBarVisibility = W.ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = W.ScrollBarVisibility.Auto });
+        detail.Content = root;
+        detail.Show();
     }
 
     private void RefreshSelectionVisuals()

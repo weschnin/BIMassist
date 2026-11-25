@@ -18,8 +18,11 @@ internal sealed class X31ReviewWindow : Window
     internal DataGrid ReviewGrid { get; }
     internal Button SelectButton { get; }
     internal Button IsolateButton { get; }
+    internal Button SelectMissingButton { get; }
+    internal Button IsolateMissingButton { get; }
 
-    internal X31ReviewWindow(X31ReviewDocument document, Action<X31SelectionPlan, bool> postSelectionRequest)
+    internal X31ReviewWindow(X31ReviewDocument document, Action<X31SelectionPlan, bool> postSelectionRequest,
+        Action<bool>? postMissingRequest = null)
     {
         ArgumentNullException.ThrowIfNull(document);
         this.postSelectionRequest = postSelectionRequest ?? throw new ArgumentNullException(nameof(postSelectionRequest));
@@ -77,6 +80,18 @@ internal sealed class X31ReviewWindow : Window
         actionPanel.Children.Add(SelectButton);
         actionPanel.Children.Add(IsolateButton);
         header.Children.Add(actionPanel);
+        var missingPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        SelectMissingButton = new Button { Content = "Nicht enthaltene Elemente selektieren", MinHeight = 30,
+            Margin = new Thickness(0, 0, 8, 0), IsEnabled = postMissingRequest != null };
+        IsolateMissingButton = new Button { Content = "Nicht enthaltene Elemente isolieren", MinHeight = 30,
+            IsEnabled = postMissingRequest != null };
+        SelectMissingButton.Click += (_, _) => postMissingRequest?.Invoke(false);
+        IsolateMissingButton.Click += (_, _) => postMissingRequest?.Invoke(true);
+        missingPanel.Children.Add(SelectMissingButton);
+        missingPanel.Children.Add(IsolateMissingButton);
+        header.Children.Add(new TextBlock { Text = "Modellelemente im Ansichtsbereich (Bounding-Box geprüft, nicht pixelgenau), die in keiner X31-Zeile stehen (ohne Zeilenauswahl):",
+            Margin = new Thickness(0, 8, 0, 0), TextWrapping = TextWrapping.Wrap });
+        header.Children.Add(missingPanel);
         Grid.SetRow(header, 0);
         layout.Children.Add(header);
 

@@ -144,7 +144,20 @@ internal sealed class MappingEditorWindow : Window
     private void AddPositionsFromCatalog()
     {
         var dialog = new LvPositionPickerWindow(template) { Owner = this };
-        if (dialog.ShowDialog() == true) AddPositions(dialog.SelectedPositionIds);
+        if (dialog.ShowDialog() != true) return;
+        var existingIds = draft.Positions.Select(position => position.LvItemId).ToHashSet(StringComparer.Ordinal);
+        if (AddPositions(dialog.SelectedPositionIds) == 0) return;
+        foreach (var added in draft.Positions.Where(position => !existingIds.Contains(position.LvItemId)).ToArray())
+        {
+            var lv = template.LvCatalog.Entries.Single(item => item.Id == added.LvItemId);
+            // The default exists only in the editor until accepted; cancelling keeps this position unquantified.
+            var initial = new MappingPosition { Id = added.Id, LvItemId = added.LvItemId,
+                Quantity = new QuantitySource { Kind = QuantityKind.Constant, Source = null, ConstantValue = 1, Unit = lv.Unit } };
+            var editor = new PositionEditorWindow(template, initial) { Owner = this };
+            ((W.DockPanel)editor.Content).Children.OfType<W.TabControl>().Single().SelectedIndex = 1;
+            if (editor.ShowDialog() == true && editor.Result is { } result) UpsertPosition(result);
+            positions.SelectedItem = positions.Items.Cast<PositionRow>().Single(row => row.Position.Id == added.Id);
+        }
     }
     internal void RemovePosition(Guid id) { draft.Positions.RemoveAll(p => p.Id == id); RefreshPositions(); }
     private void RefreshPositions() => positions.ItemsSource = draft.Positions.Select(p => {

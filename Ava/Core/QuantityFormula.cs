@@ -57,6 +57,7 @@ public static class QuantityFormula
                 var right = stack.Pop();
                 if (instruction.Operator == 'P') { stack.Push(right); continue; }
                 if (instruction.Operator == 'N') { stack.Push(-right); continue; }
+                if (instruction.Operator == 'R') { stack.Push(SquareRoot(right)); continue; }
                 var left = stack.Pop();
                 stack.Push(instruction.Operator switch
                 {
@@ -64,6 +65,7 @@ public static class QuantityFormula
                     '-' => left - right,
                     '*' => left * right,
                     '/' => left / right,
+                    '^' => Power(left, right),
                     _ => throw new InvalidDataException("Unsupported operator.")
                 });
             }
@@ -79,7 +81,7 @@ public static class QuantityFormula
         }
     }
 
-    private readonly record struct Dimension(int Length = 0, int Angle = 0, int Density = 0, int Count = 0, int Lump = 0)
+    private readonly record struct Dimension(decimal Length = 0, decimal Angle = 0, decimal Density = 0, decimal Count = 0, decimal Lump = 0)
     {
         public static Dimension operator +(Dimension a, Dimension b) =>
             new(a.Length + b.Length, a.Angle + b.Angle, a.Density + b.Density,
@@ -87,6 +89,9 @@ public static class QuantityFormula
         public static Dimension operator -(Dimension a, Dimension b) =>
             new(a.Length - b.Length, a.Angle - b.Angle, a.Density - b.Density,
                 a.Count - b.Count, a.Lump - b.Lump);
+        public static Dimension operator *(Dimension a, decimal exponent) =>
+            new(a.Length * exponent, a.Angle * exponent, a.Density * exponent,
+                a.Count * exponent, a.Lump * exponent);
     }
 
     private readonly record struct DimensionalValue(decimal Number, Dimension Dimension, bool LiteralOnly = false);
@@ -136,6 +141,11 @@ public static class QuantityFormula
                     stack.Push(right with { Number = instruction.Operator == 'N' ? -right.Number : right.Number });
                     continue;
                 }
+                if (instruction.Operator == 'R')
+                {
+                    stack.Push(new(SquareRoot(right.Number), right.Dimension * 0.5m, right.LiteralOnly));
+                    continue;
+                }
                 var left = stack.Pop();
                 if (instruction.Operator is '+' or '-')
                 {
@@ -156,6 +166,13 @@ public static class QuantityFormula
                         instruction.Operator == '*' ? left.Dimension + right.Dimension : left.Dimension - right.Dimension,
                         left.LiteralOnly && right.LiteralOnly));
                 }
+                else if (instruction.Operator == '^')
+                {
+                    if (right.Dimension != new Dimension())
+                        throw new InvalidDataException("Formel-Exponent muss dimensionslos sein.");
+                    stack.Push(new(Power(left.Number, right.Number), left.Dimension * right.Number,
+                        left.LiteralOnly && right.LiteralOnly));
+                }
                 else throw new InvalidDataException("Unsupported formula operator.");
             }
             var output = stack.Pop();
@@ -165,6 +182,46 @@ public static class QuantityFormula
         }
         catch (DivideByZeroException ex) { throw new InvalidDataException("Formula division by zero.", ex); }
         catch (OverflowException ex) { throw new InvalidDataException("Formula decimal overflow.", ex); }
+    }
+
+    private static decimal SquareRoot(decimal value)
+    {
+        if (value < 0) throw new InvalidDataException("Formula square root requires a nonnegative value.");
+        if (value == 0) return 0;
+        decimal guess = (decimal)Math.Sqrt((double)value);
+        // Decimal Newton steps retain exact squares and avoid binary floating-point output.
+        for (int i = 0; i < 64; i++)
+        {
+            var next = (guess + value / guess) / 2;
+            if (next == guess) return next;
+            guess = next;
+        }
+        return guess;
+    }
+
+    private static decimal Power(decimal basis, decimal exponent)
+    {
+        if (basis == 0 && exponent <= 0) throw new InvalidDataException("Zero cannot have a nonpositive exponent.");
+        if (exponent == 0) return 1;
+        if (exponent == 0.5m) return SquareRoot(basis);
+        if (exponent == decimal.Truncate(exponent) && exponent >= -96 && exponent <= 96)
+        {
+            bool reciprocal = exponent < 0;
+            int n = (int)Math.Abs(exponent);
+            decimal result = 1, factor = basis;
+            while (n > 0)
+            {
+                if ((n & 1) != 0) result *= factor;
+                n >>= 1;
+                if (n > 0) factor *= factor;
+            }
+            return reciprocal ? 1 / result : result;
+        }
+        if (basis < 0) throw new InvalidDataException("Fractional powers of negative values are not supported.");
+        var approximate = Math.Pow((double)basis, (double)exponent);
+        if (!double.IsFinite(approximate) || approximate > (double)decimal.MaxValue || approximate < (double)decimal.MinValue)
+            throw new InvalidDataException("Formula power exceeds the decimal range.");
+        return (decimal)approximate;
     }
 
     private static bool IsValidName(string? name) =>
@@ -232,7 +289,18 @@ public static class QuantityFormula
                 depth--;
                 Emit(new Instruction(op == '+' ? 'P' : 'N'));
             }
-            else Primary();
+            else PowerExpression();
+        }
+        private void PowerExpression()
+        {
+            Primary();
+            if (Take('^') != '\0')
+            {
+                EnterNesting();
+                Unary(); // Right-associative and permits signed exponents.
+                depth--;
+                Emit(new Instruction('^'));
+            }
         }
 
         private void Primary()
@@ -262,7 +330,16 @@ public static class QuantityFormula
             if (TakeIdentifierCharacter(first: true))
             {
                 while (TakeIdentifierCharacter(first: false)) { }
-                Parameter(text.Substring(identifierStart, position - identifierStart));
+                var name = text.Substring(identifierStart, position - identifierStart);
+                if (name == "sqrt" && Take('(') != '\0')
+                {
+                    EnterNesting();
+                    Expression();
+                    depth--;
+                    if (Take(')') == '\0') throw Error("Missing closing square-root parenthesis.");
+                    Emit(new Instruction('R'));
+                }
+                else Parameter(name);
                 return;
             }
             var start = position;

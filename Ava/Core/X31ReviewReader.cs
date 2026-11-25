@@ -158,13 +158,28 @@ public static class X31ReviewReader
                 }
 
                 var explanation = takeoff.Elements().FirstOrDefault(element => element.Name.LocalName == "Explanation")?.Value;
-                var elementId = ParseElementId(explanation, warnings, rawRows.Count + 1);
+                var remarkText = rowText.Substring(13, 9).Trim();
+                var numericRemark = long.TryParse(remarkText, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var remarkId)
+                    && remarkText[0] != '+';
+                var explanationId = ParseElementId(explanation, warnings, rawRows.Count + 1);
+                var explanationLabelsElementId = explanation?.TrimStart()
+                    .StartsWith("Revit-ElementID:", StringComparison.OrdinalIgnoreCase) == true;
+                if (numericRemark && explanationLabelsElementId && explanationId is null)
+                    throw new InvalidDataException($"Zeile {rawRows.Count + 1}: REB-Bemerkung {remarkText} hat eine ungültige BVBS:Explanation-ElementID.");
+                if (numericRemark && explanationId is not null)
+                {
+                    if (long.Parse(explanationId, CultureInfo.InvariantCulture) != remarkId)
+                        throw new InvalidDataException($"Zeile {rawRows.Count + 1}: REB-Bemerkung {remarkText} widerspricht BVBS:Explanation {explanationId}; X31-Prüfung abgebrochen.");
+                }
+                // A bare numeric REB remark is not self-identifying; only the
+                // labelled extension emitted by X31Writer proves it's a Revit ID.
+                var elementId = explanationId;
                 var groupExtension = takeoff.Elements().FirstOrDefault(element => element.Name.LocalName == "Explanation");
                 var rowGroupKind = (string?)groupExtension?.Attribute("GroupKind") ?? currentGroupKind;
                 var rowGroupLabel = (string?)groupExtension?.Attribute("GroupLabel") ?? currentGroupLabel;
                 var formula = rowText.Substring(31, Math.Min(38, rowText.Length - 31)).Trim();
                 rawRows.Add(new MutableRow(rawRows.Count + 1, position, itemId, X31ReviewRowKind.Quantity,
-                    string.IsNullOrWhiteSpace(explanation) ? "" : explanation.Trim(), formula, elementId,
+                    string.IsNullOrWhiteSpace(explanation) ? remarkText : explanation.Trim(), formula, elementId,
                     rowGroupKind, rowGroupLabel));
                 if (rowGroupKind is not null && rowGroupLabel is not null)
                 {
@@ -173,7 +188,7 @@ public static class X31ReviewReader
                     else group.ElementIds.Add(elementId);
                 }
                 if (elementId is null)
-                    warnings.Add($"Zeile {rawRows.Count}: keine gültige Revit-ElementID in BVBS:Explanation.");
+                    warnings.Add($"Zeile {rawRows.Count}: keine gültige Revit-ElementID in REB-Bemerkung oder BVBS:Explanation.");
             }
         }
 

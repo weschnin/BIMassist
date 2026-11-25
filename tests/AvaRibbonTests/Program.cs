@@ -73,7 +73,7 @@ if (!reviewCommand.Contains("TransactionStatus.Pending", StringComparison.Ordina
     throw new Exception("Pending Revit failure handling cannot be reported as a final failure; failed isolation must roll back explicitly.");
 int transactionCreate = reviewCommand.IndexOf("var transaction = new Transaction(document, \"AVA – X31 temporär isolieren\")", StringComparison.Ordinal);
 int pendingTransactionEnd = transactionCreate >= 0
-    ? reviewCommand.IndexOf("private static void ClearPreviousTemporaryIsolation", transactionCreate, StringComparison.Ordinal)
+    ? reviewCommand.IndexOf("private bool ClearPreviousTemporaryIsolation", transactionCreate, StringComparison.Ordinal)
     : -1;
 if (transactionCreate < 0 || pendingTransactionEnd <= transactionCreate
     || reviewCommand[transactionCreate..pendingTransactionEnd].Contains("using var transaction =", StringComparison.Ordinal)

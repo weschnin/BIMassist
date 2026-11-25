@@ -75,6 +75,116 @@ internal static class Program
             using var check = new MemoryStream(Encoding.UTF8.GetBytes(output));
             Equal(2, CatalogReaders.ReadX82(check, "reduced.x82").Entries.Count);
         });
+        Test("saved X82 exposes measured quantities as GAEB REB takeoff rows, not only an optional total", () =>
+        {
+            WithDirectory(directory =>
+            {
+                var path = Path.Combine(directory, "measured.x82");
+                var source = Read(Fixture);
+                X82QuantityWriter.Save(path, source, [new("FirstItem", 1.25m, "m2", "", "101"),
+                    new("FirstItem", 2.25m, "m2", "", "102")]);
+                var saved = XDocument.Load(path);
+                var item = saved.Descendants(SourceNs + "Item").Single();
+                Equal("FirstItem", (string?)item.Attribute("ID"));
+                Equal("999", (string?)item.Element(SourceNs + "Qty"));
+                Equal("m2", (string?)item.Element(SourceNs + "QU"));
+                Equal("3.5", (string?)item.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
+                Equal("REB23003-2009", (string?)saved.Descendants(SourceNs + "BoQInfo")
+                    .Single().Element(SourceNs + "QtyDetermInfo")?.Element(SourceNs + "MethodDescription"));
+                var lines = item.Element(SourceNs + "QtyDeterm")!.Elements(SourceNs + "QDetermItem")
+                    .Select(line => (string?)line.Element(SourceNs + "QTakeoff")?.Attribute("Row") ?? "").ToArray();
+                Equal(2, lines.Length);
+                Require(lines.All(line => line.Length == 80 && line.Substring(29, 2) == "91"), "Missing GAEB REB numeric takeoff lines");
+                Require(lines.Select(line => line.Substring(31, 38).Trim()).SequenceEqual(["1,25=", "2,25="]),
+                    "Saved GAEB takeoff lines do not carry the measured values");
+                Require(lines.Select(line => line.Substring(69, 6)).Distinct().Count() == 2, "Takeoff row addresses must be distinct");
+                ValidateX82(saved);
+            });
+        });
+        Test("X82 positive half-thousandth rows allocate rounded total without a negative REB row", () =>
+        {
+            var saved = XDocument.Parse(X82QuantityWriter.Serialize(Read(Fixture),
+                Enumerable.Range(0, 4).Select(i => new QuantityTakeoffRow("FirstItem", 0.0005m, "m2", "", i.ToString())).ToArray()));
+            var item = saved.Descendants(SourceNs + "Item").Single();
+            Equal("999", (string?)item.Element(SourceNs + "Qty"));
+            Equal("m2", (string?)item.Element(SourceNs + "QU"));
+            Equal("0.002", (string?)item.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
+            var values = item.Descendants(SourceNs + "QTakeoff")
+                .Select(line => decimal.Parse(((string)line.Attribute("Row")!).Substring(31, 38).Trim().TrimEnd('=').Replace(',', '.'),
+                    CultureInfo.InvariantCulture)).ToArray();
+            Equal(4, values.Length);
+            Require(values.All(value => value >= 0m && value <= 0.001m), "Nonnegative measured inputs produced a negative or overstated REB row");
+            Equal(0.002m, values.Sum());
+            ValidateX82(saved);
+        });
+        Test("X82 rounding boundaries preserve row signs and the rounded total across positive and mixed inputs", () =>
+        {
+            foreach (var inputs in new[] {
+                new[] { 0.0004m, 0.0004m, 0.0004m, 0.0004m },
+                new[] { 0.00049m, 0.00049m },
+                new[] { -0.0005m, -0.0005m, -0.0005m, -0.0005m },
+                new[] { 0.0005m, -0.0004m, 0.0005m, -0.0006m },
+                new[] { 1.0005m, -0.0005m }
+            })
+            {
+                var saved = XDocument.Parse(X82QuantityWriter.Serialize(Read(Fixture),
+                    inputs.Select((value, i) => new QuantityTakeoffRow("FirstItem", value, "m2", "", i.ToString())).ToArray()));
+                var item = saved.Descendants(SourceNs + "Item").Single();
+                Equal("999", (string?)item.Element(SourceNs + "Qty"));
+                Equal("m2", (string?)item.Element(SourceNs + "QU"));
+                var expected = decimal.Round(inputs.Sum(), 3, MidpointRounding.AwayFromZero);
+                Equal(expected.ToString("0.###", CultureInfo.InvariantCulture),
+                    (string?)item.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
+                var measured = item.Descendants(SourceNs + "QTakeoff")
+                    .Select(line => decimal.Parse(((string)line.Attribute("Row")!).Substring(31, 38).Trim().TrimEnd('=').Replace(',', '.'),
+                        CultureInfo.InvariantCulture)).ToArray();
+                Equal(inputs.Length, measured.Length);
+                Equal(expected, measured.Sum());
+                for (var i = 0; i < inputs.Length; i++)
+                    Require((inputs[i] >= 0m && measured[i] >= 0m || inputs[i] <= 0m && measured[i] <= 0m)
+                        && measured[i] == decimal.Truncate(measured[i] * 1000m) / 1000m,
+                        $"REB row {i} inverted the measured sign or exceeded 0.001 precision");
+                ValidateX82(saved);
+            }
+        });
+        if (Environment.GetEnvironmentVariable("BIMASSIST_AVA_X82_REPRO_FILE") is { Length: > 0 } historicalFile)
+            Test("historical X82 with totals but no takeoff lines yields a schema-valid measured export", () =>
+            {
+                Require(!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("BIMASSIST_AVA_X82_SCHEMA")),
+                    "The historical-file acceptance requires the official DA82 XSD path");
+                var originalBytes = File.ReadAllBytes(historicalFile);
+                var original = XDocument.Load(new MemoryStream(originalBytes));
+                var originalItems = original.Descendants(SourceNs + "Item").ToArray();
+                Require(originalItems.Length > 0 && originalItems.All(item =>
+                    item.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty") != null
+                    && !item.Descendants(SourceNs + "QTakeoff").Any()),
+                    "Historical X82 is not the reported QtyDeterm/Qty-only export");
+                var template = new AvaTemplate { LvCatalog = CatalogReaders.ReadX82(new MemoryStream(originalBytes), historicalFile) };
+                var rows = originalItems.Select(item => new QuantityTakeoffRow((string)item.Attribute("ID")!,
+                    decimal.Parse(item.Element(SourceNs + "QtyDeterm")!.Element(SourceNs + "Qty")!.Value,
+                        NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture),
+                    item.Element(SourceNs + "QU")?.Value ?? "", "historical file, not a live Revit takeoff")).ToArray();
+                WithDirectory(directory =>
+                {
+                    var path = Path.Combine(directory, "historical-reexport.x82");
+                    X82QuantityWriter.Save(path, template, rows);
+                    var exported = XDocument.Load(path);
+                    var actualItems = exported.Descendants(SourceNs + "Item").ToArray();
+                    Equal(originalItems.Length, actualItems.Length);
+                    foreach (var item in actualItems)
+                    {
+                        var before = originalItems.Single(candidate => (string?)candidate.Attribute("ID") == (string?)item.Attribute("ID"));
+                        Equal((string?)before.Element(SourceNs + "Qty"), (string?)item.Element(SourceNs + "Qty"));
+                        Equal((string?)before.Element(SourceNs + "QU"), (string?)item.Element(SourceNs + "QU"));
+                        Equal((string?)before.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"),
+                            (string?)item.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
+                        Equal(1, item.Descendants(SourceNs + "QTakeoff").Count());
+                    }
+                    ValidateX82(exported);
+                    Console.WriteLine($"  historical file: {actualItems.Length} measured items; source Item/Qty unchanged; {actualItems.Length} REB rows; official DA82 schema valid");
+                });
+                Require(originalBytes.SequenceEqual(File.ReadAllBytes(historicalFile)), "Historical reference file was changed");
+            });
         Test("X82 quantity export keeps only measured positions and refuses unknown IDs or unit changes", () =>
         {
             var template = Read(Fixture);
@@ -602,6 +712,17 @@ internal static class Program
         var document = XDocument.Parse(xml);
         document.Descendants(XName.Get("Explanation", "BVBS")).Remove();
         document.Validate(schemas, (_, e) => errors.Add(e.Message));
+        Require(errors.Count == 0, string.Join("\n", errors));
+    }
+    static void ValidateX82(XDocument document)
+    {
+        var schemaPath = Environment.GetEnvironmentVariable("BIMASSIST_AVA_X82_SCHEMA");
+        if (string.IsNullOrWhiteSpace(schemaPath)) return;
+        var schemas = new XmlSchemaSet { XmlResolver = new XmlUrlResolver() };
+        schemas.Add(SourceNs.NamespaceName, schemaPath);
+        schemas.Compile();
+        var errors = new List<string>();
+        document.Validate(schemas, (_, e) => errors.Add(e.Message), true);
         Require(errors.Count == 0, string.Join("\n", errors));
     }
     static AvaTemplate WithSnapshot(AvaTemplate t, string xml)

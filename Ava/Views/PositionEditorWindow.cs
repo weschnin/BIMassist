@@ -100,8 +100,8 @@ internal sealed class PositionEditorWindow : Window
         panel.Children.Add(allowCustomUnit);
         panel.Children.Add(EditorUi.Text("Revit NUMBER/INTEGER ist einheitenlos. Für direkte Mengen darfst du mit der aktivierten Option eine Bedeutung wie Stunden manuell festlegen: Der Zahlenwert wird unverändert gelesen, nicht umgerechnet und nur exportiert, wenn die deklarierte Einheit exakt der Einheit der LV-Position entspricht. Bei physikalisch typisierten Parametern prüft Revit die Spezifikation und kompatible Einheiten werden in die unveränderte LV-Einheit umgerechnet."));
         expression.Text = draft.Quantity?.Expression ?? ""; expression.MinHeight = 60; expression.AcceptsReturn = true; expression.TextWrapping = TextWrapping.Wrap;
-        EditorUi.Field(formulaPanel, "Formel: +, −, *, / und Klammern; z. B. 2 * AVA_Laenge + 0.5", expression);
-        formulaPanel.Children.Add(EditorUi.Text("Jeder Parameter muss zuerst über 'Parameter hinzufügen…' einer Revit-Quelle und Eingabeeinheit zugeordnet werden. Einfache Namen ohne Leerzeichen dürfen direkt stehen (Volumen); Namen mit Leerzeichen müssen in [Klammern] stehen. 'Name in Formel einfügen' setzt den ausgewählten Namen ein. Parametrisierte Formeln prüfen Dimensionen und rechnen physikalische Eingänge vor der Auswertung auf Basiseinheiten um; Zahlen bei Addition gelten in der Ergebniseinheit. NUMBER/INTEGER hat keine physikalische Revit-Einheit. Parameterfreie Zahlenformeln sind ausdrücklich deklarierte Konstanten."));
+        EditorUi.Field(formulaPanel, "Formel: +, −, *, /, ^, sqrt(…) und Klammern; z. B. (2*H+B)*Schnittlänge", expression);
+        formulaPanel.Children.Add(EditorUi.Text("Jeder Parameter muss zuerst über 'Parameter hinzufügen…' einer Revit-Quelle und Eingabeeinheit zugeordnet werden. Einfache Namen ohne Leerzeichen dürfen direkt stehen (Volumen); Namen mit Leerzeichen müssen in [Klammern] stehen. 'Name in Formel einfügen' setzt den ausgewählten Namen ein. sqrt(Volumen/Schnittlänge)*Schnittlänge ergibt eine Fläche; Volumen^(1/2)/Schnittlänge dagegen nicht. Parametrisierte Formeln prüfen Dimensionen und rechnen physikalische Eingänge vor der Auswertung auf Basiseinheiten um; Zahlen bei Addition gelten in der Ergebniseinheit. NUMBER/INTEGER hat keine physikalische Revit-Einheit. Parameterfreie Zahlenformeln sind ausdrücklich deklarierte Konstanten."));
         var variableButtons = new W.WrapPanel(); formulaPanel.Children.Add(variableButtons);
         void EditVariable(bool edit)
         {
@@ -292,7 +292,13 @@ internal sealed class PositionEditorWindow : Window
     {
         var position = BuildPosition(); EnsurePositionValid(position);
         if (position.Quantity is not { Kind: QuantityKind.Formula } formula) throw new InvalidDataException("Für eine Testrechnung zuerst Formel wählen.");
-        var value = QuantityFormula.Evaluate(formula.Expression, values);
+        var value = formula.Variables.Count == 0
+            ? QuantityFormula.Evaluate(formula.Expression, values)
+            : QuantityFormula.EvaluateWithUnits(formula.Expression,
+                formula.Variables.ToDictionary(v => v.Name, v =>
+                    (Value: values.TryGetValue(v.Name, out var input) ? input
+                        : throw new InvalidDataException($"Testwert für '{v.Name}' fehlt."), v.Unit, v.Source.Spec),
+                    StringComparer.Ordinal), formula.Unit);
         if (value < 0 || (formula.Unit == "St" && decimal.Truncate(value) != value)) throw new InvalidDataException("Formelergebnis ist negativ oder für Stückmengen nicht ganzzahlig.");
         return value;
     }

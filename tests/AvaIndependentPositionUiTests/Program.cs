@@ -99,7 +99,12 @@ internal static class Program
             formula.UpsertVariable(new() { Name = "Length", Source = new() { Kind = ParameterKind.LocalFamily, Name = "Length", Spec = "LENGTH", Scope = ParameterScope.Instance }, Unit = "m" });
             Field<ComboBox>(formula, "quantityUnit").Text = "Leistungsmonat";
             Check(formula.BuildPosition().Quantity!.Unit == "Leistungsmonat", "Typed independent formula unit was lost");
-            Check(formula.EvaluatePreview(new Dictionary<string, decimal> { ["Length"] = 3 }) == 6, "Independent formula preview failed");
+            try
+            {
+                formula.EvaluatePreview(new Dictionary<string, decimal> { ["Length"] = 3 });
+                throw new Exception("Physical LENGTH was silently relabeled as an arbitrary formula result unit");
+            }
+            catch (InvalidDataException ex) when (ex.Message.Contains("Formelergebniseinheit", StringComparison.Ordinal)) { }
             group.UpsertPosition(Accept(formula));
             var parameter = new MappingPosition { LvItemId = "month", Quantity = new() { Source = new() { Kind = ParameterKind.LocalFamily, Name = "Count", Spec = "INTEGER", Scope = ParameterScope.Type }, Unit = "St" } };
             group.UpsertPosition(Accept(new PositionEditorWindow(t, parameter)));

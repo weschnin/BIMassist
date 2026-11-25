@@ -1,0 +1,6 @@
+<Project>
+  <!-- This linked-source test project uses lightweight Revit API doubles. -->
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);AVA_X31_API_DOUBLES</DefineConstants>
+  </PropertyGroup>
+</Project>

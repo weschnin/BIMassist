@@ -178,6 +178,50 @@ internal static class Program
             Contains("Length=4 m", result.Rows[2].Explanation);
             Contains("Width=3 m", result.Rows[2].Explanation);
         });
+        Test("beam formulas retain instance/type identities, physical area and immutable LV units", () =>
+        {
+            var template = Template();
+            template.LvCatalog.Entries[0] = template.LvCatalog.Entries[0] with { Unit = "m²" };
+            var b = Local("B", scope: ParameterScope.Type);
+            var h = Local("H", scope: ParameterScope.Type);
+            var cut = Local("Schnittlänge");
+            var volume = Local("Volumen", "VOLUME");
+            template.Mappings[0].Positions = [
+                Position(new() { Kind = QuantityKind.Formula, Source = null, Unit = "m²",
+                    Expression = "(2*H+B)*Schnittlänge", Variables = [
+                        new() { Name = "H", Source = h, Unit = "m" }, new() { Name = "B", Source = b, Unit = "m" },
+                        new() { Name = "Schnittlänge", Source = cut, Unit = "m" }] }),
+                Position(new() { Kind = QuantityKind.Formula, Source = null, Unit = "cm2",
+                    Expression = "sqrt(Volumen/Schnittlänge)*Schnittlänge", Variables = [
+                        new() { Name = "Volumen", Source = volume, Unit = "m3" },
+                        new() { Name = "Schnittlänge", Source = cut, Unit = "m" }] }) ];
+            var reads = new List<(ParameterSource Source, string Unit)>();
+            var result = QuantityTakeoff.Calculate(template, [new TakeoffElement("beam-42", (source, unit) =>
+            {
+                if (ReferenceEquals(source, template.BgkIdentification)) return new(Text: "001");
+                if (ReferenceEquals(source, template.TypeIdentification)) return new(Text: "02");
+                reads.Add((source, unit));
+                return source switch
+                {
+                    { Name: "B" or "H", Scope: ParameterScope.Type, Spec: "LENGTH" } when unit == "m" => new(Number: 0.3000m),
+                    { Name: "Schnittlänge", Scope: ParameterScope.Instance, Spec: "LENGTH" } when unit == "m" => new(Number: 14.4540m),
+                    { Name: "Volumen", Scope: ParameterScope.Instance, Spec: "VOLUME" } when unit == "m3" => new(Number: 1.30086m),
+                    _ => throw new InvalidDataException("Wrong source identity, scope or unit: " + source)
+                };
+            }, "Structural Framing / Wood / 300x300")]);
+            Equal(0, result.Errors.Count); Equal(2, result.Rows.Count);
+            Equal(13.0086m, result.Rows[0].Value); Equal(4.3362m, result.Rows[1].Value);
+            Equal("m²", result.Rows[0].Unit); Equal("m²", result.Rows[1].Unit);
+            Equal("m²", template.LvCatalog.Entries[0].Unit);
+            Equal(4, reads.Count); // Shared Schnittlänge is read once from the same source/unit.
+            Contains("Volumen=1.30086 m3", result.Rows[1].Explanation);
+            Contains("Structural Framing", result.Rows[1].Explanation);
+            template.Mappings[0].Positions[1].Quantity!.Expression = "Volumen^(1/2)/Schnittlänge";
+            result = QuantityTakeoff.Calculate(template, [Element("beam-42", template, (source, _) =>
+                new(Number: source.Name == "Volumen" ? 1.30086m : 14.454m))]);
+            Equal(1, result.Rows.Count); // The sibling is independent and still emits.
+            Equal(1, result.Errors.Count); Contains("Dimension", result.Errors[0].Message);
+        });
         Test("a unitless Revit NUMBER cannot acquire a physical formula result unit", () =>
         {
             var template = Template();

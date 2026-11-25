@@ -120,6 +120,21 @@ internal static class Program
                 && text.Text.Contains("Basiseinheiten", StringComparison.OrdinalIgnoreCase)), "formula editor does not explain variable binding and unit semantics");
             Check(position.BuildPosition().Quantity!.Variables.Single().Source.Name == "AVA_Laenge", "formula binding lost");
             Check(position.EvaluatePreview(new Dictionary<string, decimal> { ["AVA_Laenge"] = 2 }) == 4.5m, "arithmetic incorrect");
+            t.LvCatalog.Entries.Add(new("beam-area", "b", ["03"], "03", "Balkenfläche", "", "m²"));
+            var beamPreview = new PositionEditorWindow(t, new MappingPosition { LvItemId = "beam-area", Quantity = new()
+            {
+                Kind = QuantityKind.Formula, Source = null, Unit = "cm2",
+                Expression = "sqrt(Volumen/Schnittlänge)*Schnittlänge",
+                Variables = [
+                    new() { Name = "Volumen", Source = new() { Kind = ParameterKind.ByName, Name = "Volumen", Spec = "VOLUME", Scope = ParameterScope.Instance }, Unit = "m3" },
+                    new() { Name = "Schnittlänge", Source = new() { Kind = ParameterKind.ByName, Name = "Schnittlänge", Spec = "LENGTH", Scope = ParameterScope.Instance }, Unit = "m" }
+                ]
+            } });
+            Layout(beamPreview);
+            Check(beamPreview.EvaluatePreview(new Dictionary<string, decimal> { ["Volumen"] = 1.30086m, ["Schnittlänge"] = 14.454m }) == 43362m,
+                "Formula preview must normalize typed inputs and show the declared result unit, not raw input-unit arithmetic");
+            beamPreview.Close();
+            t.LvCatalog.Entries.RemoveAll(entry => entry.Id == "beam-area");
             var manualUnitPosition = new PositionEditorWindow(t, new MappingPosition { LvItemId = "pieces", Quantity = new()
             {
                 Source = new() { Kind = ParameterKind.LocalFamily, Name = "Days", Spec = "INTEGER", Scope = ParameterScope.Instance },
