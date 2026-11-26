@@ -7,9 +7,11 @@ using System.Xml.Linq;
 namespace BIMassist.Ava.Core;
 
 public sealed record QuantityTakeoffRow(string LvItemId, decimal Value, string Unit, string Explanation,
-    string ElementId = "", string? GroupLabel = null, string? GroupKind = null);
+    string ElementId = "", string? GroupLabel = null, string? GroupKind = null,
+    string? FormulaExpression = null, string? CalculationApproach = null);
 
-/// <summary>Portable DA31/3.3 (2023-01) writer. No Revit API, source-file access, or formula evaluation.</summary>
+/// <summary>Portable DA31/3.3 (2023-01) writer. Validates substituted numeric REB91 arithmetic;
+/// no Revit API or source-file access.</summary>
 public static class X31Writer
 {
     private static readonly XNamespace SourceNs = "http://www.gaeb.de/GAEB_DA_XML/DA82/3.3";
@@ -53,8 +55,6 @@ public static class X31Writer
                 if (row.ElementId.StartsWith("+", StringComparison.Ordinal) ||
                     !long.TryParse(row.ElementId, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _))
                     throw new InvalidDataException("Revit-ElementID muss eine gültige 64-Bit-ElementID sein.");
-                if (row.ElementId.Length > 9)
-                    throw new InvalidDataException("Revit-ElementID passt nicht in das REB-Bemerkungsfeld (maximal 9 Zeichen) der Mengenzeile; X31 wurde nicht exportiert.");
             }
             if (row.GroupLabel != null)
             {
@@ -80,7 +80,7 @@ public static class X31Writer
                 {
                     requiredLines += CommentLineCount(group.Key.GroupKind + ": " + group.Key.GroupLabel);
                 }
-                requiredLines += group.Count();
+                requiredLines += group.Sum(row => PrepareQuantity(row).Count);
                 if (requiredLines > 9999 * 260) throw new InvalidDataException("REB-Zeilenadressraum einschließlich Gruppierungskommentaren überschritten.");
             }
         }
@@ -105,25 +105,7 @@ public static class X31Writer
                     AddComment(determination, group.Key.GroupKind + ": " + group.Key.GroupLabel, ref index);
                 foreach (var row in group)
                 {
-                    // Keep the complete ID in this calculation row's nine-character REB remark;
-                    // BVBS:Explanation retains the labelled ID for the review table.
-                    var formula = decimal.Round(row.Value, 3, MidpointRounding.AwayFromZero)
-                        .ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ',') + "=";
-                    var remark = string.IsNullOrEmpty(row.ElementId) ? new string(' ', 9) : row.ElementId.PadRight(9);
-                    var line = new string(' ', 13) + remark + new string(' ', 7) + "91" + formula.PadRight(38);
-                    var itemLine = new XElement(Ns + "QDetermItem", new XElement(Ns + "QTakeoff",
-                        new XAttribute("Row", line + FormatAddress(index++) + new string(' ', 5))));
-                    if (!string.IsNullOrEmpty(row.ElementId))
-                    {
-                        var explanation = new XElement(BvbsNs + "Explanation", "Revit-ElementID: " + row.ElementId);
-                        if (!string.IsNullOrWhiteSpace(row.GroupLabel))
-                        {
-                            explanation.SetAttributeValue("GroupKind", row.GroupKind ?? "");
-                            explanation.SetAttributeValue("GroupLabel", row.GroupLabel);
-                        }
-                        itemLine.Add(explanation);
-                    }
-                    determination.Add(itemLine);
+                    AddQuantityRows(determination, row, ref index);
                 }
             }
         }
@@ -299,6 +281,123 @@ public static class X31Writer
     }
     private static int CommentLineCount(string _) => 1;
 
+    private sealed record PreparedQuantity(string Remark, string[] Comments, string[] Segments, string Approach)
+    {
+        public int Count => Comments.Length + Segments.Length;
+    }
+
+    private static PreparedQuantity PrepareQuantity(QuantityTakeoffRow row)
+    {
+        if ((row.FormulaExpression == null) != (row.CalculationApproach == null))
+            throw new InvalidDataException("Symbolische Formel und numerischer REB91-Ansatz müssen gemeinsam vorliegen; kein Ersatz durch eine Ergebniskonstante.");
+        var formula = row.FormulaExpression;
+        var approach = row.CalculationApproach;
+        if (formula != null)
+        {
+            CheckText(formula, 2048, "Gespeicherte Formel", false);
+            CheckText(approach, 4096, "Numerischer REB91-Ansatz", false);
+            if (approach!.Contains('=')) throw new InvalidDataException("CalculationApproach enthält kein abschließendes Gleichheitszeichen; der Exporter ergänzt es einmalig.");
+            _ = QuantityFormula.GetParameterNames(formula);
+            var evaluated = EvaluateReb91(approach!);
+            if (decimal.Round(evaluated, 3, MidpointRounding.AwayFromZero) != decimal.Round(row.Value, 3, MidpointRounding.AwayFromZero))
+                throw new InvalidDataException("Numerischer REB91-Ansatz stimmt nicht mit der Menge in unveränderter LV-Einheit überein.");
+        }
+        else approach = decimal.Round(row.Value, 3, MidpointRounding.AwayFromZero).ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ',');
+        var segments = SplitApproach(approach! + "=");
+        var id = string.IsNullOrEmpty(row.ElementId) ? "" : "(ID: " + row.ElementId + ")";
+        var remark = formula ?? "";
+        var comments = new List<string>();
+        if (remark.Length > 9)
+        {
+            var text = "Formel: " + remark;
+            for (int i = 0; i < text.Length;)
+            {
+                int length = Math.Min(56, text.Length - i);
+                // Move a boundary space to the next row: REB consumers trim padding.
+                while (length > 0 && text[i + length - 1] == ' ') length--;
+                if (length == 0) throw new InvalidDataException("Gespeicherte Formel enthält einen nicht verlustfrei darstellbaren Leerzeichenblock.");
+                comments.Add(text.Substring(i, length)); i += length;
+            }
+            remark = "";
+        }
+        if (id.Length > 0)
+        {
+            var combined = formula == null ? id : formula + " " + id;
+            if (combined.Length <= 9) remark = combined;
+            else comments.Insert(0, id);
+        }
+        return new(remark, comments.ToArray(), segments, approach! + "=");
+    }
+
+    /// <summary>Evaluates the numeric REB91 subset emitted here, never addresses or vendor functions.</summary>
+    public static decimal EvaluateReb91(string approach)
+    {
+        if (string.IsNullOrWhiteSpace(approach) || approach.Length > 4096)
+            throw new InvalidDataException("Leerer oder zu großer REB91-Ansatz.");
+        if (approach.EndsWith("=", StringComparison.Ordinal)) approach = approach[..^1];
+        if (approach.Any(c => !(c is >= '0' and <= '9' or '.' or ',' or '+' or '-' or '*' or '/' or '(' or ')' or ' ')))
+            throw new InvalidDataException("REB91-Ansatz enthält nicht unterstützte Zeichen; nur substituierte Zahlen und Rechenzeichen sind zulässig.");
+        var operators = System.Text.RegularExpressions.Regex.Matches(approach, @"\*\*|[()+\-*/]|\d+(?:[.,]\d+)?")
+            .Select(match => match.Value).ToArray();
+        bool previousOperator = false;
+        foreach (var token in operators)
+        {
+            bool isOperator = token is "+" or "-" or "*" or "/" or "**";
+            if (previousOperator && isOperator)
+                throw new InvalidDataException("REB91 erlaubt keine unmittelbar aufeinanderfolgenden Rechenzeichen; negative Werte einklammern.");
+            previousOperator = isOperator;
+        }
+        return QuantityFormula.EvaluateReb91Numeric(approach.Replace("**", "^"));
+    }
+
+    private static string[] SplitApproach(string text)
+    {
+        // REB 23.003 (2009), 2.1.4: 38 columns, at most 20 lines. Never split a value or **.
+        var tokens = System.Text.RegularExpressions.Regex.Matches(text, @"\d+(?:[.,]\d+)?|\*\*|[()+\-*/=]| +")
+            .Select(match => match.Value).ToArray();
+        if (string.Concat(tokens) != text || tokens.Any(token => token.Length > 38))
+            throw new InvalidDataException("REB91-Zahl/Rechenzeichen passt nicht verlustfrei in das 38-Zeichen-Ansatzfeld.");
+        var lines = new List<string>(); var current = "";
+        foreach (var token in tokens)
+        {
+            if (current.Length + token.Length > 38) { lines.Add(current); current = ""; }
+            current += token;
+        }
+        if (current.Length > 0) lines.Add(current);
+        if (lines.Count > 20) throw new InvalidDataException("REB91-Ansatz benötigt mehr als 20 Fortsetzungszeilen; kein Ersatz durch eine Ergebniskonstante.");
+        return lines.ToArray();
+    }
+
+    internal static void AddQuantityRows(XElement determination, QuantityTakeoffRow row, ref int index)
+    {
+        var ns = determination.Name.Namespace;
+        var prepared = PrepareQuantity(row);
+        foreach (var comment in prepared.Comments)
+            determination.Add(new XElement(ns + "QDetermItem", new XElement(ns + "QTakeoff", new XAttribute("Row",
+                new string(' ', 12) + "*" + comment.PadRight(56) + FormatAddress(index++) + new string(' ', 5)))));
+        for (int i = 0; i < prepared.Segments.Length; i++)
+        {
+            var line = new string(' ', 13) + (i == 0 ? prepared.Remark : "").PadRight(9) + new string(' ', 7)
+                + "91" + prepared.Segments[i].PadRight(38) + FormatAddress(index++) + new string(' ', 5);
+            var item = new XElement(ns + "QDetermItem", new XElement(ns + "QTakeoff", new XAttribute("Row", line)));
+            if (i == 0 && (!string.IsNullOrEmpty(row.ElementId) || row.FormulaExpression != null))
+            {
+                var text = string.IsNullOrEmpty(row.ElementId) ? "" : "(ID: " + row.ElementId + ")";
+                if (row.FormulaExpression != null) text += (text.Length == 0 ? "" : " ") + row.FormulaExpression;
+                var explanation = new XElement(BvbsNs + "Explanation", text,
+                    new XAttribute("Approach", prepared.Approach), new XAttribute("Result", row.Value.ToString(CultureInfo.InvariantCulture)),
+                    new XAttribute("Unit", row.Unit));
+                if (row.FormulaExpression != null) explanation.SetAttributeValue("Formula", row.FormulaExpression);
+                if (row.GroupLabel != null)
+                {
+                    explanation.SetAttributeValue("GroupKind", row.GroupKind); explanation.SetAttributeValue("GroupLabel", row.GroupLabel);
+                }
+                item.Add(explanation);
+            }
+            determination.Add(item);
+        }
+    }
+
     private static readonly Lazy<System.Xml.Schema.XmlSchemaSet> Schemas = new(() =>
     {
         var schemas = new System.Xml.Schema.XmlSchemaSet { XmlResolver = new OfficialSchemaResolver() };
@@ -327,10 +426,9 @@ public static class X31Writer
         {
             if (explanation.Parent?.Name != Ns + "QDetermItem"
                 || explanation.Parent.Elements(Ns + "QTakeoff").Count() != 1
-                || !explanation.Value.StartsWith("Revit-ElementID: ", StringComparison.Ordinal)
-                || explanation.Value.Length > 200)
+                || explanation.Value.Length > 2300)
                 throw new InvalidDataException("Ungültige BVBS-Ergänzung: Revit-Element-ID muss an genau einer Berechnungszeile stehen.");
-            if (explanation.Attributes().Any(attribute => attribute.Name.LocalName is not ("GroupKind" or "GroupLabel"))
+            if (explanation.Attributes().Any(attribute => attribute.Name.LocalName is not ("GroupKind" or "GroupLabel" or "Formula" or "Approach" or "Result" or "Unit"))
                 || (explanation.Attribute("GroupKind") == null) != (explanation.Attribute("GroupLabel") == null))
                 throw new InvalidDataException("Ungültige BVBS-Ergänzung: Gruppenzuordnung muss vollständig und eindeutig sein.");
         }

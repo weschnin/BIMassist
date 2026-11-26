@@ -21,6 +21,7 @@ Check(source.Contains("TransactionMode.ReadOnly"), "Takeoff must be read-only");
 Check(!Regex.IsMatch(source, @"new\s+(Transaction|TransactionGroup|SubTransaction)\b"), "Takeoff must not write Revit elements");
 Check(source.Contains("document.IsFamilyDocument") && source.Contains("ActiveUIDocument"), "Command must reject missing project/family context");
 Check(source.Contains("QuantityTakeoff.Calculate") && source.Contains("RevitQuantityReader.Elements") && source.Contains("X31Writer.Save"), "Command does not connect actual model calculation to X31 writer");
+Check(source.Contains("r.FormulaExpression") && source.Contains("r.CalculationApproach"), "Command drops stored/substituted formulas between takeoff and export");
 Check(Regex.IsMatch(source, @"result\.Errors\.Count\s*>\s*0") && source.IndexOf("result.Errors.Count", StringComparison.Ordinal) < source.IndexOf("X31Writer.Save", StringComparison.Ordinal), "Partial/error results must not be exported");
 Check(source.Contains("new FileSaveDialog(") && source.Contains("InitialFileName = \"Mengenermittlung.x31\"")
     && source.Contains("DefaultFilterEntry = \"*.x31\"") && source.Contains("GetSelectedModelPath()")

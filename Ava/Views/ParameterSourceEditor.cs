@@ -62,7 +62,7 @@ internal sealed class ParameterSourceEditor : W.StackPanel
         kind = EditorUi.Choice(new[]
         {
             (ParameterKind.SharedGuid, "Gemeinsamer Parameter – exakte GUID"),
-            (ParameterKind.ByName, "Parameter nach Name – Familie, Systemfamilie oder gemeinsam")
+            (ParameterKind.ByName, "Parameter nach Name – Familie, Systemfamilie oder gemeinsam genutzte Parameter")
         }, initialKind);
         scope = EditorUi.Choice(new[] { (ParameterScope.Instance, "Instanz"), (ParameterScope.Type, "Typ") }, initial.Scope);
         EditorUi.Field(this, "Parameterquelle", kind);

@@ -83,6 +83,15 @@ public static class X82QuantityWriter
                 var next = decimal.Round(cumulative, 3, MidpointRounding.AwayFromZero);
                 var value = next - allocated;
                 allocated = next;
+                if (measuredRows[i].FormulaExpression != null || measuredRows[i].CalculationApproach != null)
+                {
+                    // Do not hide a real formula behind a rounded result or silently change the
+                    // unchanged LV total to reconcile cumulative/per-approach REB rounding.
+                    if (value != decimal.Round(measuredRows[i].Value, 3, MidpointRounding.AwayFromZero))
+                        throw new InvalidDataException("X82-Formelpräzision kann nicht ohne Änderung des Rechenansatzes oder der LV-Aufmaßmenge auf drei Nachkommastellen verteilt werden. Export abgebrochen.");
+                    X31Writer.AddQuantityRows(determination, measuredRows[i], ref address);
+                    continue;
+                }
                 var literal = value.ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ',') + "=";
                 if (address >= 9999 * 260 || literal.Length > 38)
                     throw new InvalidDataException("X82-Mengenermittlung überschreitet den REB-Zeilenadressraum oder das Zahlenfeld.");
@@ -216,18 +225,25 @@ public static class X82QuantityWriter
                 throw new InvalidDataException("Der X82-Export enthält eine falsche Position oder Menge.");
             var lines = item.Element(Ns + "QtyDeterm")!.Elements(Ns + "QDetermItem")
                 .Select(line => (string?)line.Element(Ns + "QTakeoff")?.Attribute("Row")).ToArray();
-            if (lines.Length == 0 || lines.Any(line => line is not { Length: 80 } || line.Substring(29, 2) != "91")
+            if (lines.Length == 0 || lines.Any(line => line is not { Length: 80 } || (line[12] != '*' && line.Substring(29, 2) != "91"))
                 || item.Ancestors(Ns + "BoQ").Single().Element(Ns + "BoQInfo")?
                     .Element(Ns + "QtyDetermInfo")?.Element(Ns + "MethodDescription")?.Value != "REB23003-2009")
                 throw new InvalidDataException("Der X82-Export enthält keine lesbaren REB-Mengenzeilen.");
             var sum = 0m;
+            var approach = "";
             foreach (var line in lines)
             {
-                if (!decimal.TryParse(line!.Substring(31, 38).Trim().TrimEnd('=').Replace(',', '.'),
-                    NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var value))
-                    throw new InvalidDataException("Die X82-Mengenzeile enthält keine gültige REB-Zahl.");
-                sum += value;
+                if (line![12] == '*')
+                {
+                    if (approach.Length != 0) throw new InvalidDataException("REB-Kommentar unterbricht einen Rechenansatz.");
+                    continue;
+                }
+                approach += line.Substring(31, 38).TrimEnd();
+                if (!approach.EndsWith("=", StringComparison.Ordinal)) continue;
+                sum += decimal.Round(X31Writer.EvaluateReb91(approach), 3, MidpointRounding.AwayFromZero);
+                approach = "";
             }
+            if (approach.Length != 0) throw new InvalidDataException("Unvollständiger REB91-Ansatz in X82.");
             if (sum != actual) throw new InvalidDataException("REB-Zeilen und X82-Aufmaßmenge weichen voneinander ab.");
         }
     }

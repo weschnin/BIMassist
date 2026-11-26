@@ -284,7 +284,7 @@ internal static class Program
             Require(type != null, "X31Writer is missing");
             var rowType = typeof(AvaTemplate).Assembly.GetType("BIMassist.Ava.Core.QuantityTakeoffRow")!;
             var rows = Array.CreateInstance(rowType, 1);
-            rows.SetValue(Activator.CreateInstance(rowType, "FirstItem", 12.345m, "m2", "Revit ElementId=42", "", null, null), 0);
+            rows.SetValue(Activator.CreateInstance(rowType, "FirstItem", 12.345m, "m2", "Revit ElementId=42", "", null, null, null, null), 0);
             var xml = (string)type!.GetMethod("Serialize")!.Invoke(null, [Read(Fixture), rows])!;
             Validate(xml);
             var root = XDocument.Parse(xml);
@@ -306,6 +306,96 @@ internal static class Program
         Test("X31 refuses a quantity whose unit differs from the unchanged LV unit", () =>
         {
             Reject(() => X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m", "unit mismatch")]));
+        });
+        Test("X31 saves substituted REB91 arithmetic, symbolic remark and complete compact ID without changing LV", () =>
+        {
+            var row = new QuantityTakeoffRow("FirstItem", 6m, "m2", "", "4294967296", "Area", "Baubereich");
+            var formula = typeof(QuantityTakeoffRow).GetProperty("FormulaExpression");
+            var approach = typeof(QuantityTakeoffRow).GetProperty("CalculationApproach");
+            Require(formula != null && approach != null, "Export rows lose formula metadata");
+            formula!.SetValue(row, "B*H"); approach!.SetValue(row, "(2*3)");
+            var path = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("BIMASSIST_AVA_WORKSPACE_SETTINGS"))!, "formula-saved.x31");
+            X31Writer.Save(path, Read(Fixture), [row]);
+            var saved = File.ReadAllText(path); Validate(saved);
+            var doc = XDocument.Parse(saved);
+            var rows = doc.Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
+            Require(rows.All(x => x.Length == 80), "Raw REB rows must have 80 columns");
+            var calc = rows.Single(x => x.Substring(29, 2) == "91");
+            Equal("B*H", calc.Substring(13, 9).TrimEnd()); Equal("(2*3)=", calc.Substring(31, 38).TrimEnd());
+            Equal("(ID: 4294967296)", rows[Array.IndexOf(rows, calc) - 1].Substring(13, 56).TrimEnd());
+            var extension = doc.Descendants(XName.Get("Explanation", "BVBS")).Single();
+            Equal("(ID: 4294967296) B*H", extension.Value);
+            Equal("B*H", (string?)extension.Attribute("Formula")); Equal("(2*3)=", (string?)extension.Attribute("Approach"));
+            Equal("6", (string?)extension.Attribute("Result")); Equal("m2", (string?)extension.Attribute("Unit"));
+            Equal("Baubereich", (string?)extension.Attribute("GroupKind")); Equal("Area", (string?)extension.Attribute("GroupLabel"));
+            const string symbolic = "sqrt(Volumen/Schnittlänge)*Schnittlänge";
+            var numeric = QuantityFormula.CreateReb91Approach(symbolic,
+                new Dictionary<string, (decimal Value, string Unit, string Spec)> {
+                    ["Volumen"] = (1.30086m, "m3", "VOLUME"), ["Schnittlänge"] = (14.454m, "m", "LENGTH") }, "m2", "m2");
+            var rootPath = Path.Combine(Path.GetDirectoryName(path)!, "formula-root-saved.x31");
+            X31Writer.Save(rootPath, Read(Fixture), [row with { Value = 4.3362m, FormulaExpression = symbolic, CalculationApproach = numeric }]);
+            var rootSaved = File.ReadAllText(rootPath); Validate(rootSaved);
+            Equal(4.3362m, X31Writer.EvaluateReb91(numeric));
+            Console.WriteLine("Saved official-schema-validated formula artifact: " + rootPath + "; REB91 " + numeric + "=; Result 4.3362 m2");
+        });
+        Test("X82 retains actual formula calculation instead of replacing it with a precomputed quantity", () =>
+        {
+            var row = new QuantityTakeoffRow("FirstItem", 4.3362m, "m2", "", "42",
+                FormulaExpression: "sqrt(V/L)*L", CalculationApproach: "((1,30086/14,454)**(0,5))*14,454");
+            var output = XDocument.Parse(X82QuantityWriter.Serialize(Read(Fixture), [row]));
+            var item = output.Descendants(SourceNs + "Item").Single();
+            Equal("999", item.Element(SourceNs + "Qty")!.Value);
+            Equal("m2", item.Element(SourceNs + "QU")!.Value);
+            Equal("4.336", item.Element(SourceNs + "QtyDeterm")!.Element(SourceNs + "Qty")!.Value);
+            var calculation = item.Descendants(SourceNs + "QTakeoff").Select(x => (string)x.Attribute("Row")!)
+                .Where(x => x.Substring(29, 2) == "91").Select(x => x.Substring(31, 38).TrimEnd()).ToArray();
+            Equal(row.CalculationApproach + "=", string.Concat(calculation));
+            Equal("sqrt(V/L)*L", (string?)item.Descendants(XName.Get("Explanation", "BVBS")).Single().Attribute("Formula"));
+            ValidateX82(output);
+            var path = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("BIMASSIST_AVA_WORKSPACE_SETTINGS"))!, "formula-saved.x82");
+            X82QuantityWriter.Save(path, Read(Fixture), [row]);
+            ValidateX82(XDocument.Load(path));
+        });
+        Test("REB91 rejects unsupported grammar and unrepresentable literal precision instead of silently changing it", () =>
+        {
+            foreach (var invalid in new[] { "2*-3", "2--3", "2**1", "2**(2-1)", "2^3", "sqrt(9)",
+                "0.123456789012345678901234567891", "1=" })
+                Reject(() => X31Writer.Serialize(Read(Fixture), [new("FirstItem", 0m, "m2", "", "42",
+                    FormulaExpression: "0", CalculationApproach: invalid)]));
+            Reject(() => X31Writer.EvaluateReb91("2*-3"));
+            Reject(() => X31Writer.EvaluateReb91("2**(2-1)"));
+        });
+        Test("REB91 continuation preserves every token, full formula and ID with exactly one terminating equals", () =>
+        {
+            const string number = "0,1234567890123456789012345678";
+            var approach = string.Join("+", Enumerable.Repeat(number, 20));
+            var symbolic = string.Join("+", Enumerable.Range(1, 20).Select(i => "[Parameter " + i + "]"));
+            var value = X31Writer.EvaluateReb91(approach);
+            var row = new QuantityTakeoffRow("FirstItem", value, "m2", "", long.MaxValue.ToString(CultureInfo.InvariantCulture),
+                FormulaExpression: symbolic, CalculationApproach: approach);
+            var xml = X31Writer.Serialize(Read(Fixture), [row]); Validate(xml);
+            var doc = XDocument.Parse(xml);
+            var raw = doc.Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
+            Require(raw.All(x => x.Length == 80), "Continuation crossed fixed fields");
+            var numeric = raw.Where(x => x.Substring(29, 2) == "91").ToArray();
+            Equal(20, numeric.Length);
+            Equal(approach + "=", string.Concat(numeric.Select(x => x.Substring(31, 38).TrimEnd())));
+            Equal(1, numeric.Count(x => x.Substring(31, 38).Contains('=')));
+            Equal("(ID: " + long.MaxValue.ToString(CultureInfo.InvariantCulture) + ")", raw[0].Substring(13, 56).TrimEnd());
+            var formulaComments = string.Concat(raw.Skip(1).Where(x => x[12] == '*').Select(x => x.Substring(13, 56).TrimEnd()));
+            Equal("Formel: " + symbolic, formulaComments);
+            var metadata = doc.Descendants(XName.Get("Explanation", "BVBS")).Single();
+            Equal(symbolic, (string?)metadata.Attribute("Formula"));
+            Reject(() => X31Writer.Serialize(Read(Fixture), [row with { CalculationApproach = approach + "+" + number,
+                Value = value + X31Writer.EvaluateReb91(number) }]));
+            Reject(() => X31Writer.EvaluateReb91("0.123456789012345678901234567891"));
+            Reject(() => X31Writer.Serialize(Read(Fixture), [row with { CalculationApproach = null }]));
+        });
+        Test("X82 refuses formula precision allocation that would change the saved formula or LV total", () =>
+        {
+            var rows = Enumerable.Range(0, 2).Select(i => new QuantityTakeoffRow("FirstItem", 0.0005m, "m2", "", i.ToString(),
+                FormulaExpression: "x/2", CalculationApproach: "(0,001/2)")).ToArray();
+            Reject(() => X82QuantityWriter.Serialize(Read(Fixture), rows));
         });
         Test("X31 export rounds to at most three fractional places using commercial midpoint rounding", () =>
         {
@@ -344,43 +434,47 @@ internal static class Program
             Equal(2, lines.Length);
             Require(lines[0][12] == '*' && lines[0].Substring(13, 56).TrimEnd() == "Baubereich: Erdgeschoss", "Grouping row does not match screenshot layout");
             var firstQuantity = lines.Single(x => x[12] != '*');
-            Equal("42", firstQuantity.Substring(13, 9).Trim());
+            Equal("(ID: 42)", firstQuantity.Substring(13, 9).Trim());
             Equal("2,5=", firstQuantity.Substring(31, 38).Trim());
-            Equal("Revit-ElementID: 42", (string?)firstItems.Single(x => x.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value[12] != '*')
+            Equal("(ID: 42)", (string?)firstItems.Single(x => x.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value[12] != '*')
                 .Element(XName.Get("Explanation", "BVBS")));
             var second = doc.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == "SecondItem");
             var secondItems = second.Descendants(Ns + "QDetermItem").ToArray();
             var secondRows = secondItems.Select(x => x.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value).ToArray();
             Equal(1, secondRows.Length);
             var secondQuantity = secondRows.Single(row => row[12] != '*');
-            Equal("43", secondQuantity.Substring(13, 9).Trim());
+            Equal("(ID: 43)", secondQuantity.Substring(13, 9).Trim());
             Equal("0,005=", secondQuantity.Substring(31,38).Trim());
-            Equal("Revit-ElementID: 43", (string?)secondItems.Single(item => item.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value[12] != '*').Element(XName.Get("Explanation", "BVBS")));
+            Equal("(ID: 43)", (string?)secondItems.Single(item => item.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value[12] != '*').Element(XName.Get("Explanation", "BVBS")));
             Require(lines.All(x => x.Length == 80), "Line width changed");
             Equal("m2", template.LvCatalog.Entries[0].Unit);
             Require(!xml.Contains("QU>") && !xml.Contains(explanation), "Non-screenshot source details or reassigned LV unit leaked");
         });
-        Test("X31 writes the Revit ID in the quantity remark and creates no duplicate ID comment row", () =>
+        Test("X31 writes a compact labelled ID in one calculation row when it fits", () =>
         {
             var xml = X31Writer.Serialize(Read(Fixture), [new("FirstItem", 2.5m, "m2", "", "42")]);
             var rows = XDocument.Parse(xml).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
             Equal(1, rows.Length);
-            Equal("42", rows[0].Substring(13, 9).Trim());
+            Equal("(ID: 42)", rows[0].Substring(13, 9).Trim());
             Require(rows.All(row => row[12] != '*'), "A separate ElementID comment row was created");
             using var input = new MemoryStream(Encoding.UTF8.GetBytes(xml));
             var review = X31ReviewReader.Read(input);
             Equal(1, review.Rows.Count);
             Equal("42", review.Rows[0].ElementId);
-            Equal("Revit-ElementID: 42", review.Rows[0].Comment);
+            Equal("(ID: 42)", review.Rows[0].Comment);
         });
         Test("X31 rejects an ElementID that cannot be represented by a Revit 64-bit ID", () =>
         {
             Reject(() => X31Writer.Serialize(Read(Fixture), [new("FirstItem", 2.5m, "m2", "", new string('9', 40))]));
         });
-        Test("X31 refuses to truncate a valid ElementID wider than the nine-character REB remark", () =>
+        Test("X31 retains a valid long ElementID in a preceding labelled comment", () =>
         {
-            try { X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m2", "", "4294967296")]); throw new Exception("A truncated Revit ID was exported"); }
-            catch (InvalidDataException ex) { Require(ex.Message.Contains("9", StringComparison.Ordinal), "Missing actionable remark-width diagnostic"); }
+            var xml = X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m2", "", "4294967296")]);
+            Validate(xml);
+            var rows = XDocument.Parse(xml).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
+            Equal(2, rows.Length); Equal("(ID: 4294967296)", rows[0].Substring(13, 56).TrimEnd());
+            Equal("", rows[1].Substring(13, 9).Trim());
+            Equal("91", rows[1].Substring(29, 2));
         });
         Test("X31 emits each unique group header once across LV positions and keeps IDs with calculations", () =>
         {
@@ -403,13 +497,13 @@ internal static class Program
             Equal(2, comments.Length);
             Equal(new string('x', 56 - "Baubereich: ".Length), comments.Single(x => x.StartsWith("Baubereich: x", StringComparison.Ordinal))["Baubereich: ".Length..]);
             foreach (var row in firstRows.Where(x => x[12] != '*'))
-                Require(row.Substring(13, 9).Trim() is "101" or "102" or "103" or "104", "Quantity remark lost the full Revit ID");
+                Require(row.Substring(13, 9).Trim() is "(ID: 101)" or "(ID: 102)" or "(ID: 103)" or "(ID: 104)", "Quantity remark lost the full labelled Revit ID");
             Require(firstRows.Where(x => x[12] != '*').Any(x => x.Substring(31, 38).Trim() == "1="), "Expected the 1-unit formula line");
             var second = doc.Descendants(Ns + "Item").Single(x => (string?)x.Attribute("ID") == "SecondItem");
             var secondItems = second.Descendants(Ns + "QDetermItem").ToArray();
             Equal(4, secondItems.Length);
             var secondQuantities = secondItems.Where(x => x.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value[12] != '*').ToArray();
-            var expectedIds = new[] { "Revit-ElementID: 105", "Revit-ElementID: 106", "Revit-ElementID: 107", "Revit-ElementID: 108" };
+            var expectedIds = new[] { "(ID: 105)", "(ID: 106)", "(ID: 107)", "(ID: 108)" };
             var actualIds = secondQuantities.Select(x => (string?)x.Element(XName.Get("Explanation", "BVBS"))).ToArray();
             Require(expectedIds.ToHashSet(StringComparer.Ordinal).SetEquals(actualIds.OfType<string>()), $"Second item ElementIDs changed: {string.Join(",", actualIds)}");
             var allHeaders = doc.Descendants(Ns + "QTakeoff").Select(x => x.Attribute("Row")!.Value)
@@ -418,7 +512,7 @@ internal static class Program
             var ungrouped = X31Writer.Serialize(Read(Fixture), [new("FirstItem", 1m, "m2", "trace", "77")]);
             var ungroupedRows = XDocument.Parse(ungrouped).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
             Equal(1, ungroupedRows.Length);
-            Equal("77", ungroupedRows.Single(row => row[12] != '*').Substring(13, 9).Trim());
+            Equal("(ID: 77)", ungroupedRows.Single(row => row[12] != '*').Substring(13, 9).Trim());
         });
         Test("X31 review associates a group comment with all full ElementIDs across positions", () =>
         {
@@ -444,6 +538,26 @@ internal static class Program
             Equal("1,235=", quantity.Formula);
             Require(!string.IsNullOrWhiteSpace(quantity.Position), "LV position was not preserved for the table.");
             Require(quantity.ElementIdsForSelection.SequenceEqual(["429496729"]), "Quantity row did not retain its full ElementID.");
+        });
+        Test("X31 review evaluates the actual serialized multirow formula with the emitted-subset evaluator", () =>
+        {
+            var approach = string.Join("+", Enumerable.Repeat("1,123456789", 12));
+            var value = X31Writer.EvaluateReb91(approach);
+            var xml = X31Writer.Serialize(Read(Fixture), [new("FirstItem", value, "m2", "", "4294967296", "EG", "Baubereich",
+                "[Parameter mit langem Namen]*12", approach)]);
+            using var input = new MemoryStream(Encoding.UTF8.GetBytes(xml));
+            var read = typeof(X31ReviewReader).GetMethods().SingleOrDefault(m => m.Name == "Read" && m.GetParameters().Length == 4);
+            Require(read != null, "The read-only review needs an optional emitted-subset evaluator injection.");
+            var review = (X31ReviewDocument)read!.Invoke(null, [input, "formula.x31", null, (Func<string, decimal>)X31Writer.EvaluateReb91])!;
+            var quantities = review.Rows.Where(r => r.Kind == X31ReviewRowKind.Quantity).ToArray();
+            Equal(1, quantities.Length);
+            Equal(value.ToString(CultureInfo.GetCultureInfo("de-DE")), quantities[0].Result);
+            Equal(approach + "=", quantities[0].LogicalApproach);
+            Require(review.Rows.Any(r => r.Kind.ToString() == "Continuation"), "A physical continuation was flattened or lost.");
+            Require(review.Rows.Where(r => r.FormulaNumber == "91").All(r => r.ElementId == "4294967296"
+                && r.ElementIdsForSelection.SequenceEqual(["4294967296"]) && r.GroupLabel == "EG"), "Continuation selection lost provenance.");
+            Require(review.Rows.Where(r => r.Kind.ToString() == "Continuation").All(r => r.Result.Length == 0), "Continuation duplicates the total.");
+            Equal(0, review.Warnings.Count);
         });
         Test("X31 selection planner de-duplicates IDs and expands nested groups without cycles", () =>
         {
@@ -490,7 +604,7 @@ internal static class Program
             foreach (var id in new[] { "", " ", "unknown", null! }) Reject(() => X31Writer.Serialize(t, [new(id, 1, "m", "")]));
             Reject(() => X31Writer.Serialize(t, [null!]));
             foreach (var unit in new[] { "", " ", "kg\n91", null!, new string('u', 41) }) Reject(() => X31Writer.Serialize(t, [new("FirstItem", 1, unit, "")]));
-            Require(X31Writer.Serialize(t, [new("FirstItem", 1, "m2", "", "429496729")]).Contains("Revit-ElementID: 429496729"),
+            Require(X31Writer.Serialize(t, [new("FirstItem", 1, "m2", "", "429496729")]).Contains("(ID: 429496729)"),
                 "Full Revit ID was not retained in the BVBS explanation");
             foreach (var explanation in new[] { null!, "a\nb", "a\tb", "\0", "\uD800", new string('e', 4097) }) Reject(() => X31Writer.Serialize(t, [new("FirstItem", 1, "m", explanation)]));
         });
@@ -585,8 +699,8 @@ internal static class Program
                         var numeric = lines.Single(x => x.Substring(29, 2) == "91");
                         var numericItem = XDocument.Parse(xml).Descendants(Ns + "QDetermItem")
                             .Single(x => x.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value == numeric);
-                        Equal("Revit-ElementID: 42", (string?)numericItem.Element(XName.Get("Explanation", "BVBS")));
-                        Require(numeric[..12].All(x => x == ' ') && numeric.Substring(13, 9).Trim() == "42"
+                        Equal("(ID: 42)", (string?)numericItem.Element(XName.Get("Explanation", "BVBS")));
+                        Require(numeric[..12].All(x => x == ' ') && numeric.Substring(13, 9).Trim() == "(ID: 42)"
                             && numeric.Substring(22, 7).All(x => x == ' '), "Unexpected quantity remark/sign prefix");
                         Equal("91", numeric.Substring(29, 2));
                         Equal(decimal.Round(value, 3, MidpointRounding.AwayFromZero), decimal.Parse(numeric.Substring(31, 38).Trim().TrimEnd('='), CultureInfo.GetCultureInfo("de-DE")));
@@ -603,7 +717,7 @@ internal static class Program
             Validate(xml);
             var rows = XDocument.Parse(xml).Descendants(Ns + "QTakeoff").Select(x => (string)x.Attribute("Row")!).ToArray();
             Equal(1, rows.Length);
-            Equal("42", rows.Single(row => row[12] != '*').Substring(13, 9).Trim());
+            Equal("(ID: 42)", rows.Single(row => row[12] != '*').Substring(13, 9).Trim());
             Require(!xml.Contains(explanation), "Internal explanation leaked into output");
         });
         Test("long group labels are truncated without continuation rows", () =>
@@ -722,6 +836,8 @@ internal static class Program
         schemas.Add(SourceNs.NamespaceName, schemaPath);
         schemas.Compile();
         var errors = new List<string>();
+        document = new XDocument(document);
+        document.Descendants(XName.Get("Explanation", "BVBS")).Remove();
         document.Validate(schemas, (_, e) => errors.Add(e.Message), true);
         Require(errors.Count == 0, string.Join("\n", errors));
     }

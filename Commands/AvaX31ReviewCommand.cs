@@ -27,7 +27,23 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
 
             var dialog = AvaFileDialogs.OpenX31();
             if (dialog.ShowDialog() != true) return Result.Cancelled;
-            var review = X31ReviewReader.ReadFile(dialog.FileName);
+            var workspace = new AvaWorkspace();
+            IReadOnlyDictionary<string, X31ReviewPosition>? positions = null;
+            string? templateWarning = null;
+            try
+            {
+                var template = workspace.LoadLast();
+                positions = template.LvCatalog.Entries.ToDictionary(item => item.Id,
+                    item => new X31ReviewPosition(item.Ordinal, item.Text, item.Unit, item.BoqId), StringComparer.Ordinal);
+            }
+            catch (System.IO.InvalidDataException ex)
+            {
+                templateWarning = "AVA-Vorlage nicht verfügbar; Kurztext und Einheit können nicht ergänzt werden. " + ex.Message;
+            }
+            var review = X31ReviewReader.ReadFile(dialog.FileName, positions, X31Writer.EvaluateReb91);
+            if (templateWarning != null)
+                review = review with { Warnings = review.Warnings.Concat([templateWarning]).ToArray() };
+            else review = review with { TemplateSource = workspace.LastTemplatePath ?? "" };
             var missingIds = X31ReviewReader.FindMissingElementIds(review, text =>
                 long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var value)
                 && uiDocument.Document.GetElement(new ElementId(value)) != null);

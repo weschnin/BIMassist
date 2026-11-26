@@ -216,6 +216,13 @@ internal static class Program
             Equal(4, reads.Count); // Shared Schnittlänge is read once from the same source/unit.
             Contains("Volumen=1.30086 m3", result.Rows[1].Explanation);
             Contains("Structural Framing", result.Rows[1].Explanation);
+            var symbolic = typeof(TakeoffLine).GetProperty("FormulaExpression");
+            var numeric = typeof(TakeoffLine).GetProperty("CalculationApproach");
+            if (symbolic == null || numeric == null) throw new Exception("Takeoff loses stored and substituted formulas before export");
+            Equal("sqrt(Volumen/Schnittlänge)*Schnittlänge", symbolic.GetValue(result.Rows[1]));
+            var approach = (string)numeric.GetValue(result.Rows[1])!;
+            Contains("**(0,5)", approach);
+            Equal(result.Rows[1].Value, QuantityFormula.Evaluate(approach.Replace("**", "^"), new Dictionary<string, decimal>()));
             template.Mappings[0].Positions[1].Quantity!.Expression = "Volumen^(1/2)/Schnittlänge";
             result = QuantityTakeoff.Calculate(template, [Element("beam-42", template, (source, _) =>
                 new(Number: source.Name == "Volumen" ? 1.30086m : 14.454m))]);

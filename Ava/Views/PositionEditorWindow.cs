@@ -76,7 +76,7 @@ internal sealed class PositionEditorWindow : Window
                     && node.Key.StartsWith("item:", StringComparison.Ordinal)
                     ? template.LvCatalog.Entries.FirstOrDefault(item => item.Id == node.SourceId)
                     : null;
-                lvDetail.Text = selectedLv is { } selected ? $"{selected.Ordinal} | {selected.Unit} | {selected.Id}\n{selected.Text}\n{selected.Description}" : "";
+                lvDetail.Text = selectedLv is { } selected ? LvPositionDisplay.Details(template.LvCatalog, selected) : "";
                 preview.Text = "";
                 RefreshQuantity();
             }
@@ -86,7 +86,7 @@ internal sealed class PositionEditorWindow : Window
         selectedLv = template.LvCatalog.Entries.FirstOrDefault(l => l.Id == draft.LvItemId);
         RefreshLvTree();
         Loaded += (_, _) => (lvTree.SelectedItem as W.TreeViewItem)?.Focus();
-        lvDetail.Text = selectedLv is { } initial ? $"{initial.Ordinal} | {initial.Unit} | {initial.Id}\n{initial.Text}\n{initial.Description}" : "";
+        lvDetail.Text = selectedLv is { } initial ? LvPositionDisplay.Details(template.LvCatalog, initial) : "";
         tabs.Items.Add(new W.TabItem { Header = "1  Leistungsposition", Content = lvPanel });
         var panel = new W.StackPanel { Margin = new Thickness(12) };
         panel.Children.Add(EditorUi.Text("Die Menge gilt je passendem Element. Auswahl: feste Zahl, Parameterwert oder Kombination aus Zahlen und Parametern als Formel."));

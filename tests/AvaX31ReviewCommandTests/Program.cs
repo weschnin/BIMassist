@@ -119,6 +119,9 @@ internal static class Program
         var window = new X31ReviewWindow(review, (plan, _) => rowPlan = plan, isolate => missingIsolation = isolate);
         try
         {
+            Check(window.ReviewGrid.Columns.Select(column => column.Header?.ToString()).SequenceEqual(
+                ["OZ", "Kurztext", "Zeilentyp", "Bemerkung", "Formelnummer", "Berechnungsansatz", "Ergebnis", "Einheit"]),
+                "Review must show every requested quantity field in separate columns.");
             Check(window.SelectButton.Content?.ToString() == "Selektieren" && window.IsolateButton.Content?.ToString() == "Isolieren",
                 "Existing included-row buttons changed.");
             Check(missingIsolation == null, "Window posted an action before a click.");
@@ -137,6 +140,10 @@ internal static class Program
             root = root.Parent;
         Check(root != null, "Could not locate production command source.");
         var command = File.ReadAllText(Path.Combine(root!.FullName, "Commands", "AvaX31ReviewCommand.cs"));
+        Check(command.Contains("workspace.LoadLast()", StringComparison.Ordinal)
+            && command.Contains("new X31ReviewPosition(", StringComparison.Ordinal)
+            && command.Contains("X31ReviewReader.ReadFile(dialog.FileName, positions, X31Writer.EvaluateReb91)", StringComparison.Ordinal),
+            "Review must load exact position metadata and evaluate emitted REB91 approaches with the production evaluator.");
         Check(command.Contains("handler.SetMissingRequest(", StringComparison.Ordinal)
             && command.Contains("X31ReviewViewCandidates.Find(", StringComparison.Ordinal)
             && command.Contains("review.Rows.SelectMany(row => row.ElementIdsForSelection)", StringComparison.Ordinal)

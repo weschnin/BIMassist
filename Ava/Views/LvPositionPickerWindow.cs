@@ -129,10 +129,7 @@ internal sealed class LvPositionPickerWindow : Window
             check.Click += (_, _) => OnCheckChanged(check, check.IsChecked != false);
             header.Children.Add(check);
         }
-        LvEntry? source = null;
-        if (node.Key.StartsWith("item:", StringComparison.Ordinal)) entriesById.TryGetValue(node.SourceId, out source);
-        header.Children.Add(new W.TextBlock { Text = source is { Unit.Length: > 0 }
-                ? node.Label + "   [" + source.Unit + "]" : node.Label,
+        header.Children.Add(new W.TextBlock { Text = node.Label,
             TextWrapping = TextWrapping.Wrap, MaxWidth = 850,
             VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 4, 2, 4) });
         item.Header = header;

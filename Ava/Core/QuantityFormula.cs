@@ -35,9 +35,15 @@ public static class QuantityFormula
 
     /// <summary>Evaluates decimal arithmetic; negative results are not clamped. Extra values are ignored.</summary>
     public static decimal Evaluate(string expression, IReadOnlyDictionary<string, decimal> values)
+        => EvaluateExpression(expression, values, false);
+
+    internal static decimal EvaluateReb91Numeric(string expression)
+        => EvaluateExpression(expression, new Dictionary<string, decimal>(), true);
+
+    private static decimal EvaluateExpression(string expression, IReadOnlyDictionary<string, decimal> values, bool reb)
     {
         if (values == null) throw new InvalidDataException("Parameter values are required.");
-        var instructions = new Parser(expression).Parse();
+        var instructions = new Parser(expression, reb).Parse();
         // Do not inherit a caller's case-insensitive comparer.
         var exactValues = new Dictionary<string, decimal>(StringComparer.Ordinal);
         foreach (var pair in values) exactValues.Add(pair.Key, pair.Value);
@@ -59,6 +65,8 @@ public static class QuantityFormula
                 if (instruction.Operator == 'N') { stack.Push(-right); continue; }
                 if (instruction.Operator == 'R') { stack.Push(SquareRoot(right)); continue; }
                 var left = stack.Pop();
+                if (reb && instruction.Operator == '^' && right == 1)
+                    throw new InvalidDataException("REB91 erlaubt keine Potenz mit Exponent 1; Formel vor Export äquivalent umformen.");
                 stack.Push(instruction.Operator switch
                 {
                     '+' => left + right,
@@ -94,7 +102,7 @@ public static class QuantityFormula
                 a.Count * exponent, a.Lump * exponent);
     }
 
-    private readonly record struct DimensionalValue(decimal Number, Dimension Dimension, bool LiteralOnly = false);
+    private readonly record struct DimensionalValue(decimal Number, Dimension Dimension, bool LiteralOnly = false, string Expression = "");
 
     private static (string? Base, Dimension Dimension) UnitDimension(string unit) => unit switch
     {
@@ -112,18 +120,63 @@ public static class QuantityFormula
     /// literal added to a physical value is interpreted in the declared result unit.</summary>
     public static decimal EvaluateWithUnits(string expression,
         IReadOnlyDictionary<string, (decimal Value, string Unit, string Spec)> inputs, string resultUnit)
+        => EvaluateTyped(expression, inputs, resultUnit).Number;
+
+    /// <summary>Substitutes the same typed arithmetic used by takeoff. REB 23.003 (2009)
+    /// section 2.1.4 uses ** for powers/roots, no sqrt function, and no exponent one.</summary>
+    public static string CreateReb91Approach(string expression,
+        IReadOnlyDictionary<string, (decimal Value, string Unit, string Spec)> inputs, string resultUnit, string lvUnit)
+    {
+        if (inputs == null) throw new InvalidDataException("Formula inputs are required.");
+        var output = inputs.Count == 0 ? RenderUntyped(expression) : EvaluateTyped(expression, inputs, resultUnit, true);
+        return ConvertExpression(output.Expression, resultUnit, lvUnit);
+    }
+
+    private static string RebNumber(decimal value) => value < 0
+        ? "(" + value.ToString("0.############################", CultureInfo.InvariantCulture).Replace('.', ',') + ")"
+        : value.ToString("0.############################", CultureInfo.InvariantCulture).Replace('.', ',');
+
+    private static string ConvertExpression(string expression, string source, string target) => source == target
+        ? expression : "(" + expression + "*" + RebNumber(UnitCatalog.Convert(1, source, target)) + ")";
+
+    private static string RebOperation(char op, string left, string right, decimal exponent = 0) => op switch
+    {
+        'P' => right,
+        'N' => "(-" + right + ")",
+        'R' => "(" + right + "**(0,5))",
+        '^' => exponent == 1 ? left : "(" + left + "**(" + right + "))",
+        _ => "(" + left + op + right + ")"
+    };
+
+    private static DimensionalValue RenderUntyped(string expression)
+    {
+        var stack = new Stack<DimensionalValue>();
+        foreach (var instruction in new Parser(expression, true).Parse())
+        {
+            if (instruction.Operator == '#') { stack.Push(new(instruction.Number, new(), true, RebNumber(instruction.Number))); continue; }
+            if (instruction.Operator == '$') throw new InvalidDataException("Missing formula input.");
+            var right = stack.Pop();
+            var left = instruction.Operator is 'P' or 'N' or 'R' ? new DimensionalValue() : stack.Pop();
+            var rendered = RebOperation(instruction.Operator, left.Expression, right.Expression, right.Number);
+            stack.Push(new(Evaluate(rendered.Replace("**", "^"), new Dictionary<string, decimal>()), new(), true, rendered));
+        }
+        return stack.Pop();
+    }
+
+    private static DimensionalValue EvaluateTyped(string expression,
+        IReadOnlyDictionary<string, (decimal Value, string Unit, string Spec)> inputs, string resultUnit, bool exactLiterals = false)
     {
         if (inputs == null) throw new InvalidDataException("Formula inputs are required.");
         if (!UnitCatalog.AllUnits.Contains(resultUnit, StringComparer.Ordinal))
             throw new InvalidDataException($"Unbekannte Formelergebniseinheit '{resultUnit}'.");
-        var instructions = new Parser(expression).Parse();
+        var instructions = new Parser(expression, exactLiterals).Parse();
         var (resultBase, expectedDimension) = UnitDimension(resultUnit);
         var stack = new Stack<DimensionalValue>();
         try
         {
             foreach (var instruction in instructions)
             {
-                if (instruction.Operator == '#') { stack.Push(new(instruction.Number, new(), true)); continue; }
+                if (instruction.Operator == '#') { stack.Push(new(instruction.Number, new(), true, RebNumber(instruction.Number))); continue; }
                 if (instruction.Operator == '$')
                 {
                     if (!inputs.TryGetValue(instruction.Name!, out var input))
@@ -132,18 +185,21 @@ public static class QuantityFormula
                         throw new InvalidDataException($"Unbekannte Eingabeeinheit '{input.Unit}' für Formelparameter '{instruction.Name}'.");
                     var (inputBase, dimension) = UnitDimension(input.Unit);
                     var normalized = inputBase == null ? input.Value : UnitCatalog.Convert(input.Value, input.Unit, inputBase);
-                    stack.Push(new(normalized, dimension));
+                    stack.Push(new(normalized, dimension, false, inputBase == null ? RebNumber(input.Value)
+                        : ConvertExpression(RebNumber(input.Value), input.Unit, inputBase)));
                     continue;
                 }
                 var right = stack.Pop();
                 if (instruction.Operator is 'P' or 'N')
                 {
-                    stack.Push(right with { Number = instruction.Operator == 'N' ? -right.Number : right.Number });
+                    stack.Push(right with { Number = instruction.Operator == 'N' ? -right.Number : right.Number,
+                        Expression = RebOperation(instruction.Operator, "", right.Expression) });
                     continue;
                 }
                 if (instruction.Operator == 'R')
                 {
-                    stack.Push(new(SquareRoot(right.Number), right.Dimension * 0.5m, right.LiteralOnly));
+                    stack.Push(new(SquareRoot(right.Number), right.Dimension * 0.5m, right.LiteralOnly,
+                        RebOperation('R', "", right.Expression)));
                     continue;
                 }
                 var left = stack.Pop();
@@ -152,33 +208,36 @@ public static class QuantityFormula
                     if (left.Dimension != right.Dimension)
                     {
                         if (left.LiteralOnly && right.Dimension == expectedDimension && resultBase != null)
-                            left = left with { Number = UnitCatalog.Convert(left.Number, resultUnit, resultBase), Dimension = right.Dimension };
+                            left = left with { Number = UnitCatalog.Convert(left.Number, resultUnit, resultBase), Dimension = right.Dimension,
+                                Expression = ConvertExpression(left.Expression, resultUnit, resultBase) };
                         else if (right.LiteralOnly && left.Dimension == expectedDimension && resultBase != null)
-                            right = right with { Number = UnitCatalog.Convert(right.Number, resultUnit, resultBase), Dimension = left.Dimension };
+                            right = right with { Number = UnitCatalog.Convert(right.Number, resultUnit, resultBase), Dimension = left.Dimension,
+                                Expression = ConvertExpression(right.Expression, resultUnit, resultBase) };
                         else throw new InvalidDataException("Formel-Dimensionen der Addition/Subtraktion stimmen nicht überein.");
                     }
                     stack.Push(new(instruction.Operator == '+' ? left.Number + right.Number : left.Number - right.Number,
-                        left.Dimension, left.LiteralOnly && right.LiteralOnly));
+                        left.Dimension, left.LiteralOnly && right.LiteralOnly, RebOperation(instruction.Operator, left.Expression, right.Expression)));
                 }
                 else if (instruction.Operator is '*' or '/')
                 {
                     stack.Push(new(instruction.Operator == '*' ? left.Number * right.Number : left.Number / right.Number,
                         instruction.Operator == '*' ? left.Dimension + right.Dimension : left.Dimension - right.Dimension,
-                        left.LiteralOnly && right.LiteralOnly));
+                        left.LiteralOnly && right.LiteralOnly, RebOperation(instruction.Operator, left.Expression, right.Expression)));
                 }
                 else if (instruction.Operator == '^')
                 {
                     if (right.Dimension != new Dimension())
                         throw new InvalidDataException("Formel-Exponent muss dimensionslos sein.");
                     stack.Push(new(Power(left.Number, right.Number), left.Dimension * right.Number,
-                        left.LiteralOnly && right.LiteralOnly));
+                        left.LiteralOnly && right.LiteralOnly, RebOperation('^', left.Expression, right.Expression, right.Number)));
                 }
                 else throw new InvalidDataException("Unsupported formula operator.");
             }
             var output = stack.Pop();
             if (output.Dimension != expectedDimension)
                 throw new InvalidDataException($"Formel-Dimension passt nicht zur Ergebniseinheit '{resultUnit}'. NUMBER/INTEGER hat keine verifizierbare physikalische Einheit.");
-            return resultBase == null ? output.Number : UnitCatalog.Convert(output.Number, resultBase, resultUnit);
+            return resultBase == null ? output : output with { Number = UnitCatalog.Convert(output.Number, resultBase, resultUnit),
+                Expression = ConvertExpression(output.Expression, resultBase, resultUnit) };
         }
         catch (DivideByZeroException ex) { throw new InvalidDataException("Formula division by zero.", ex); }
         catch (OverflowException ex) { throw new InvalidDataException("Formula decimal overflow.", ex); }
@@ -232,17 +291,19 @@ public static class QuantityFormula
     private sealed class Parser
     {
         private readonly string text;
+        private readonly bool exactLiterals;
         private readonly List<Instruction> instructions = new();
         private readonly HashSet<string> nameSet = new(StringComparer.Ordinal);
         internal List<string> Names { get; } = new();
         private int position;
         private int depth;
 
-        internal Parser(string text)
+        internal Parser(string text, bool exactLiterals = false)
         {
             if (text == null || text.Length > 2048)
                 throw new InvalidDataException("Formula must be non-null and at most 2048 characters.");
             this.text = text;
+            this.exactLiterals = exactLiterals;
         }
 
         internal List<Instruction> Parse()
@@ -362,6 +423,13 @@ public static class QuantityFormula
             if (position == start || !decimal.TryParse(literal,
                     NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var number))
                 throw Error("Expected decimal literal.");
+            if (exactLiterals)
+            {
+                var fraction = separator < 0 ? "" : literal[(separator + 1)..].TrimEnd('0');
+                var exact = (whole.Length == 0 ? "0" : whole) + (fraction.Length == 0 ? "" : "." + fraction);
+                if (exact != number.ToString("0.############################", CultureInfo.InvariantCulture))
+                    throw Error("REB91 literal precision exceeds the exact decimal range; refusing rounding or a fallback constant.");
+            }
             Emit(new Instruction('#', number));
         }
 

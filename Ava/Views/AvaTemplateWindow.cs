@@ -390,21 +390,15 @@ public sealed class AvaTemplateWindow : Window
     {
         var selected = SelectedMapping;
         if (selected?.Rule is not { } rule) { EditorUi.Error(this, new InvalidDataException("Zuerst eine Zuordnung oder ihre Leistungsposition auswählen.")); return; }
-        if (edit)
-        {
-            if (selected.Position == null) return;
-            var positionDialog = new PositionEditorWindow(editor.Document, selected.Position) { Owner = this };
-            if (positionDialog.ShowDialog() == true && positionDialog.Result is { } edited) EditorUi.Guard(this, () => {
-                var copy = TemplateJson.Copy(rule); int index = copy.Positions.FindIndex(p => p.Id == edited.Id);
-                if (index >= 0) copy.Positions[index] = edited;
-                editor.UpsertMapping(copy); Refresh();
-            });
-            return;
-        }
-        var picker = new LvPositionPickerWindow(editor.Document) { Owner = this };
-        if (picker.ShowDialog() != true) return;
-        var copyRule = AddSelectedPositions(rule, picker.SelectedPositionIds, editor.Document.LvCatalog.Entries.Select(entry => entry.Id));
-        if (copyRule.Positions.Count != rule.Positions.Count) { editor.UpsertMapping(copyRule); Refresh(); }
+        if (edit && selected.Position == null) return;
+        var positionDialog = new PositionEditorWindow(editor.Document, edit ? selected.Position : null) { Owner = this };
+        if (positionDialog.ShowDialog() == true && positionDialog.Result is { } result) EditorUi.Guard(this, () => {
+            var copy = TemplateJson.Copy(rule);
+            int index = copy.Positions.FindIndex(position => position.Id == result.Id);
+            if (index >= 0) copy.Positions[index] = result;
+            else if (!copy.Positions.Any(position => position.LvItemId == result.LvItemId)) copy.Positions.Add(result);
+            editor.UpsertMapping(copy); Refresh();
+        });
     }
     internal static MappingRule AddSelectedPositions(MappingRule rule, IEnumerable<string> selectedIds, IEnumerable<string> validIds)
     {
@@ -732,6 +726,15 @@ public sealed class AvaTemplateWindow : Window
                         IsExpanded = expansion.GetValueOrDefault(node.Key, true)
                     };
                     EditorUi.SelectTreeItemOnClick(item);
+                    if (!isBgk && node.Key.StartsWith("item:", StringComparison.Ordinal))
+                        item.MouseDoubleClick += (_, args) =>
+                        {
+                            if (args.Handled) return;
+                            var entry = editor.Document.LvCatalog.Entries.FirstOrDefault(candidate => candidate.Id == node.SourceId);
+                            if (entry == null) return;
+                            new LvPositionDetailsWindow(editor.Document.LvCatalog, entry) { Owner = this }.Show();
+                            args.Handled = true;
+                        };
                     item.Expanded += (_, _) => { if (!(isBgk ? refreshingBgkCatalogTree : refreshingLvCatalogTree)) expansion[node.Key] = true; };
                     item.Collapsed += (_, _) => { if (!(isBgk ? refreshingBgkCatalogTree : refreshingLvCatalogTree)) expansion[node.Key] = false; };
                     foreach (var child in node.Children) item.Items.Add(Create(child));

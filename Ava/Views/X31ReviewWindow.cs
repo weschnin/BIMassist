@@ -27,7 +27,7 @@ internal sealed class X31ReviewWindow : Window
         ArgumentNullException.ThrowIfNull(document);
         this.postSelectionRequest = postSelectionRequest ?? throw new ArgumentNullException(nameof(postSelectionRequest));
         Title = "Prüfung der Mengenermittlung";
-        Width = 1120;
+        Width = 1500;
         Height = 680;
         MinWidth = 760;
         MinHeight = 420;
@@ -55,7 +55,9 @@ internal sealed class X31ReviewWindow : Window
         });
         header.Children.Add(new TextBlock
         {
-            Text = "ElementIDs werden im aktuell aktiven Revit-Dokument aufgelöst.",
+            Text = "ElementIDs werden im aktuell aktiven Revit-Dokument aufgelöst."
+                + (document.TemplateSource.Length == 0 ? "" : "\nLV-Angaben ergänzt aus: " + document.TemplateSource),
+            TextWrapping = TextWrapping.Wrap,
             Foreground = WpfBrushes.DimGray,
             Margin = new Thickness(0, 0, 0, 6)
         });
@@ -111,15 +113,19 @@ internal sealed class X31ReviewWindow : Window
             AlternationCount = 2,
             Margin = new Thickness(0, 0, 0, 8)
         };
-        ReviewGrid.Columns.Add(TextColumn("Position", nameof(X31ReviewRow.Position), 120));
+        ReviewGrid.Columns.Add(TextColumn("OZ", nameof(X31ReviewRow.Position), 125));
+        ReviewGrid.Columns.Add(TextColumn("Kurztext", nameof(X31ReviewRow.ShortText), 260));
         ReviewGrid.Columns.Add(new DataGridTextColumn
         {
             Header = "Zeilentyp",
             Binding = new Binding(nameof(X31ReviewRow.Kind)) { Converter = new RowKindConverter() },
             Width = new DataGridLength(115)
         });
-        ReviewGrid.Columns.Add(TextColumn("Stichwort / Bemerkung", nameof(X31ReviewRow.Comment), 2));
-        ReviewGrid.Columns.Add(TextColumn("Formel / Menge", nameof(X31ReviewRow.Formula), 130));
+        ReviewGrid.Columns.Add(TextColumn("Bemerkung", nameof(X31ReviewRow.Comment), 280));
+        ReviewGrid.Columns.Add(TextColumn("Formelnummer", nameof(X31ReviewRow.FormulaNumber), 100));
+        ReviewGrid.Columns.Add(TextColumn("Berechnungsansatz", nameof(X31ReviewRow.Formula), 280));
+        ReviewGrid.Columns.Add(TextColumn("Ergebnis", nameof(X31ReviewRow.Result), 110));
+        ReviewGrid.Columns.Add(TextColumn("Einheit", nameof(X31ReviewRow.Unit), 75));
         var groupStyle = new Style(typeof(DataGridRow));
         groupStyle.Triggers.Add(new DataTrigger
         {
@@ -188,6 +194,7 @@ internal sealed class X31ReviewWindow : Window
                 X31ReviewRowKind.Quantity => "Menge",
                 X31ReviewRowKind.GroupComment => "Bereich / Gewerk",
                 X31ReviewRowKind.ElementIdComment => "ElementID-Kommentar",
+                X31ReviewRowKind.Continuation => "Fortsetzung",
                 _ => "Kommentar"
             } : string.Empty;
 

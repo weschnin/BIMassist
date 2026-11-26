@@ -115,6 +115,24 @@ internal static class ExecuteTests
             Check(File.ReadAllText(f.TemplatePath) == TemplateJson.Serialize(template), "Template mutated");
             Equal(1, Directory.GetFiles(f.Directory, "*.x31").Length);
         });
+        Test("actual Execute carries the stored formula and substituted numeric arithmetic through to saved X31", f =>
+        {
+            var template = f.Template();
+            template.Mappings[0].Positions[0].Quantity = new() { Kind = QuantityKind.Formula, Source = null,
+                Expression = "Length*2", Unit = "m", Variables = [new() { Name = "Length", Unit = "cm",
+                    Source = new() { Kind = ParameterKind.LocalFamily, Scope = ParameterScope.Instance, Name = "Length", Spec = "LENGTH" } }] };
+            f.Instance.Parameters.Add(new("Length", SpecTypeId.Length, 10d, StorageType.Double));
+            f.Remember(template); f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
+            var output = XDocument.Load(f.Output);
+            var extension = output.Descendants(XName.Get("Explanation", "BVBS")).Single();
+            Equal("Length*2", (string?)extension.Attribute("Formula")); Equal("m", (string?)extension.Attribute("Unit"));
+            Equal(6.096m, decimal.Parse(extension.Attribute("Result")!.Value, System.Globalization.CultureInfo.InvariantCulture));
+            var numeric = string.Concat(output.Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value)
+                .Where(r => r.Substring(29, 2) == "91").Select(r => r.Substring(31, 38).TrimEnd()));
+            Contains("*", numeric); Contains("304,8", numeric);
+            Equal(6.096m, X31Writer.EvaluateReb91(numeric));
+            Equal(File.ReadAllText(f.TemplatePath), TemplateJson.Serialize(template));
+        });
         Test("differing named parameter values prompt once and the opt-in remembered choice is reused", f =>
         {
             var template = f.Template();
@@ -159,7 +177,7 @@ internal static class ExecuteTests
             Equal(Result.Succeeded, f.Execute());
             var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
             Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).TrimEnd() == "Baubereich: Erdgeschoss Nord"), "Selected group label missing");
-            Check(rows.Any(r => r[12] != '*' && r.Substring(13, 9).Trim() == f.Instance.Id.Value.ToString()), "Full ElementID missing from quantity remark");
+            Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).Trim() == "(ID: " + f.Instance.Id.Value + ")"), "Full labelled ElementID missing from preceding comment");
             Contains("Baubereich nach Parameter „Teilbereich (Instanz)“", TaskDialog.Confirmations.Single().MainContent);
         });
         Test("family and type grouping uses exact Revit family/type names", f =>
@@ -169,15 +187,17 @@ internal static class ExecuteTests
             Equal(Result.Succeeded, f.Execute());
             var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
             Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).TrimEnd() == "Familie und Typ: Rohrfamilie — DN 20"), "Exact family/type grouping comment missing");
-            Check(rows.Any(r => r[12] != '*' && r.Substring(13, 9).Trim() == f.Instance.Id.Value.ToString()), "Full ElementID missing from quantity remark");
+            Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).Trim() == "(ID: " + f.Instance.Id.Value + ")"), "Full labelled ElementID missing from preceding comment");
             Contains("Gruppierung: nach Familienname und Typ", TaskDialog.Confirmations.Single().MainContent);
         });
-        Test("X31 refuses a Revit ID too long for its nine-character quantity remark", f =>
+        Test("X31 preserves a full 64-bit Revit ID in a preceding compact labelled comment", f =>
         {
             f.Instance.Id = new(4294967296); f.Remember(f.Template()); f.ApproveAndSave();
-            Equal(Result.Failed, f.Execute()); f.NoOutput();
-            Contains("maximal 9 Zeichen", f.Message);
-            Equal(0, TaskDialog.Notices.Count);
+            Equal(Result.Succeeded, f.Execute());
+            var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
+            Check(rows.All(r => r.Length == 80), "Long ID crossed REB fields");
+            Equal("(ID: 4294967296)", rows[0].Substring(13, 56).Trim());
+            Equal("91", rows[1].Substring(29, 2));
         });
         Test("cancelled grouping choice creates no confirmation or X31 file", f =>
         {
@@ -433,8 +453,8 @@ internal static class ExecuteTests
             f.Remember(f.Template()); f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
             var item = XDocument.Load(f.Output).Descendants(Ns + "QDetermItem")
                 .Single(candidate => candidate.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(29, 2) == "91");
-            Equal("429496", item.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(13, 9).Trim());
-            Equal("Revit-ElementID: 429496", (string?)item.Element(XName.Get("Explanation", "BVBS")));
+            Equal("", item.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(13, 9).Trim());
+            Equal("(ID: 429496)", (string?)item.Element(XName.Get("Explanation", "BVBS")));
         });
         Console.WriteLine($"Execute integration with Revit/UI/Win32 doubles and real core/writer: {passed} passed; {failed} failed (not a Revit-host test)");
         if (failed != 0) Environment.ExitCode = 1;

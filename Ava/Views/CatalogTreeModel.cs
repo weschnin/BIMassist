@@ -97,7 +97,7 @@ internal static class CatalogTreeModel
         {
             var id = (string?)item.Attribute("ID") ?? "";
             if (!entries.TryGetValue(id, out var entry)) continue;
-            parent.Children.Add(new("item:" + id, entry.Ordinal + " " + entry.Text, id));
+            parent.Children.Add(new("item:" + id, LvPositionDisplay.Heading(entry), id));
         }
     }
 
@@ -128,7 +128,7 @@ internal static class CatalogTreeModel
                 }
                 parent = section;
             }
-            parent.Children.Add(new("item:" + entry.Id, entry.Ordinal + " " + entry.Text, entry.Id));
+            parent.Children.Add(new("item:" + entry.Id, LvPositionDisplay.Heading(entry), entry.Id));
         }
         return roots;
     }

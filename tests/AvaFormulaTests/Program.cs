@@ -8,6 +8,24 @@ internal static class Program
 
     private static int Main()
     {
+        Test("REB91 exporter retains substituted arithmetic and converts roots to standard power syntax", () =>
+        {
+
+            var inputs = new Dictionary<string, (decimal Value, string Unit, string Spec)>
+            { ["Volumen"] = (1.30086m, "m3", "VOLUME"), ["L"] = (14.454m, "m", "LENGTH") };
+            var approach = QuantityFormula.CreateReb91Approach("sqrt(Volumen/L)*L", inputs, "m2", "m2");
+            if (!approach.Contains("**(0,5)") || !approach.Contains("1,30086") || !approach.Contains("14,454")
+                || approach.Contains("sqrt") || approach.Contains("Volumen")) throw new Exception("Not a substituted REB91 expression: " + approach);
+            Equal(4.3362m, QuantityFormula.Evaluate(approach.Replace("**", "^"), Empty));
+            Reject(() => QuantityFormula.CreateReb91Approach("sqrt(Volumen/L)*3", inputs, "m2", "m2"));
+            Reject(() => QuantityFormula.CreateReb91Approach("0.123456789012345678901234567891", new Dictionary<string, (decimal, string, string)>(), "m2", "m2"));
+            var mixed = new Dictionary<string, (decimal Value, string Unit, string Spec)> { ["A"] = (100m, "cm", "LENGTH"), ["B"] = (2m, "m", "LENGTH") };
+            approach = QuantityFormula.CreateReb91Approach("A+B+0.5", mixed, "cm", "m");
+            Equal(3.005m, QuantityFormula.Evaluate(approach.Replace("**", "^"), Empty));
+            approach = QuantityFormula.CreateReb91Approach("2^1+2*-3", new Dictionary<string, (decimal, string, string)>(), "1", "1");
+            Equal(-4m, QuantityFormula.Evaluate(approach.Replace("**", "^"), Empty));
+            if (approach.Contains("**") || approach.Contains("*-")) throw new Exception("REB91 forbidden exponent one or adjacent signs survived rendering");
+        });
         Test("decimal literals accept either separator", () =>
         {
             Equal(12.5m, QuantityFormula.Evaluate("12.5", Empty));

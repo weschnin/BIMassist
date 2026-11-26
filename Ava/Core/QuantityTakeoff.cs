@@ -10,7 +10,8 @@ public sealed record TakeoffValue(decimal? Number = null, string? Text = null, b
 public sealed record TakeoffElement(string Id, Func<ParameterSource, string, TakeoffValue> Read, string SourceIdentity = "");
 public sealed record TakeoffIssue(string ElementId, string Message);
 public sealed record TakeoffSkip(string ElementId, string Message);
-public sealed record TakeoffLine(string LvItemId, decimal Value, string Unit, string Explanation, string ElementId = "");
+public sealed record TakeoffLine(string LvItemId, decimal Value, string Unit, string Explanation, string ElementId = "",
+    string? FormulaExpression = null, string? CalculationApproach = null);
 /// <summary>Rows are ordered by input element, mapping, then position; Errors must block the entire export.
 /// Unmapped counts marked elements without an exact BGK/type rule, not elements whose conditions are false.</summary>
 public sealed record TakeoffResult(IReadOnlyList<TakeoffLine> Rows, IReadOnlyList<TakeoffIssue> Errors,
@@ -184,6 +185,7 @@ public static class QuantityTakeoff
         var quantity = position.Quantity ?? throw new InvalidDataException("Quantity is not defined.");
         decimal value;
         string expression;
+        string? formulaExpression = null, calculationApproach = null;
         if (quantity.Kind == QuantityKind.Formula)
         {
             var values = new Dictionary<string, (decimal Value, string Unit, string Spec)>(StringComparer.Ordinal);
@@ -198,6 +200,8 @@ public static class QuantityTakeoff
                 ? QuantityFormula.Evaluate(quantity.Expression, new Dictionary<string, decimal>(StringComparer.Ordinal))
                 : QuantityFormula.EvaluateWithUnits(quantity.Expression, values, quantity.Unit);
             expression = quantity.Expression + " (" + string.Join("; ", inputs) + ")";
+            formulaExpression = quantity.Expression;
+            calculationApproach = QuantityFormula.CreateReb91Approach(quantity.Expression, values, quantity.Unit, lvUnit);
         }
         else
         {
@@ -220,7 +224,8 @@ public static class QuantityTakeoff
             $"Element {elementId}; " + (string.IsNullOrEmpty(sourceIdentity) ? "" : sourceIdentity + "; ") +
             $"Rule {ruleId}; Position {position.Id}; {expression} = {sourceValue.ToString(CultureInfo.InvariantCulture)} {quantity.Unit}"
             + (quantity.AllowCustomUnit ? " (Rohwert ohne Umrechnung; Einheit manuell deklariert)" : "")
-            + (quantity.Unit == lvUnit ? "" : $" → {value.ToString(CultureInfo.InvariantCulture)} {lvUnit} (LV-Einheit)"), elementId);
+            + (quantity.Unit == lvUnit ? "" : $" → {value.ToString(CultureInfo.InvariantCulture)} {lvUnit} (LV-Einheit)"), elementId,
+            formulaExpression, calculationApproach);
     }
 
     private readonly record struct ReadKey(ParameterKind Kind, ParameterScope Scope, Guid SharedGuid,

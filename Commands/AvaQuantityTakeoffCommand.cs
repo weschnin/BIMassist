@@ -112,7 +112,8 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             };
             var exportRows = result.Rows.Select(r => new QuantityTakeoffRow(r.LvItemId, r.Value, r.Unit, r.Explanation,
                 r.ElementId, grouping.Mode == QuantityGroupingMode.Position ? null : labels[r.ElementId],
-                grouping.Mode == QuantityGroupingMode.Position ? null : grouping.GroupKind)).ToList();
+                grouping.Mode == QuantityGroupingMode.Position ? null : grouping.GroupKind,
+                r.FormulaExpression, r.CalculationApproach)).ToList();
             var warnings = TemplateValidator.Validate(template).Where(d => d.Severity == DiagnosticSeverity.Warning).ToList();
             var expandedDetails = warnings.Select(w => w.ToString()).ToList();
             if (result.Skipped.Count > 0)
