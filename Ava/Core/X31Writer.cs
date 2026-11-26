@@ -68,7 +68,6 @@ public static class X31Writer
         var rowsByItem = rows.GroupBy(row => row.LvItemId, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
         long requiredLines = 0;
-        var countedGroups = new HashSet<(string? GroupKind, string? GroupLabel)>();
         foreach (var entry in entries)
         {
             if (!rowsByItem.TryGetValue(entry.Id, out var itemRows)) continue;
@@ -76,11 +75,11 @@ public static class X31Writer
                          .OrderBy(group => group.Key.GroupKind ?? "", StringComparer.Ordinal)
                          .ThenBy(group => group.Key.GroupLabel ?? "", StringComparer.Ordinal))
             {
-                if (group.Key.GroupLabel != null && countedGroups.Add(group.Key))
+                if (group.Key.GroupLabel != null)
                 {
                     requiredLines += CommentLineCount(group.Key.GroupKind + ": " + group.Key.GroupLabel);
                 }
-                requiredLines += group.Sum(row => PrepareQuantity(row).Count);
+                requiredLines += group.Sum(row => PrepareQuantity(row, standardDa31: true).Count);
                 if (requiredLines > 9999 * 260) throw new InvalidDataException("REB-Zeilenadressraum einschließlich Gruppierungskommentaren überschritten.");
             }
         }
@@ -89,7 +88,6 @@ public static class X31Writer
             boq.Element(SourceNs + "BoQInfo")!.Elements(SourceNs + "BoQBkdn").Select(Rename),
             Skeleton(boq.Element(SourceNs + "BoQBody")!));
         var items = outputBoq.Descendants(Ns + "Item").ToDictionary(x => x.Attribute("ID")!.Value, StringComparer.Ordinal);
-        var emittedGroups = new HashSet<(string? GroupKind, string? GroupLabel)>();
         int index = 0;
         foreach (var entry in entries)
         {
@@ -101,16 +99,23 @@ public static class X31Writer
                          .OrderBy(group => group.Key.GroupKind ?? "", StringComparer.Ordinal)
                          .ThenBy(group => group.Key.GroupLabel ?? "", StringComparer.Ordinal))
             {
-                if (group.Key.GroupLabel != null && emittedGroups.Add(group.Key))
-                    AddComment(determination, group.Key.GroupKind + ": " + group.Key.GroupLabel, ref index);
+                if (group.Key.GroupLabel != null)
+                {
+                    string? groupComment = group.Key.GroupKind + ": " + group.Key.GroupLabel;
+                    foreach (var row in group)
+                    {
+                        AddQuantityRows(determination, row, ref index, groupComment, standardDa31: true);
+                        groupComment = null;
+                    }
+                    continue;
+                }
                 foreach (var row in group)
                 {
-                    AddQuantityRows(determination, row, ref index);
+                    AddQuantityRows(determination, row, ref index, standardDa31: true);
                 }
             }
         }
         var document = new XDocument(new XDeclaration("1.0", "utf-8", null), new XElement(Ns + "GAEB",
-            new XAttribute(XNamespace.Xmlns + "BVBS", BvbsNs.NamespaceName),
             new XElement(Ns + "GAEBInfo", new XElement(Ns + "Version", "3.3"), new XElement(Ns + "VersDate", "2023-01"),
                 new XElement(Ns + "Date", DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))),
             new XElement(Ns + "QtyDeterm", new XElement(Ns + "QtyDetermInfo", new XElement(Ns + "MethodDescription", "REB23003-2009")),
@@ -276,8 +281,9 @@ public static class X31Writer
     }
     private static void AddComment(XElement determination, string text, ref int index)
     {
-        var clipped = text.Length > 56 ? text[..56] : text;
-        AddLine(determination, new string(' ', 12) + "*" + clipped.PadRight(56), index++);
+        if (text.Length > 56)
+            throw new InvalidDataException("REB-Kommentar überschreitet 56 Zeichen und kann nicht verlustfrei exportiert werden.");
+        AddLine(determination, new string(' ', 12) + "*" + text.PadRight(56), index++);
     }
     private static int CommentLineCount(string _) => 1;
 
@@ -286,7 +292,7 @@ public static class X31Writer
         public int Count => Comments.Length + Segments.Length;
     }
 
-    private static PreparedQuantity PrepareQuantity(QuantityTakeoffRow row)
+    private static PreparedQuantity PrepareQuantity(QuantityTakeoffRow row, bool standardDa31)
     {
         if ((row.FormulaExpression == null) != (row.CalculationApproach == null))
             throw new InvalidDataException("Symbolische Formel und numerischer REB91-Ansatz müssen gemeinsam vorliegen; kein Ersatz durch eine Ergebniskonstante.");
@@ -298,35 +304,89 @@ public static class X31Writer
             CheckText(approach, 4096, "Numerischer REB91-Ansatz", false);
             if (approach!.Contains('=')) throw new InvalidDataException("CalculationApproach enthält kein abschließendes Gleichheitszeichen; der Exporter ergänzt es einmalig.");
             _ = QuantityFormula.GetParameterNames(formula);
-            var evaluated = EvaluateReb91(approach!);
+            if (standardDa31) approach = RoundReb91Literals(approach!);
+            var evaluated = EvaluateReb91(approach);
             if (decimal.Round(evaluated, 3, MidpointRounding.AwayFromZero) != decimal.Round(row.Value, 3, MidpointRounding.AwayFromZero))
                 throw new InvalidDataException("Numerischer REB91-Ansatz stimmt nicht mit der Menge in unveränderter LV-Einheit überein.");
         }
         else approach = decimal.Round(row.Value, 3, MidpointRounding.AwayFromZero).ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ',');
         var segments = SplitApproach(approach! + "=");
         var id = string.IsNullOrEmpty(row.ElementId) ? "" : "(ID: " + row.ElementId + ")";
-        var remark = formula ?? "";
+        var remark = "";
         var comments = new List<string>();
-        if (remark.Length > 9)
+        if (!standardDa31)
         {
-            var text = "Formel: " + remark;
-            for (int i = 0; i < text.Length;)
+            remark = formula ?? "";
+            if (remark.Length > 9)
             {
-                int length = Math.Min(56, text.Length - i);
-                // Move a boundary space to the next row: REB consumers trim padding.
-                while (length > 0 && text[i + length - 1] == ' ') length--;
-                if (length == 0) throw new InvalidDataException("Gespeicherte Formel enthält einen nicht verlustfrei darstellbaren Leerzeichenblock.");
-                comments.Add(text.Substring(i, length)); i += length;
+                var text = "Formel: " + remark;
+                for (int i = 0; i < text.Length;)
+                {
+                    int length = Math.Min(56, text.Length - i);
+                    while (length > 0 && text[i + length - 1] == ' ') length--;
+                    if (length == 0) throw new InvalidDataException("Gespeicherte Formel enthält einen nicht verlustfrei darstellbaren Leerzeichenblock.");
+                    comments.Add(text.Substring(i, length)); i += length;
+                }
+                remark = "";
             }
-            remark = "";
+            if (id.Length > 0)
+            {
+                var combined = formula == null ? id : formula + " " + id;
+                if (combined.Length <= 9) remark = combined;
+                else comments.Insert(0, id);
+            }
         }
-        if (id.Length > 0)
+        else if (formula == null)
         {
-            var combined = formula == null ? id : formula + " " + id;
+            if (id.Length <= 9) remark = id;
+            else if (id.Length > 0) comments.Add(id);
+        }
+        else
+        {
+            var combined = id.Length == 0 ? formula : id + " " + formula;
             if (combined.Length <= 9) remark = combined;
-            else comments.Insert(0, id);
+            else
+            {
+                if (id.Length > 0) comments.Add(id);
+                if (formula.Length <= 9) remark = formula;
+                else
+                {
+                    int remarkStart = formula.Length - 9;
+                    while (remarkStart < formula.Length && char.IsWhiteSpace(formula[remarkStart])) remarkStart++;
+                    if (remarkStart > 0 && remarkStart < formula.Length
+                        && char.IsWhiteSpace(formula[remarkStart - 1])) remarkStart++;
+                    comments.AddRange(WrapFormulaComment(formula[..remarkStart]));
+                    remark = formula[remarkStart..];
+                }
+            }
         }
         return new(remark, comments.ToArray(), segments, approach! + "=");
+    }
+
+    private static string RoundReb91Literals(string approach)
+    {
+        if (approach.Length > 4096) throw new InvalidDataException("REB91-Ansatz überschreitet 4096 Zeichen.");
+        return System.Text.RegularExpressions.Regex.Replace(approach, @"\d+(?:[.,]\d+)?", match =>
+        {
+            if (!decimal.TryParse(match.Value.Replace(',', '.'), NumberStyles.AllowDecimalPoint,
+                    CultureInfo.InvariantCulture, out var value))
+                throw new InvalidDataException("REB91-Zahl liegt außerhalb des unterstützten Dezimalbereichs.");
+            return decimal.Round(value, 3, MidpointRounding.AwayFromZero)
+                .ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ',');
+        });
+    }
+
+    private static IEnumerable<string> WrapFormulaComment(string formula)
+    {
+        for (int index = 0; index < formula.Length;)
+        {
+            int length = Math.Min(56, formula.Length - index);
+            // REB consumers trim padding, so never end a comment payload with formula whitespace.
+            while (length > 0 && char.IsWhiteSpace(formula[index + length - 1])) length--;
+            if (length == 0) throw new InvalidDataException("Gespeicherte Formel enthält einen nicht verlustfrei darstellbaren Leerzeichenblock.");
+            yield return formula.Substring(index, length);
+            index += length;
+        }
     }
 
     /// <summary>Evaluates the numeric REB91 subset emitted here, never addresses or vendor functions.</summary>
@@ -368,10 +428,12 @@ public static class X31Writer
         return lines.ToArray();
     }
 
-    internal static void AddQuantityRows(XElement determination, QuantityTakeoffRow row, ref int index)
+    internal static void AddQuantityRows(XElement determination, QuantityTakeoffRow row, ref int index,
+        string? groupComment = null, bool standardDa31 = false)
     {
         var ns = determination.Name.Namespace;
-        var prepared = PrepareQuantity(row);
+        var prepared = PrepareQuantity(row, standardDa31);
+        if (groupComment != null) AddComment(determination, groupComment, ref index);
         foreach (var comment in prepared.Comments)
             determination.Add(new XElement(ns + "QDetermItem", new XElement(ns + "QTakeoff", new XAttribute("Row",
                 new string(' ', 12) + "*" + comment.PadRight(56) + FormatAddress(index++) + new string(' ', 5)))));
@@ -380,7 +442,7 @@ public static class X31Writer
             var line = new string(' ', 13) + (i == 0 ? prepared.Remark : "").PadRight(9) + new string(' ', 7)
                 + "91" + prepared.Segments[i].PadRight(38) + FormatAddress(index++) + new string(' ', 5);
             var item = new XElement(ns + "QDetermItem", new XElement(ns + "QTakeoff", new XAttribute("Row", line)));
-            if (i == 0 && (!string.IsNullOrEmpty(row.ElementId) || row.FormulaExpression != null))
+            if (!standardDa31 && i == 0 && (!string.IsNullOrEmpty(row.ElementId) || row.FormulaExpression != null))
             {
                 var text = string.IsNullOrEmpty(row.ElementId) ? "" : "(ID: " + row.ElementId + ")";
                 if (row.FormulaExpression != null) text += (text.Length == 0 ? "" : " ") + row.FormulaExpression;
@@ -422,22 +484,10 @@ public static class X31Writer
     }
     private static void ValidateXml(XDocument document)
     {
-        foreach (var explanation in document.Descendants(BvbsNs + "Explanation"))
-        {
-            if (explanation.Parent?.Name != Ns + "QDetermItem"
-                || explanation.Parent.Elements(Ns + "QTakeoff").Count() != 1
-                || explanation.Value.Length > 2300)
-                throw new InvalidDataException("Ungültige BVBS-Ergänzung: Revit-Element-ID muss an genau einer Berechnungszeile stehen.");
-            if (explanation.Attributes().Any(attribute => attribute.Name.LocalName is not ("GroupKind" or "GroupLabel" or "Formula" or "Approach" or "Result" or "Unit"))
-                || (explanation.Attribute("GroupKind") == null) != (explanation.Attribute("GroupLabel") == null))
-                throw new InvalidDataException("Ungültige BVBS-Ergänzung: Gruppenzuordnung muss vollständig und eindeutig sein.");
-        }
-        // CaliforniaX's supplied DA31 export uses this vendor extension in addition to
-        // the base GAEB schema. Validate the GAEB core unchanged and the extension above.
-        var gaebCore = new XDocument(document);
-        gaebCore.Descendants(BvbsNs + "Explanation").Remove();
+        if (document.Descendants(BvbsNs + "Explanation").Any())
+            throw new InvalidDataException("GAEB DA31 darf keine BVBS:Explanation-Erweiterung enthalten.");
         var errors = new List<string>();
-        System.Xml.Schema.Extensions.Validate(gaebCore, Schemas.Value, (_, e) => errors.Add(e.Message));
+        System.Xml.Schema.Extensions.Validate(document, Schemas.Value, (_, e) => errors.Add(e.Message));
         if (errors.Count != 0) throw new InvalidDataException("Ungültiges GAEB DA31/3.3 XML: " + string.Join("; ", errors));
     }
 

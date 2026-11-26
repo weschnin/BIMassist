@@ -17,33 +17,24 @@ The ZIP contains `REB-VB 23.003.pdf`.
 - Power/root operator: `**`. `sqrt(x)` is emitted as `(x**(0,5))`; `^` and `sqrt` are not exported.
 - REB forbids exponent one. The renderer emits its equivalent basis instead, retaining the original symbolic formula separately.
 - Signed operands are parenthesized so two arithmetic operators never immediately follow each other.
-- Numbers retain exact decimal precision; literals that cannot be represented exactly as a .NET decimal are rejected for export, not rounded into another expression.
+- Before DA31 serialization, every numeric literal is rounded commercially to at most three decimal places. The emitted arithmetic is evaluated again and compared with the quantity rounded to three places in the unchanged LV unit; inconsistent approaches fail closed.
 - Raw rows remain 80 characters: remark columns 14–22 (9), method columns 30–31 (`91`), approach columns 32–69 (38), address 70–75.
 - A logical approach can use at most 20 calculation rows. Every continuation repeats `91`; the final row alone ends with `=`. A number or `**` token is never split. Oversized/unrepresentable expressions fail closed, never become precomputed fallback constants.
 
 `X31Writer.EvaluateReb91` accepts the **numeric subset emitted here** (optionally with final `=`). It does not implement address references or REB trigonometric functions; it is not a general third-party REB interpreter. Formula-parser limits also apply (256 nodes, nesting depth 32, expression length 2048); additional conversion parentheses may reach those bounds before the original symbolic expression does. Rejection is intentional rather than emitting an unchecked calculation.
 
-## Remarks and BVBS metadata
+## Remarks and identity comments
 
-Use `(ID: xxx)`, not `Revit-ElementID`. A short symbolic formula plus ID is kept in one nine-character remark when possible. Otherwise the complete ID is placed in a preceding `*` comment; the symbolic formula occupies the calculation remark when it fits. Longer symbolic formulas are preserved as full wrapped `Formel: ...` comment text and BVBS metadata, not clipped to nine characters. Comment wrapping keeps boundary spaces on the next row so consumers that trim REB padding do not merge parameter-name words.
+Use `(ID: xxx)`, not `Revit-ElementID`. When the ID and formula fit together in the nine-character remark, both are written there. Otherwise the complete ID is placed in a preceding `*` comment. A formula that does not fit is split between preceding plain `*` comment rows (maximum 56 content characters each) and the calculation remark; no `Formel:` label is added. The writer preserves formula text across field boundaries and does not truncate IDs or expressions. Group comments precede the ID/formula rows for each LV item so group context is unambiguous in standard DA31 rows.
 
-The first calculation row carries one `BVBS:Explanation`:
-
-- Text: `(ID: xxx) <stored symbolic formula>` (or just labelled ID for direct quantities).
-- `Formula`: exact symbolic expression for formula quantities.
-- `Approach`: full numeric expression, **including** final `=`.
-- `Result`: invariant, **unrounded** decimal in LV unit.
-- `Unit`: unchanged LV unit.
-- `GroupKind` / `GroupLabel`: retained when present.
-
-The official GAEB XML core is validated separately after removing this vendor extension; extension fields are checked independently. The extension is explanatory, not a replacement for genuine REB91 arithmetic in the core rows.
+The X31 writer emits only GAEB DA31 namespace elements and fixed-field REB rows; it does not add BVBS vendor-extension elements or attributes. Group headings are repeated where needed per LV item, while the review reader consolidates equal headings and their ElementIDs. A group heading that would exceed the 56-character REB comment field is rejected rather than truncated. The review displays evaluated results rounded to at most three decimal places.
 
 Example: volume `1.30086 m3`, cut length `14.454 m`, stored formula `sqrt(Volumen/Schnittlänge)*Schnittlänge`, existing LV unit `m2`:
 
 ```
-Formula: sqrt(Volumen/Schnittlänge)*Schnittlänge
-REB91:   (((1,30086/14,454)**(0,5))*14,454)=
-Result:  4.3362 m2
+sqrt(Volumen/Schnittlänge)*Schnittlänge
+REB91:   (((1,301/14,454)**(0,5))*14,454)=
+Ergebnis: 4,336 m2
 ```
 
 ## X82 precision boundary
@@ -52,4 +43,4 @@ X82 still publishes the unchanged existing cumulative, three-decimal `QtyDeterm/
 
 ## Verification scope
 
-Tests exercise real takeoff/formula/writers, saved-byte readback, official DA31/DA82 schema validation of core XML, 20-line continuations, long IDs/formulas, unit conversion, and the command using Revit/UI doubles. These are not live-Revit or CaliforniaX importer acceptance results.
+Tests exercise real takeoff/formula/writers, saved-byte readback, direct official DA31/DA82 schema validation, 20-line continuations, long IDs/formulas, three-decimal calculation/result handling, unit conversion, and the command using Revit/UI doubles. These are not live-Revit or third-party importer acceptance results.

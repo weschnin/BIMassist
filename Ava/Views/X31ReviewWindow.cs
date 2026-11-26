@@ -119,7 +119,7 @@ internal sealed class X31ReviewWindow : Window
         {
             Header = "Zeilentyp",
             Binding = new Binding(nameof(X31ReviewRow.Kind)) { Converter = new RowKindConverter() },
-            Width = new DataGridLength(115)
+            Width = DataGridLength.Auto
         });
         ReviewGrid.Columns.Add(TextColumn("Bemerkung", nameof(X31ReviewRow.Comment), 280));
         ReviewGrid.Columns.Add(TextColumn("Formelnummer", nameof(X31ReviewRow.FormulaNumber), 100));
@@ -182,7 +182,7 @@ internal sealed class X31ReviewWindow : Window
     {
         Header = header,
         Binding = new Binding(path),
-        Width = width == 2 ? new DataGridLength(2, DataGridLengthUnitType.Star) : new DataGridLength(width)
+        Width = DataGridLength.Auto
     };
 
 

@@ -122,6 +122,8 @@ internal static class Program
             Check(window.ReviewGrid.Columns.Select(column => column.Header?.ToString()).SequenceEqual(
                 ["OZ", "Kurztext", "Zeilentyp", "Bemerkung", "Formelnummer", "Berechnungsansatz", "Ergebnis", "Einheit"]),
                 "Review must show every requested quantity field in separate columns.");
+            Check(window.ReviewGrid.Columns.All(column => column.Width.IsAuto),
+                "Every review column must size to its optimal content width.");
             Check(window.SelectButton.Content?.ToString() == "Selektieren" && window.IsolateButton.Content?.ToString() == "Isolieren",
                 "Existing included-row buttons changed.");
             Check(missingIsolation == null, "Window posted an action before a click.");

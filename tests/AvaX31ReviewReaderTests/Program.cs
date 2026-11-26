@@ -158,17 +158,14 @@ static class Program
             if (review.Rows.Single().ElementId != "19100416")
                 throw new Exception("The compact labelled ElementId was lost.");
         });
-        Test("formula remarks display the symbolic formula without the provenance ID", () =>
+        Test("unlabelled formula comments and the calculation remark reconstruct the formula without the provenance ID", () =>
         {
             var review = RowsWith(_ => 4.3362m, null,
-                Calculation("(((1,30086/14,454)**(0,5))*14,454)=", "", Explanation(
-                    "(ID: 19100416) sqrt(Volumen/Schnittlänge)*Schnittlänge",
-                    ("Formula", "sqrt(Volumen/Schnittlänge)*Schnittlänge"),
-                    ("Approach", "(((1,30086/14,454)**(0,5))*14,454)="),
-                    ("Result", "4.3362"), ("Unit", "m2"))));
+                Comment("(ID: 19100416)"), Comment("sqrt(Volumen/Schnittlänge)*"),
+                Calculation("(((1,301/14,454)**(0,5))*14,454)=", "L"));
             var row = review.Rows.Single();
-            if (row.Comment != "sqrt(Volumen/Schnittlänge)*Schnittlänge" || row.Result != "4,3362"
-                || row.LogicalApproach != "(((1,30086/14,454)**(0,5))*14,454)=")
+            if (row.Comment != "sqrt(Volumen/Schnittlänge)*L" || row.Result != "4,336"
+                || row.LogicalApproach != "(((1,301/14,454)**(0,5))*14,454)=")
                 throw new Exception("The formula remark included identity text or the approach/result was not evaluated.");
         });
         Test("metadata from another BoQ never supplies a plausible short text or unit", () =>

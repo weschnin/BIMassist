@@ -124,13 +124,11 @@ internal static class ExecuteTests
             f.Instance.Parameters.Add(new("Length", SpecTypeId.Length, 10d, StorageType.Double));
             f.Remember(template); f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
             var output = XDocument.Load(f.Output);
-            var extension = output.Descendants(XName.Get("Explanation", "BVBS")).Single();
-            Equal("Length*2", (string?)extension.Attribute("Formula")); Equal("m", (string?)extension.Attribute("Unit"));
-            Equal(6.096m, decimal.Parse(extension.Attribute("Result")!.Value, System.Globalization.CultureInfo.InvariantCulture));
             var numeric = string.Concat(output.Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value)
                 .Where(r => r.Substring(29, 2) == "91").Select(r => r.Substring(31, 38).TrimEnd()));
             Contains("*", numeric); Contains("304,8", numeric);
-            Equal(6.096m, X31Writer.EvaluateReb91(numeric));
+            Equal(6.096m, decimal.Round(X31Writer.EvaluateReb91(numeric), 3, MidpointRounding.AwayFromZero));
+            Check(!output.Descendants().Any(element => element.Name.NamespaceName == "BVBS"), "X31 takeoff must remain in the standard GAEB namespace.");
             Equal(File.ReadAllText(f.TemplatePath), TemplateJson.Serialize(template));
         });
         Test("differing named parameter values prompt once and the opt-in remembered choice is reused", f =>
@@ -454,7 +452,9 @@ internal static class ExecuteTests
             var item = XDocument.Load(f.Output).Descendants(Ns + "QDetermItem")
                 .Single(candidate => candidate.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(29, 2) == "91");
             Equal("", item.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(13, 9).Trim());
-            Equal("(ID: 429496)", (string?)item.Element(XName.Get("Explanation", "BVBS")));
+            var comments = item.Parent!.Elements(Ns + "QDetermItem").Select(candidate => candidate.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value)
+                .Where(row => row[12] == '*').ToArray();
+            Equal("(ID: 429496)", comments.Single().Substring(13, 56).TrimEnd());
         });
         Console.WriteLine($"Execute integration with Revit/UI/Win32 doubles and real core/writer: {passed} passed; {failed} failed (not a Revit-host test)");
         if (failed != 0) Environment.ExitCode = 1;

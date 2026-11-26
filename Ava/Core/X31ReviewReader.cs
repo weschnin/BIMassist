@@ -115,6 +115,7 @@ public static class X31ReviewReader
         var groupMembership = new Dictionary<GroupKey, MutableGroup>();
         var itemBoqIds = new Dictionary<string, string>(StringComparer.Ordinal);
         var warnings = new List<string>();
+        var physicalRowsRead = 0;
         foreach (var item in root.Descendants(Ns + "BoQ").Descendants(Ns + "Item"))
         {
             string? currentGroupKind = null;
@@ -126,11 +127,13 @@ public static class X31ReviewReader
                 throw new InvalidDataException("Doppelte LV-Positionsidentität in X31: " + itemId);
             var position = GetPosition(item);
             var takeoffs = item.Element(Ns + "QtyDeterm")?.Elements(Ns + "QDetermItem").ToArray() ?? [];
+            var formulaComments = FindFormulaComments(takeoffs);
             for (var takeoffIndex = 0; takeoffIndex < takeoffs.Length; takeoffIndex++)
             {
                 var takeoff = takeoffs[takeoffIndex];
-                if (rawRows.Count >= MaxRows)
+                if (physicalRowsRead >= MaxRows)
                     throw new InvalidDataException("Die X31-Datei enthält mehr als 200.000 Zeilen; sie wird nicht geöffnet.");
+                physicalRowsRead++;
                 var rowText = (string?)takeoff.Element(Ns + "QTakeoff")?.Attribute("Row");
                 if (rowText is null || rowText.Length < 31)
                 {
@@ -149,19 +152,21 @@ public static class X31ReviewReader
                     var separator = comment.IndexOf(':');
                     var kind = separator > 0 ? comment[..separator].Trim() : string.Empty;
                     var label = separator >= 0 ? comment[(separator + 1)..].Trim() : string.Empty;
-                    var symbolicComment = comment.StartsWith("Formel:", StringComparison.Ordinal) || formulaCommentContinues;
+                    var symbolicComment = comment.StartsWith("Formel:", StringComparison.Ordinal) || formulaCommentContinues
+                        || formulaComments.FormulaRows.Contains(takeoffIndex);
                     var parsedId = symbolicComment ? null : ParseElementId(comment, warnings, rawRows.Count + 1);
                     if (!symbolicComment && StartsIdLabel(comment) && parsedId == null)
                         throw new InvalidDataException($"Zeile {rawRows.Count + 1}: ungültige beschriftete Revit-ElementID in Kommentar.");
                     // Only a standalone labelled comment is a provenance carrier.
                     if (parsedId != null && !IsStandaloneId(comment)) parsedId = null;
                     if (parsedId != null) pendingElementId = parsedId;
-                    else if (!symbolicComment) pendingElementId = null;
+                    else if (!symbolicComment && !(separator > 0 && GroupKinds.Contains(kind))) pendingElementId = null;
                     formulaCommentContinues = symbolicComment && commentField.Length >= 55;
                     if (parsedId is not null)
                     {
-                        rawRows.Add(new MutableRow(rawRows.Count + 1, position, itemId, X31ReviewRowKind.ElementIdComment,
-                            comment, string.Empty, parsedId, currentGroupKind, currentGroupLabel));
+                        if (!formulaComments.AttachedIdRows.Contains(takeoffIndex))
+                            rawRows.Add(new MutableRow(rawRows.Count + 1, position, itemId, X31ReviewRowKind.ElementIdComment,
+                                comment, string.Empty, parsedId, currentGroupKind, currentGroupLabel));
                         if (currentGroupKind is not null && currentGroupLabel is not null)
                             GetGroup(groupMembership, currentGroupKind, currentGroupLabel).ElementIds.Add(parsedId);
                     }
@@ -170,11 +175,13 @@ public static class X31ReviewReader
                         currentGroupKind = kind;
                         currentGroupLabel = label;
                         var key = new GroupKey(kind, label);
+                        var firstOccurrence = !groupMembership.ContainsKey(key);
                         GetGroup(groupMembership, kind, label);
-                        rawRows.Add(new MutableRow(rawRows.Count + 1, position, itemId, X31ReviewRowKind.GroupComment,
-                            comment, string.Empty, null, kind, label, key));
+                        if (firstOccurrence)
+                            rawRows.Add(new MutableRow(rawRows.Count + 1, position, itemId, X31ReviewRowKind.GroupComment,
+                                comment, string.Empty, null, kind, label, key));
                     }
-                    else
+                    else if (!formulaComments.FormulaRows.Contains(takeoffIndex))
                     {
                         rawRows.Add(new MutableRow(rawRows.Count + 1, position, itemId, X31ReviewRowKind.Comment,
                             comment, string.Empty, null, currentGroupKind, currentGroupLabel));
@@ -203,22 +210,24 @@ public static class X31ReviewReader
                 var rowGroupKind = (string?)groupExtension?.Attribute("GroupKind") ?? currentGroupKind;
                 var rowGroupLabel = (string?)groupExtension?.Attribute("GroupLabel") ?? currentGroupLabel;
                 var symbolicFormula = (string?)groupExtension?.Attribute("Formula");
+                if (symbolicFormula == null) formulaComments.Formulas.TryGetValue(takeoffIndex, out symbolicFormula);
                 var segments = new List<string> { rowText.Substring(31, Math.Min(38, rowText.Length - 31)).Trim() };
                 while (method == "91" && !segments[^1].EndsWith('=') && takeoffIndex + 1 < takeoffs.Length)
                 {
                     var next = (string?)takeoffs[takeoffIndex + 1].Element(Ns + "QTakeoff")?.Attribute("Row");
                     if (next is null || next.Length < 31 || next[12] == '*' || next.Substring(29, 2) != "91") break;
-                    if (rawRows.Count + segments.Count >= MaxRows)
+                    if (physicalRowsRead >= MaxRows)
                         throw new InvalidDataException("Die X31-Datei enthält mehr als 200.000 Zeilen; sie wird nicht geöffnet.");
                     segments.Add(next.Substring(31, Math.Min(38, next.Length - 31)).Trim());
                     takeoffIndex++;
+                    physicalRowsRead++;
                 }
                 var logicalApproach = string.Concat(segments);
                 for (var segment = 0; segment < segments.Count; segment++)
                     rawRows.Add(new MutableRow(rawRows.Count + 1, position, itemId,
                         segment == 0 ? X31ReviewRowKind.Quantity : X31ReviewRowKind.Continuation,
                         segment == 0 ? (!string.IsNullOrWhiteSpace(symbolicFormula) ? symbolicFormula
-                            : string.IsNullOrWhiteSpace(explanation) ? remarkText : explanation.Trim()) : "",
+                            : string.IsNullOrWhiteSpace(explanation) ? remarkText : StripIdentityLabel(explanation.Trim())) : "",
                         segments[segment], elementId, rowGroupKind, rowGroupLabel)
                     { LogicalApproach = logicalApproach, FormulaNumber = method });
                 if (rowGroupKind is not null && rowGroupLabel is not null)
@@ -251,7 +260,9 @@ public static class X31ReviewReader
                 {
                     warnings.Add($"Zeile {row.Number}: REB-Berechnung nicht unterstützt oder ungültig; Ergebnis bleibt leer. {ex.Message}");
                 }
-                result = result with { Result = value?.ToString(CultureInfo.GetCultureInfo("de-DE")) ?? "" };
+                result = result with { Result = value is { } evaluatedValue
+                    ? decimal.Round(evaluatedValue, 3, MidpointRounding.AwayFromZero).ToString("0.###", CultureInfo.GetCultureInfo("de-DE"))
+                    : "" };
             }
             if (positions != null && positions.TryGetValue(row.LvItemId, out var position))
             {
@@ -289,6 +300,109 @@ public static class X31ReviewReader
             return null;
         }
         return id;
+    }
+
+    private sealed record FormulaCommentMap(HashSet<int> FormulaRows, HashSet<int> AttachedIdRows,
+        Dictionary<int, string> Formulas);
+
+    private static FormulaCommentMap FindFormulaComments(XElement[] takeoffs)
+    {
+        var formulaRows = new HashSet<int>();
+        var attachedIdRows = new HashSet<int>();
+        var formulas = new Dictionary<int, string>();
+        for (var calculationIndex = 0; calculationIndex < takeoffs.Length; calculationIndex++)
+        {
+            var rowText = (string?)takeoffs[calculationIndex].Element(Ns + "QTakeoff")?.Attribute("Row");
+            if (rowText is null || rowText.Length < 69 || rowText[12] == '*' || rowText.Substring(29, 2).Trim() != "91") continue;
+            var remark = rowText.Substring(13, 9).TrimEnd();
+            var formulaTail = StripIdentityLabel(remark);
+            if (IsSymbolicFormula(formulaTail)) formulas[calculationIndex] = formulaTail;
+
+            var preceding = new List<(int Index, string Text)>();
+            int? idIndex = null;
+            for (var index = calculationIndex - 1; index >= 0; index--)
+            {
+                var priorText = (string?)takeoffs[index].Element(Ns + "QTakeoff")?.Attribute("Row");
+                if (priorText is null || priorText.Length < 31 || priorText[12] != '*') break;
+                var comment = priorText.Substring(13, Math.Min(56, priorText.Length - 13)).TrimEnd();
+                if (IsStandaloneId(comment)) { idIndex = index; break; }
+                if (StartsIdLabel(comment) || comment.StartsWith("Formel:", StringComparison.Ordinal)) break;
+                var separator = comment.IndexOf(':');
+                var kind = separator > 0 ? comment[..separator].Trim() : string.Empty;
+                if (GroupKinds.Contains(kind) || comment.Length == 0) break;
+                preceding.Add((index, comment));
+            }
+
+            if (formulaTail.Length == 0 || preceding.Count == 0) continue;
+            for (var count = 1; count <= preceding.Count; count++)
+            {
+                var chunks = preceding.Take(count).Reverse().ToArray();
+                var candidate = string.Concat(chunks.Select(chunk => chunk.Text)) + formulaTail;
+                if (candidate.Length <= 9 || !IsSymbolicFormula(candidate)) continue;
+                formulas[calculationIndex] = candidate;
+                foreach (var chunk in chunks) formulaRows.Add(chunk.Index);
+                if (idIndex is { } attached && attached == chunks[0].Index - 1) attachedIdRows.Add(attached);
+                break;
+            }
+        }
+        return new FormulaCommentMap(formulaRows, attachedIdRows, formulas);
+    }
+
+    private static bool IsSymbolicFormula(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var tokens = Regex.Matches(text, @"\[[^\]\r\n]+\]|[\p{L}_][\p{L}\p{N}_]*|\d+(?:[.,]\d+)?|\*\*|[()+\-*/^]|\s+")
+            .Select(match => match.Value).ToArray();
+        if (string.Concat(tokens) != text) return false;
+        var expectsOperand = true;
+        var depth = 0;
+        for (var index = 0; index < tokens.Length; index++)
+        {
+            var token = tokens[index];
+            if (string.IsNullOrWhiteSpace(token)) continue;
+            if (token == "sqrt" && expectsOperand)
+            {
+                var next = index + 1;
+                while (next < tokens.Length && string.IsNullOrWhiteSpace(tokens[next])) next++;
+                if (next >= tokens.Length || tokens[next] != "(") return false;
+                continue;
+            }
+            if (token == "(")
+            {
+                if (!expectsOperand) return false;
+                depth++;
+                continue;
+            }
+            if (token == ")")
+            {
+                if (expectsOperand || depth == 0) return false;
+                depth--;
+                expectsOperand = false;
+                continue;
+            }
+            if (token is "+" or "-")
+            {
+                if (!expectsOperand) expectsOperand = true;
+                continue;
+            }
+            if (token is "*" or "/" or "**" or "^")
+            {
+                if (expectsOperand) return false;
+                expectsOperand = true;
+                continue;
+            }
+            if (!expectsOperand) return false;
+            expectsOperand = false;
+        }
+        return depth == 0 && !expectsOperand;
+    }
+
+    private static string StripIdentityLabel(string text)
+    {
+        var leadingTrimmed = text.TrimStart();
+        var match = Regex.Match(leadingTrimmed, @"^(?:\(ID:\s*-?[0-9]+\)|Revit-ElementID:\s*-?[0-9]+)\s*",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success ? leadingTrimmed[match.Length..] : text.TrimEnd();
     }
 
     private static bool IsStandaloneId(string text) => Regex.IsMatch(text,
