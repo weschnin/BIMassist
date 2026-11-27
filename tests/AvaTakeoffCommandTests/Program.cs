@@ -17,16 +17,24 @@ Check(options.Contains("Nur sichtbare Elemente der aktiven Ansicht berücksichti
 Check(source.Contains("dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen")
     && source.Contains("Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein")
     && source.Contains("keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung"), "Scope results must disclose crop-boundary and pixel-visibility limitations");
-Check(source.Contains("TransactionMode.ReadOnly"), "Takeoff must be read-only");
-Check(!Regex.IsMatch(source, @"new\s+(Transaction|TransactionGroup|SubTransaction)\b"), "Takeoff must not write Revit elements");
+Check(source.Contains("TransactionMode.Manual")
+    && source.Contains("new Transaction(document, \"BIMassist AVA letzter Mengenermittlungslauf\")")
+    && source.Contains("AvaQuantityRunStorage.Save(document, run)"), "The last takeoff run must be written in one explicit project-storage transaction");
+Check(!source.Contains("parameter.Set(") && !source.Contains("ElementTransformUtils."), "Takeoff must not modify model parameters or geometry");
 Check(source.Contains("document.IsFamilyDocument") && source.Contains("ActiveUIDocument"), "Command must reject missing project/family context");
-Check(source.Contains("QuantityTakeoff.Calculate") && source.Contains("RevitQuantityReader.Elements") && source.Contains("X31Writer.Save"), "Command does not connect actual model calculation to X31 writer");
-Check(source.Contains("r.FormulaExpression") && source.Contains("r.CalculationApproach"), "Command drops stored/substituted formulas between takeoff and export");
-Check(Regex.IsMatch(source, @"result\.Errors\.Count\s*>\s*0") && source.IndexOf("result.Errors.Count", StringComparison.Ordinal) < source.IndexOf("X31Writer.Save", StringComparison.Ordinal), "Partial/error results must not be exported");
-Check(source.Contains("new FileSaveDialog(") && source.Contains("InitialFileName = \"Mengenermittlung.x31\"")
-    && source.Contains("DefaultFilterEntry = \"*.x31\"") && source.Contains("GetSelectedModelPath()")
-    && !source.Contains("ShowFileDialog(save,"), "X31 export must use Revit's native save dialog, not WPF HWND ownership");
-Check(source.Contains("LV-Einheit") && source.Contains("Nicht umrechenbare Mengen blockieren den Export"), "Quantity unit conversion and incompatible-unit blocking must precede export");
+Check(source.Contains("QuantityTakeoff.Calculate") && source.Contains("RevitQuantityReader.Elements")
+    && source.Contains("AvaQuantityRunFactory.Create") && source.Contains("AvaQuantityRunWindowHost.Show"),
+    "The command must calculate, persist, and open the unified measured-run window.");
+Check(source.Contains("AvaQuantityRunStorage.Save(document, run)") && source.Contains("AvaQuantityRunStorage.Load(document)")
+    && Regex.IsMatch(source, @"result\.Errors\.Count\s*>\s*0")
+    && source.IndexOf("result.Errors.Count", StringComparison.Ordinal) < source.IndexOf("AvaQuantityRunStorage.Save", StringComparison.Ordinal),
+    "Partial/error results must not be persisted or exported.");
+Check(!source.Contains("X31Writer.Save") && !source.Contains("X82QuantityWriter.Save")
+    && !source.Contains("MainInstruction = \"Mengenermittlung als X31 exportieren?\""),
+    "Export must start from the unified run window instead of separate immediate dialogs.");
+var validation = File.ReadAllText(Path.Combine(root, "Ava", "Core", "TemplateValidation.cs"));
+Check(validation.Contains("LV-Einheit") && validation.Contains("nicht umrechenbare Einheiten blockieren den Export"),
+    "Quantity unit conversion and incompatible-unit blocking must remain validated before persistence/export");
 Check(source.Contains("result.Unmarked") && source.Contains("result.Unmapped"), "Scope omissions must be visible, not claimed a complete audit");
 var transfer = File.ReadAllText(Path.Combine(root, "Commands", "BgkTransferFromReferenceCommand.cs"));
 Check(transfer.Contains("Application.Documents") && transfer.Contains("ReferenceEquals(document, activeDocument)"), "Reference chooser must enumerate open projects and exclude the active project");

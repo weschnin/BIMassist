@@ -13,6 +13,8 @@
     <Compile Include="../../Ava/Core/QuantityFormula.cs" Link="Core/QuantityFormula.cs" />
     <Compile Include="../../Ava/Core/UnitCatalog.cs" Link="Core/UnitCatalog.cs" />
     <Compile Include="../../Ava/Core/QuantityTakeoff.cs" Link="Core/QuantityTakeoff.cs" />
+    <Compile Include="../../Ava/Core/AvaQuantityRun.cs" Link="Core/AvaQuantityRun.cs" />
+    <Compile Include="../../Ava/Core/AvaQuantityRunExport.cs" Link="Core/AvaQuantityRunExport.cs" />
     <Compile Include="../../Ava/Core/X31Writer*.cs" LinkBase="Core" />
     <Compile Include="../../Ava/Core/X82QuantityWriter.cs" Link="Core/X82QuantityWriter.cs" />
     <Compile Include="../../Ava/Core/X31ReviewReader.cs" Link="Core/X31ReviewReader.cs" />

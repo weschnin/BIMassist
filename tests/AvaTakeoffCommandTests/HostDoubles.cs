@@ -1,11 +1,59 @@
 // Only the unavailable Revit/desktop boundary is doubled. Core, adapter, command and writer are linked production source.
 namespace Autodesk.Revit.Attributes
 {
-    public enum TransactionMode { ReadOnly }
+    public enum TransactionMode { ReadOnly, Manual }
     [AttributeUsage(AttributeTargets.Class)] public sealed class TransactionAttribute(TransactionMode mode) : Attribute
     { public TransactionMode Mode { get; } = mode; }
 }
-namespace Autodesk.Revit.DB { public sealed class ElementSet { } }
+namespace Autodesk.Revit.DB
+{
+    public sealed class ElementSet { }
+    public enum TransactionStatus { Started, Committed, RolledBack }
+    public sealed class FailureHandlingOptions
+    {
+        public bool ForcedModalHandling { get; private set; }
+        public FailureHandlingOptions SetForcedModalHandling(bool value) { ForcedModalHandling = value; return this; }
+    }
+    public sealed class Transaction(Autodesk.Revit.DB.Document document, string name) : IDisposable
+    {
+        public static int StartCount { get; private set; }
+        public static bool LastCommitForcedModal { get; private set; }
+        public static TransactionStatus NextCommitStatus { get; set; } = TransactionStatus.Committed;
+        internal static Transaction? Current { get; private set; }
+        private FailureHandlingOptions options = new();
+        private Action? rollback;
+        public string Name { get; } = name;
+        public FailureHandlingOptions GetFailureHandlingOptions() => options;
+        public void SetFailureHandlingOptions(FailureHandlingOptions value) { options = value; }
+        internal void OnRollback(Action restore) { rollback += restore; }
+        public TransactionStatus Start()
+        {
+            if (document.IsModifiable) throw new InvalidOperationException("Nested storage transaction");
+            StartCount++;
+            document.IsModifiable = true;
+            Current = this;
+            return TransactionStatus.Started;
+        }
+        public TransactionStatus Commit()
+        {
+            LastCommitForcedModal = options.ForcedModalHandling;
+            var status = NextCommitStatus;
+            if (status != TransactionStatus.Committed) rollback?.Invoke();
+            rollback = null;
+            document.IsModifiable = false;
+            Current = null;
+            return status;
+        }
+        public void Dispose()
+        {
+            rollback?.Invoke();
+            rollback = null;
+            document.IsModifiable = false;
+            Current = null;
+        }
+        public static void Reset() { StartCount = 0; LastCommitForcedModal = false; NextCommitStatus = TransactionStatus.Committed; Current = null; }
+    }
+}
 namespace Autodesk.Revit.UI
 {
     public enum Result { Succeeded, Cancelled, Failed }
@@ -104,6 +152,43 @@ namespace BIMassist.Ava.Views
         public static int Calls;
         public static void Show(string path, IntPtr ownerHandle) { LastPath = path; Calls++; }
         public static void Reset() { LastPath = null; Calls = 0; }
+    }
+}
+namespace BIMassist.Ava.Revit
+{
+    internal static class AvaQuantityRunWindowHost
+    {
+        public static BIMassist.Ava.Core.AvaQuantityRun? LastRun { get; private set; }
+        public static int ShowCount { get; private set; }
+        public static void Show(Autodesk.Revit.UI.UIApplication application, Autodesk.Revit.DB.Document document,
+            BIMassist.Ava.Core.AvaQuantityRun run)
+        {
+            _ = application;
+            _ = document;
+            LastRun = run;
+            ShowCount++;
+        }
+        public static void Reset() { LastRun = null; ShowCount = 0; }
+    }
+
+    internal static class AvaQuantityRunStorage
+    {
+        public static BIMassist.Ava.Core.AvaQuantityRun? LastRun { get; private set; }
+        public static int SaveCount { get; private set; }
+        private static Autodesk.Revit.DB.Document? savedDocument;
+        public static BIMassist.Ava.Core.AvaQuantityRun? Load(Autodesk.Revit.DB.Document document) =>
+            ReferenceEquals(savedDocument, document) ? LastRun : null;
+        public static void Save(Autodesk.Revit.DB.Document document, BIMassist.Ava.Core.AvaQuantityRun run)
+        {
+            if (!document.IsModifiable) throw new InvalidOperationException("Storage write outside a transaction");
+            var previousDocument = savedDocument;
+            var previousRun = LastRun;
+            Autodesk.Revit.DB.Transaction.Current!.OnRollback(() => { savedDocument = previousDocument; LastRun = previousRun; });
+            savedDocument = document;
+            LastRun = run;
+            SaveCount++;
+        }
+        public static void Reset() { LastRun = null; savedDocument = null; SaveCount = 0; }
     }
 }
 namespace Microsoft.Win32

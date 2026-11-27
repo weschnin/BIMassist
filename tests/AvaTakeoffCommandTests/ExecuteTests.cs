@@ -22,6 +22,97 @@ internal static class ExecuteTests
 
     public static void Run()
     {
+        Test("project run captures multiple grouping parameters before the modeless window opens", f =>
+        {
+            f.Instance.Parameters.Add(new("Teilbereich", SpecTypeId.String.Text, "Raum A", StorageType.String));
+            f.Type.Parameters.Add(new("Gewerk", SpecTypeId.String.Text, "Rohbau", StorageType.String));
+            f.Remember(f.Template());
+            Equal(Result.Succeeded, f.Execute());
+            var record = AvaQuantityRunStorage.LastRun!.Records.Single();
+            Check(record.GroupingValues.TryGetValue("Teilbereich (Instanz)", out var area) && area == "Raum A",
+                "The instance grouping snapshot was not persisted");
+            Check(record.GroupingValues.TryGetValue("Gewerk (Typ)", out var trade) && trade == "Rohbau",
+                "The independent type grouping snapshot was not persisted");
+            f.Instance.Parameters.Clear();
+            f.Type.Parameters.Clear();
+            Equal(Result.Succeeded, f.Execute());
+            Equal("Raum A", AvaQuantityRunWindowHost.LastRun!.Records.Single().GroupingValues["Teilbereich (Instanz)"]);
+        });
+        Test("last successful takeoff is saved as the only current run in the active document", f =>
+        {
+            AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.FamilyAndType));
+            f.Remember(f.Template()); f.ApproveAndSave();
+            Equal(Result.Succeeded, f.Execute());
+            var run = AvaQuantityRunStorage.LastRun ?? throw new Exception("No current run was written to project storage");
+            Equal(1, AvaQuantityRunStorage.SaveCount);
+            Equal("Testprojekt", run.ProjectTitle);
+            Equal(Path.GetFullPath(f.Document.PathName), run.ProjectPath);
+            Equal("B0000001", run.Records.Single().BimassistId);
+            Equal("429496", run.Records.Single().RevitElementId);
+            Equal("Familie und Typ", run.Records.Single().GroupingParameter);
+            Equal("Sample family — Sample type", run.Records.Single().GroupingValue);
+            Equal("Sample family", run.Records.Single().FamilyName);
+            Equal("Sample type", run.Records.Single().TypeName);
+            Equal(1, BIMassist.Ava.Revit.AvaQuantityRunWindowHost.ShowCount);
+            Check(ReferenceEquals(run, BIMassist.Ava.Revit.AvaQuantityRunWindowHost.LastRun),
+                "The run window must display the exact project-persisted snapshot");
+            Check(f.Document.IsModifiable == false, "Project storage transaction remained open");
+        });
+        Test("second Execute reopens the persisted run before an unavailable template or grouping dialog", f =>
+        {
+            f.Remember(f.Template());
+            Equal(Result.Succeeded, f.Execute());
+            var run = AvaQuantityRunStorage.LastRun!;
+            File.Delete(f.TemplatePath);
+            f.Document.Elements.Clear(); // A fresh calculation cannot reproduce the saved result.
+            AvaGroupingDialog.Choices.Enqueue(null);
+
+            Equal(Result.Succeeded, f.Execute());
+            Equal(1, AvaQuantityRunStorage.SaveCount);
+            Equal(1, AvaGroupingDialog.Calls);
+            Equal(0, CommonDialog.Shown.Count);
+            Equal(0, TaskDialog.Notices.Count);
+            Equal(2, AvaQuantityRunWindowHost.ShowCount);
+            Check(ReferenceEquals(run, AvaQuantityRunWindowHost.LastRun), "Reopening replaced the persisted snapshot");
+            Equal(1, run.Records.Count);
+        });
+        foreach (var visibleOnly in new[] { true, false })
+        Test("recalculation replaces the saved run through its callback using supplied visibleOnly=" + visibleOnly, f =>
+        {
+            f.Instance.VisibleInViews.Add(700);
+            f.Document.Elements.Add(new FamilyInstance { Id = new(430000), TypeId = f.Type.Id });
+            AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.FamilyAndType));
+            f.Remember(f.Template());
+            Equal(Result.Succeeded, f.Execute());
+            var previous = AvaQuantityRunStorage.LastRun!;
+            Equal(2, previous.Records.Count);
+            var changedTemplate = f.Template();
+            changedTemplate.Mappings[0].Positions[0].Quantity!.ConstantValue = 7;
+            f.Remember(changedTemplate);
+            AvaGroupingDialog.Choices.Enqueue(null); // Recalculation must not ask for grouping again.
+            AvaQuantityRun? presented = null;
+            var callbackCount = 0;
+
+            Equal(Result.Succeeded, f.Recalculate(visibleOnly, run =>
+            {
+                presented = run;
+                callbackCount++;
+                Check(!f.Document.IsModifiable, "Presentation ran inside the storage transaction");
+                Check(ReferenceEquals(AvaQuantityRunStorage.Load(f.Document), run), "Callback did not receive the persisted run");
+            }));
+            Equal("", f.Message);
+            Equal(1, callbackCount);
+            Check(presented != null && presented.RunId != previous.RunId, "Recalculation just reopened the old run");
+            Equal(2, AvaQuantityRunStorage.SaveCount);
+            Check(Transaction.LastCommitForcedModal, "Recalculation committed without modal failure handling");
+            Equal(visibleOnly ? 1 : 2, presented!.Records.Count);
+            Check(presented.Records.All(record => record.Result == 7m && record.Unit == "m"), "New quantities or LV units were not persisted");
+            Equal("", presented.Records[0].GroupingParameter);
+            Contains(visibleOnly ? "Revit-Ansichtssichtbarkeit" : "alle Modellelement-Instanzen", presented.ScopeDescription);
+            Equal(1, AvaGroupingDialog.Calls);
+            Equal(1, AvaQuantityRunWindowHost.ShowCount);
+            Equal(0, CommonDialog.Shown.Count);
+        });
         Test("scope options default to all model elements and identify the active view", f =>
         {
             var hidden = new FamilyInstance { Id = new(430000), TypeId = f.Type.Id };
@@ -30,10 +121,65 @@ internal static class ExecuteTests
             Equal(Result.Succeeded, f.Execute());
             Equal(1, AvaGroupingDialog.Calls);
             Equal(700L, AvaGroupingDialog.LastViewId);
-            Contains("Umfang: alle Modellelement-Instanzen im aktuellen Hauptmodell", TaskDialog.Confirmations.Single().MainContent);
-            Contains("2 Modellelemente untersucht; 2 Mengenzeilen.", TaskDialog.Confirmations.Single().MainContent);
+            var run = AvaQuantityRunStorage.LastRun!;
+            Contains("alle Modellelement-Instanzen im aktuellen Hauptmodell", run.ScopeDescription);
+            Equal(2, run.Records.Count);
         });
-        Test("visible-only scope passes the active view to collection and exports only its visible instances", f =>
+        Test("storage commit forces modal failure handling and reopening starts no transaction", f =>
+        {
+            f.Remember(f.Template());
+            Equal(Result.Succeeded, f.Execute());
+            Check(Transaction.LastCommitForcedModal, "Storage commit did not force modal handling; Pending remains possible");
+            Equal(1, Transaction.StartCount);
+            Equal(Result.Succeeded, f.Execute());
+            Equal(1, Transaction.StartCount);
+        });
+        Test("rolled-back recalculation never claims success or presents an uncommitted replacement", f =>
+        {
+            f.Remember(f.Template());
+            Equal(Result.Succeeded, f.Execute());
+            var previous = AvaQuantityRunStorage.LastRun!;
+            Transaction.NextCommitStatus = TransactionStatus.RolledBack;
+            var callbacks = 0;
+            Equal(Result.Failed, f.Recalculate(false, _ => callbacks++));
+            Contains("nicht im Revit-Projekt bestätigt", f.Message);
+            Equal(0, callbacks);
+            Equal(1, AvaQuantityRunWindowHost.ShowCount);
+            Check(ReferenceEquals(previous, AvaQuantityRunStorage.Load(f.Document)), "Rollback lost the last confirmed snapshot");
+            Check(!f.Document.IsModifiable, "Rollback left the storage transaction open");
+        });
+        Test("failed recalculation preserves the last run and its existing error details", f =>
+        {
+            f.Remember(f.Template());
+            Equal(Result.Succeeded, f.Execute());
+            var previous = AvaQuantityRunStorage.LastRun!;
+            var invalid = f.Template();
+            invalid.Mappings[0].Positions[0].Quantity = new() { Unit = "m", Source = new()
+                { Kind = ParameterKind.LocalFamily, Name = "Missing", Spec = "LENGTH", Scope = ParameterScope.Instance } };
+            f.Remember(invalid);
+            var callbacks = 0;
+            Equal(Result.Failed, f.Recalculate(false, _ => callbacks++));
+            Contains("Missing", f.Message);
+            Contains("429496", f.Message);
+            Equal(0, callbacks);
+            Equal(1, Transaction.StartCount);
+            Equal(1, AvaQuantityRunStorage.SaveCount);
+            Check(ReferenceEquals(previous, AvaQuantityRunStorage.Load(f.Document)), "Calculation error replaced the last run");
+        });
+        Test("empty recalculation cancels without discarding the saved run", f =>
+        {
+            f.Remember(f.Template());
+            Equal(Result.Succeeded, f.Execute());
+            var previous = AvaQuantityRunStorage.LastRun!;
+            var callbacks = 0;
+            Equal(Result.Cancelled, f.Recalculate(true, _ => callbacks++)); // No element is visible in this view.
+            Equal(0, callbacks);
+            Equal(1, Transaction.StartCount);
+            Equal(1, AvaQuantityRunStorage.SaveCount);
+            Check(ReferenceEquals(previous, AvaQuantityRunStorage.Load(f.Document)), "Empty recalculation discarded the last run");
+            Contains("Keine passenden Mengenzeilen", TaskDialog.Notices.Single());
+        });
+        Test("visible-only scope passes the active view to collection and persists only its visible instances", f =>
         {
             f.Instance.VisibleInViews.Add(700);
             var hidden = new FamilyInstance { Id = new(430000), TypeId = f.Type.Id };
@@ -41,36 +187,22 @@ internal static class ExecuteTests
             AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.Position, VisibleOnly: true));
             f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
-            Contains("Revit-Ansichtssichtbarkeit", TaskDialog.Confirmations.Single().MainContent);
-            Contains("dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen", TaskDialog.Confirmations.Single().MainContent);
-            Contains("Zoom-/Pan-Bildausschnitt nicht maßgeblich", TaskDialog.Confirmations.Single().MainContent);
-            Contains("Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein", TaskDialog.Confirmations.Single().MainContent);
-            Contains("keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung", TaskDialog.Confirmations.Single().MainContent);
-            Contains("1 Modellelemente untersucht; 1 Mengenzeilen.", TaskDialog.Confirmations.Single().MainContent);
-            var successNotice = TaskDialog.Notices.Single();
-            Contains("Umfang: Revit-Ansichtssichtbarkeit in „Grundriss EG“", successNotice);
-            Contains("dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen", successNotice);
-            Contains("Zoom-/Pan-Bildausschnitt nicht maßgeblich", successNotice);
-            Contains("Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein", successNotice);
-            Contains("keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung", successNotice);
-            var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
-            Equal(1, rows.Count(r => r[12] != '*'));
+            var run = AvaQuantityRunStorage.LastRun!;
+            Contains("Revit-Ansichtssichtbarkeit in „Grundriss EG“", run.ScopeDescription);
+            Contains("Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein", run.ScopeDescription);
+            Equal(1, run.Records.Count);
         });
-        Test("optional X82 is generated after successful X31 and opened in the LV viewer", f =>
+        Test("last-run snapshot embeds all source LV positions for later complete X82 export", f =>
         {
-            var x82 = Path.Combine(f.Directory, "reduced.x82");
             AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.Position, ExportLvX82: true));
-            f.Remember(f.Template()); f.ApproveAndSave(); CommonDialog.SaveChoices.Enqueue(x82);
+            f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
-            Check(File.Exists(f.Output) && File.Exists(x82), "X31 and optional X82 output were not both created");
-            using var input = File.OpenRead(x82);
-            var lv = CatalogReaders.ReadX82(input, x82);
-            Equal(1, lv.Entries.Count);
-            Equal("FirstItem", lv.Entries.Single().Id);
-            Equal(Path.GetFullPath(x82), BIMassist.Ava.Views.LvX82ViewerWindow.LastPath);
-            Equal(1, BIMassist.Ava.Views.LvX82ViewerWindow.Calls);
+            var run = AvaQuantityRunStorage.LastRun!;
+            Equal(1, TemplateJson.Deserialize(run.TemplateJson).LvCatalog.Entries.Count);
+            Equal("FirstItem", run.Records.Single().LvItemId);
+            Equal(0, CommonDialog.Shown.Count);
         });
-        Test("successful takeoff reveals per-element identification and mapping skips in expanded confirmation", f =>
+        Test("successful takeoff reveals per-element identification and mapping skips", f =>
         {
             var unmatchedType = new FamilySymbol { Id = new(701) };
             unmatchedType.BuiltIns[BuiltInParameter.ASSEMBLY_CODE] = new("BGK", SpecTypeId.String.Text, "999", StorageType.String);
@@ -82,7 +214,7 @@ internal static class ExecuteTests
             for (var id = 600; id <= 609; id++) f.Document.Elements.Add(new FamilyInstance { Id = new(id), TypeId = unmatchedType.Id });
             f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
-            var details = TaskDialog.Confirmations.Single().ExpandedContent;
+            var details = TaskDialog.Notices.Single();
             Contains("Elemente ohne Mengenzeile", details);
             Contains("Element 520: BGK '' / Typ '' unvollständig", details);
             Contains("Element 609: BGK '999' / Typ '99': keine exakte Zuordnung.", details);
@@ -95,7 +227,7 @@ internal static class ExecuteTests
             Equal(Result.Failed, f.Execute()); Contains("Ansichtsvorlage", f.Message); f.NoOutput();
             Equal(0, TaskDialog.Confirmations.Count);
         });
-        Test("actual Execute exports real model-parameter calculation to a readable X31", f =>
+        Test("actual Execute stores converted real model-parameter results in the project run", f =>
         {
             var template = f.Template();
             template.Mappings[0].Positions[0].Quantity = new() { Source = new() { Kind = ParameterKind.LocalFamily,
@@ -103,19 +235,14 @@ internal static class ExecuteTests
             f.Instance.Parameters.Add(new("Length", SpecTypeId.Length, 10d, StorageType.Double));
             f.Remember(template); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute()); Equal("", f.Message);
-            var output = XDocument.Load(f.Output);
-            var rows = output.Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToList();
-            Check(rows.Any(r => r.Contains("913,048=")), "10 internal feet must export 3.048m without rounding");
-            Check(output.Descendants(Ns + "Item").Single().Attribute("ID")!.Value == "FirstItem", "Original LV identity lost");
-            Check(TaskDialog.Notices.Any(s => s.Contains("zurückgelesen")), "No verified-save notification");
-            var picker = (FileSaveDialog)CommonDialog.Shown.Single().Dialog;
-            Check(picker.Filter.Contains("*.x31", StringComparison.Ordinal) && picker.DefaultFilterEntry == "*.x31"
-                && picker.InitialFileName == "Mengenermittlung.x31", "Native save-dialog defaults wrong");
-            Equal(TaskDialogResult.No, TaskDialog.Confirmations.Single().DefaultButton);
+            var record = AvaQuantityRunStorage.LastRun!.Records.Single();
+            Equal("FirstItem", record.LvItemId);
+            Equal("m", record.Unit);
+            Equal(3.048m, record.Result);
+            Equal(0, CommonDialog.Shown.Count);
             Check(File.ReadAllText(f.TemplatePath) == TemplateJson.Serialize(template), "Template mutated");
-            Equal(1, Directory.GetFiles(f.Directory, "*.x31").Length);
         });
-        Test("actual Execute carries the stored formula and substituted numeric arithmetic through to saved X31", f =>
+        Test("actual Execute carries the stored formula and substituted values into the project run", f =>
         {
             var template = f.Template();
             template.Mappings[0].Positions[0].Quantity = new() { Kind = QuantityKind.Formula, Source = null,
@@ -123,12 +250,10 @@ internal static class ExecuteTests
                     Source = new() { Kind = ParameterKind.LocalFamily, Scope = ParameterScope.Instance, Name = "Length", Spec = "LENGTH" } }] };
             f.Instance.Parameters.Add(new("Length", SpecTypeId.Length, 10d, StorageType.Double));
             f.Remember(template); f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
-            var output = XDocument.Load(f.Output);
-            var numeric = string.Concat(output.Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value)
-                .Where(r => r.Substring(29, 2) == "91").Select(r => r.Substring(31, 38).TrimEnd()));
-            Contains("*", numeric); Contains("304,8", numeric);
-            Equal(6.096m, decimal.Round(X31Writer.EvaluateReb91(numeric), 3, MidpointRounding.AwayFromZero));
-            Check(!output.Descendants().Any(element => element.Name.NamespaceName == "BVBS"), "X31 takeoff must remain in the standard GAEB namespace.");
+            var record = AvaQuantityRunStorage.LastRun!.Records.Single();
+            Check(record.FormulaWithParameters.StartsWith("Length*2", StringComparison.Ordinal), "Symbolic formula was not persisted.");
+            Contains("304,8", record.FormulaWithValues);
+            Equal(6.096m, record.Result);
             Equal(File.ReadAllText(f.TemplatePath), TemplateJson.Serialize(template));
         });
         Test("differing named parameter values prompt once and the opt-in remembered choice is reused", f =>
@@ -150,9 +275,10 @@ internal static class ExecuteTests
 
             BIMassist.Ava.Views.ParameterChoiceWindow.NextIdentity = null;
             BIMassist.Ava.Views.ParameterChoiceWindow.RememberNext = false;
-            f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
+            Equal(Result.Succeeded, f.Recalculate(false, _ => { }));
             Equal(1, BIMassist.Ava.Views.ParameterChoiceWindow.Shown);
-            Check(File.Exists(f.Output), "Remembered parameter choice did not allow a subsequent export");
+            Equal(2, AvaQuantityRunStorage.SaveCount);
+            Equal(1, AvaQuantityRunWindowHost.ShowCount);
         });
         Test("cancelling a differing-parameter choice cancels takeoff without producing an X31", f =>
         {
@@ -167,35 +293,30 @@ internal static class ExecuteTests
             Equal(1, BIMassist.Ava.Views.ParameterChoiceWindow.Shown);
             Equal(0, TaskDialog.Confirmations.Count); f.NoOutput();
         });
-        Test("grouping selection is read from an arbitrary chosen text parameter and rendered like the screenshot", f =>
+        Test("grouping selection is persisted with its exact parameter label and value", f =>
         {
             f.Instance.Parameters.Add(new("Teilbereich", SpecTypeId.String.Text, "Erdgeschoss Nord", StorageType.String));
             AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.BuildingArea, new("Teilbereich", ParameterScope.Instance)));
             f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
-            var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
-            Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).TrimEnd() == "Baubereich: Erdgeschoss Nord"), "Selected group label missing");
-            Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).Trim() == "(ID: " + f.Instance.Id.Value + ")"), "Full labelled ElementID missing from preceding comment");
-            Contains("Baubereich nach Parameter „Teilbereich (Instanz)“", TaskDialog.Confirmations.Single().MainContent);
+            var record = AvaQuantityRunStorage.LastRun!.Records.Single();
+            Equal("Teilbereich (Instanz)", record.GroupingParameter);
+            Equal("Erdgeschoss Nord", record.GroupingValue);
         });
         Test("family and type grouping uses exact Revit family/type names", f =>
         {
             f.Type.Family.Name = "Rohrfamilie"; f.Type.Name = "DN 20";
             AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.FamilyAndType)); f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
-            var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
-            Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).TrimEnd() == "Familie und Typ: Rohrfamilie — DN 20"), "Exact family/type grouping comment missing");
-            Check(rows.Any(r => r[12] == '*' && r.Substring(13, 56).Trim() == "(ID: " + f.Instance.Id.Value + ")"), "Full labelled ElementID missing from preceding comment");
-            Contains("Gruppierung: nach Familienname und Typ", TaskDialog.Confirmations.Single().MainContent);
+            var record = AvaQuantityRunStorage.LastRun!.Records.Single();
+            Equal("Familie und Typ", record.GroupingParameter);
+            Equal("Rohrfamilie — DN 20", record.GroupingValue);
         });
-        Test("X31 preserves a full 64-bit Revit ID in a preceding compact labelled comment", f =>
+        Test("persisted run preserves the full 64-bit Revit ElementID for later X31 export", f =>
         {
             f.Instance.Id = new(4294967296); f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
-            var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToArray();
-            Check(rows.All(r => r.Length == 80), "Long ID crossed REB fields");
-            Equal("(ID: 4294967296)", rows[0].Substring(13, 56).Trim());
-            Equal("91", rows[1].Substring(29, 2));
+            Equal("4294967296", AvaQuantityRunStorage.LastRun!.Records.Single().RevitElementId);
         });
         Test("cancelled grouping choice creates no confirmation or X31 file", f =>
         {
@@ -217,22 +338,29 @@ internal static class ExecuteTests
             Equal(Result.Cancelled, f.Execute()); f.NoOutput(); Equal(0, TaskDialog.Confirmations.Count);
             Check(CommonDialog.Shown.Single().Dialog is OpenFileDialog, "Expected template picker");
         });
-        Test("initial valid template selection is remembered then exported", f =>
+        Test("initial valid template selection is remembered and opens the unified run window", f =>
         {
             File.WriteAllText(f.TemplatePath, TemplateJson.Serialize(f.Template()));
             CommonDialog.OpenChoices.Enqueue(f.TemplatePath); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute()); Equal(f.TemplatePath, new AvaWorkspace().LastTemplatePath!);
-            Equal(2, CommonDialog.Shown.Count); Check(File.Exists(f.Output), "No output from actual writer");
+            Equal(1, CommonDialog.Shown.Count); Equal(1, AvaQuantityRunStorage.SaveCount);
+            Equal(1, AvaQuantityRunWindowHost.ShowCount);
         });
-        Test("confirmation refusal blocks the SaveFileDialog", f =>
+        Test("successful takeoff opens the run window without a separate export confirmation", f =>
         {
             f.Remember(f.Template()); TaskDialog.Answers.Enqueue(TaskDialogResult.No);
-            Equal(Result.Cancelled, f.Execute()); f.NoOutput(); Equal(0, CommonDialog.Shown.Count);
+            Equal(Result.Succeeded, f.Execute());
+            Equal(1, AvaQuantityRunStorage.SaveCount); Equal(1, AvaQuantityRunWindowHost.ShowCount);
+            Equal(0, CommonDialog.Shown.Count); Equal(0, TaskDialog.Confirmations.Count);
         });
-        Test("save cancellation creates no file", f =>
+        Test("stale export-dialog choices cannot suppress the persisted main window", f =>
         {
             f.Remember(f.Template()); TaskDialog.Answers.Enqueue(TaskDialogResult.Yes); CommonDialog.SaveChoices.Enqueue(null);
-            Equal(Result.Cancelled, f.Execute()); f.NoOutput(); Equal(1, CommonDialog.Shown.Count);
+            Equal(Result.Succeeded, f.Execute()); Equal(0, CommonDialog.Shown.Count);
+            Equal(1, AvaQuantityRunStorage.SaveCount); Check(AvaQuantityRunStorage.LastRun != null, "Export cancellation discarded the valid last run");
+            Equal(1, AvaQuantityRunWindowHost.ShowCount);
+            Check(ReferenceEquals(AvaQuantityRunStorage.LastRun, AvaQuantityRunWindowHost.LastRun),
+                "Cancelling the optional export must leave the persisted takeoff available in its main window.");
         });
         Test("failed DN condition identifies the active template, BGK, type, LV and expected dimension", f =>
         {
@@ -255,6 +383,7 @@ internal static class ExecuteTests
             f.Remember(template); f.ApproveAndSave();
             Equal(Result.Failed, f.Execute()); Contains("Keine X31-Datei", f.Message); Contains("Missing", f.Message);
             Contains("429496", f.Message); f.NoOutput(); Equal(0, CommonDialog.Shown.Count); Equal(0, TaskDialog.Confirmations.Count);
+            Equal(0, AvaQuantityRunStorage.SaveCount);
         });
         foreach (var defect in new[] { "spec", "storage" })
         Test("actual Execute blocks a valueless wrong-" + defect + " identification even with valid sibling elements", f =>
@@ -351,28 +480,24 @@ internal static class ExecuteTests
             Contains("Untersuchte Modellelemente: 2", notice); Contains("Typkennzeichnung: 1", notice); Contains("Typzuordnung: 1", notice);
         });
         foreach (var linkKind in new[] { "Revit", "CAD" })
-        Test("actual Execute excludes matching " + linkKind + " link containers from host counts and exported rows", f =>
+        Test("actual Execute excludes matching " + linkKind + " link containers from host counts and saved rows", f =>
         {
             Element link = linkKind == "Revit" ? new RevitLinkInstance() : new ImportInstance { IsLinked = true };
             link.Id = new(501); link.TypeId = f.Instance.TypeId;
             f.Document.Elements.Add(link); f.Remember(f.Template()); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
-            var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToList();
-            Equal(1, rows.Count(r => r[12] != '*'));
-            Contains("1 Modellelemente untersucht; 1 Mengenzeilen.", TaskDialog.Confirmations.Single().MainContent);
+            Equal(1, AvaQuantityRunStorage.LastRun!.Records.Count);
         });
-        Test("compatible Revit quantity and LV units are converted before confirmation and X31", f =>
+        Test("compatible Revit quantity and LV units are converted before the persisted run", f =>
         {
             var template = f.Template(); template.Mappings[0].Positions[0].Quantity = new() { Source = new()
                 { Kind = ParameterKind.ByName, Scope = ParameterScope.Instance, Name = "Länge", Spec = "LENGTH" }, Unit = "cm" };
             f.Instance.Parameters.Add(new("Länge", SpecTypeId.Length, 2d, StorageType.Double));
             f.Remember(template); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
-            var confirmation = TaskDialog.Confirmations.Single();
-            Contains("zur LV-Einheit umgerechnet", confirmation.MainContent); Contains("Parametrisierte Formeln werden dimensional geprüft", confirmation.MainContent); Contains("Mengeneinheit cm und LV-Einheit m", confirmation.ExpandedContent);
-            var rows = XDocument.Load(f.Output).Descendants(Ns + "QTakeoff").Select(e => e.Attribute("Row")!.Value).ToList();
-            Check(rows.Any(r => r.Contains("910,61=")), "Converted metric quantity was not rounded to three decimals in X31");
-            Check(!rows.Any(r => r.Contains("Info:")), "Screenshot-oriented output includes extra explanation rows");
+            var record = AvaQuantityRunStorage.LastRun!.Records.Single();
+            Equal("m", record.Unit);
+            Equal(0.6096m, record.Result);
         });
         Test("incompatible quantity and LV unit blocks before confirmation", f =>
         {
@@ -381,24 +506,27 @@ internal static class ExecuteTests
             Equal(Result.Failed, f.Execute()); f.NoOutput(); Equal(0, TaskDialog.Confirmations.Count);
             Contains("nicht umrechenbar", f.Message);
         });
-        Test("writer validation error creates no partial file or success message", f =>
+        Test("missing source LV snapshot is preserved for explicit X82 rejection, without blocking the takeoff", f =>
         {
             var template = f.Template(); template.LvCatalog = new(new("fixture", "test", ""), template.LvCatalog.Entries);
             f.Remember(template); f.ApproveAndSave();
-            Equal(Result.Failed, f.Execute()); f.NoOutput(); Equal(0, TaskDialog.Notices.Count);
+            Equal(Result.Succeeded, f.Execute());
+            var run = AvaQuantityRunStorage.LastRun!;
+            Check(string.IsNullOrEmpty(TemplateJson.Deserialize(run.TemplateJson).LvCatalog.Source.X82SnapshotBase64), "Missing X82 source was synthesized in the persisted template.");
+            var rejected = false;
+            try { AvaQuantityRunExport.SerializeX82(run); }
+            catch (InvalidDataException) { rejected = true; }
+            Check(rejected, "X82 export accepted a missing immutable source LV snapshot.");
         });
-        Test("writer IO error is reported without a partial target", f =>
+        Test("takeoff no longer opens any file writer before the unified run window", f =>
         {
             AvaGroupingDialog.Choices.Enqueue(new(QuantityGroupingMode.Position, VisibleOnly: true));
             f.Instance.VisibleInViews.Add(700);
             f.Remember(f.Template()); TaskDialog.Answers.Enqueue(TaskDialogResult.Yes);
             CommonDialog.SaveChoices.Enqueue(Path.Combine(f.Directory, "missing-directory", "takeoff.x31"));
-            Equal(Result.Failed, f.Execute()); Check(f.Message.Length > 0, "Missing IO error"); f.NoOutput(); Equal(0, TaskDialog.Notices.Count);
-            Contains("Umfang: Revit-Ansichtssichtbarkeit in „Grundriss EG“", f.Message);
-            Contains("dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen", f.Message);
-            Contains("Zoom-/Pan-Bildausschnitt nicht maßgeblich", f.Message);
-            Contains("Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein", f.Message);
-            Contains("keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung", f.Message);
+            Equal(Result.Succeeded, f.Execute());
+            Equal(1, AvaQuantityRunWindowHost.ShowCount);
+            Equal(0, CommonDialog.Shown.Count);
         });
         Test("invalid chosen JSON fails without file or remembered invalid path", f =>
         {
@@ -410,16 +538,16 @@ internal static class ExecuteTests
             f.Remember(f.Template()); File.WriteAllText(f.TemplatePath, "{broken");
             var valid = Path.Combine(f.Directory, "valid.json"); File.WriteAllText(valid, TemplateJson.Serialize(f.Template()));
             CommonDialog.OpenChoices.Enqueue(valid); f.ApproveAndSave();
-            Equal(Result.Succeeded, f.Execute()); Check(File.Exists(f.Output), "Recovery did not export");
+            Equal(Result.Succeeded, f.Execute()); Check(AvaQuantityRunStorage.LastRun != null, "Recovery did not persist the run");
             Equal(valid, new AvaWorkspace().LastTemplatePath!);
         });
-        Test("export cannot overwrite the active template or workspace settings", f =>
+        Test("stale export paths cannot overwrite the active template or workspace settings during takeoff", f =>
         {
             f.Remember(f.Template()); var templateBytes = File.ReadAllBytes(f.TemplatePath); var settingsBytes = File.ReadAllBytes(f.Settings);
             foreach (var protectedPath in new[] { f.TemplatePath, f.Settings })
             {
                 TaskDialog.Answers.Enqueue(TaskDialogResult.Yes); CommonDialog.SaveChoices.Enqueue(protectedPath);
-                Equal(Result.Failed, f.Execute()); Contains("überschreiben", f.Message); f.NoOutput();
+                Equal(Result.Succeeded, f.Execute());
                 Check(templateBytes.SequenceEqual(File.ReadAllBytes(f.TemplatePath)), "Template overwritten by X31");
                 Check(settingsBytes.SequenceEqual(File.ReadAllBytes(f.Settings)), "Workspace overwritten by X31");
             }
@@ -430,31 +558,27 @@ internal static class ExecuteTests
             Equal(Result.Cancelled, f.Execute()); f.NoOutput(); Equal("{broken", File.ReadAllText(f.TemplatePath));
             Equal(0, TaskDialog.Confirmations.Count);
         });
-        Test("template picker is Revit-owned and X31 picker uses Revit native dialog", f =>
+        Test("template picker is Revit-owned; exports are deferred to the modeless run window", f =>
         {
             File.WriteAllText(f.TemplatePath, TemplateJson.Serialize(f.Template()));
             CommonDialog.OpenChoices.Enqueue(f.TemplatePath); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute());
-            Equal(2, CommonDialog.Shown.Count);
+            Equal(1, CommonDialog.Shown.Count);
             Check(CommonDialog.Shown.Single(s => s.Dialog is OpenFileDialog).Owner == f.Data.Application.MainWindowHandle, "Template picker Revit owner missing");
-            Check(CommonDialog.Shown.Single(s => s.Dialog is FileSaveDialog).Owner == IntPtr.Zero, "Expected Revit-owned native X31 picker");
             Equal(1, System.Windows.Window.Created); Equal(System.Windows.Window.Created, System.Windows.Window.Closed);
         });
-        Test("native X31 picker does not depend on a synthetic WPF owner", f =>
+        Test("native template picker does not depend on a synthetic WPF owner", f =>
         {
-            f.Data.Application.MainWindowHandle = IntPtr.Zero; f.Remember(f.Template()); f.ApproveAndSave();
+            f.Data.Application.MainWindowHandle = IntPtr.Zero;
+            File.WriteAllText(f.TemplatePath, TemplateJson.Serialize(f.Template()));
+            CommonDialog.OpenChoices.Enqueue(f.TemplatePath); f.ApproveAndSave();
             Equal(Result.Succeeded, f.Execute()); Equal(IntPtr.Zero, CommonDialog.Shown.Single().Owner);
             Equal(0, System.Windows.Window.Created);
         });
-        Test("screenshot-oriented export attaches full Revit ID to its calculation row", f =>
+        Test("persisted calculation retains full Revit ID for later export", f =>
         {
             f.Remember(f.Template()); f.ApproveAndSave(); Equal(Result.Succeeded, f.Execute());
-            var item = XDocument.Load(f.Output).Descendants(Ns + "QDetermItem")
-                .Single(candidate => candidate.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(29, 2) == "91");
-            Equal("", item.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value.Substring(13, 9).Trim());
-            var comments = item.Parent!.Elements(Ns + "QDetermItem").Select(candidate => candidate.Element(Ns + "QTakeoff")!.Attribute("Row")!.Value)
-                .Where(row => row[12] == '*').ToArray();
-            Equal("(ID: 429496)", comments.Single().Substring(13, 56).TrimEnd());
+            Equal("429496", AvaQuantityRunStorage.LastRun!.Records.Single().RevitElementId);
         });
         Console.WriteLine($"Execute integration with Revit/UI/Win32 doubles and real core/writer: {passed} passed; {failed} failed (not a Revit-host test)");
         if (failed != 0) Environment.ExitCode = 1;
@@ -481,8 +605,10 @@ internal static class ExecuteTests
             previousChoiceSettings = Environment.GetEnvironmentVariable("BIMASSIST_AVA_PARAMETER_CHOICES");
             Environment.SetEnvironmentVariable("BIMASSIST_AVA_WORKSPACE_SETTINGS", Settings);
             Environment.SetEnvironmentVariable("BIMASSIST_AVA_PARAMETER_CHOICES", ChoiceSettings);
-            TaskDialog.Reset(); CommonDialog.Reset(); AvaGroupingDialog.Reset(); BIMassist.Ava.Views.ParameterChoiceWindow.Reset(); BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Reset(); BIMassist.Ava.Views.LvX82ViewerWindow.Reset();
+            TaskDialog.Reset(); CommonDialog.Reset(); AvaGroupingDialog.Reset(); AvaQuantityRunStorage.Reset(); BIMassist.Ava.Views.ParameterChoiceWindow.Reset(); BIMassist.Ava.Views.AvaTakeoffOptionsWindow.Reset(); BIMassist.Ava.Views.LvX82ViewerWindow.Reset();
             System.Windows.Window.Created = System.Windows.Window.Closed = 0;
+            Transaction.Reset();
+            BIMassist.Ava.Revit.AvaQuantityRunWindowHost.Reset();
             var symbol = Type;
             symbol.BuiltIns[BuiltInParameter.ASSEMBLY_CODE] = new("BGK", SpecTypeId.String.Text, "001", StorageType.String);
             symbol.BuiltIns[BuiltInParameter.ALL_MODEL_TYPE_COMMENTS] = new("Typ", SpecTypeId.String.Text, "02", StorageType.String);
@@ -501,6 +627,15 @@ internal static class ExecuteTests
         public void Remember(AvaTemplate template) { File.WriteAllText(TemplatePath, TemplateJson.Serialize(template)); new AvaWorkspace().Remember(TemplatePath); }
         public void ApproveAndSave() { TaskDialog.Answers.Enqueue(TaskDialogResult.Yes); CommonDialog.SaveChoices.Enqueue(Output); }
         public Result Execute() => new AvaQuantityTakeoffCommand().Execute(Data, ref Message, new ElementSet());
+        public Result Recalculate(bool visibleOnly, Action<AvaQuantityRun> present)
+        {
+            var method = typeof(AvaQuantityTakeoffCommand).GetMethod("Recalculate",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic,
+                [typeof(UIApplication), typeof(bool), typeof(Action<AvaQuantityRun>), typeof(string).MakeByRefType()]);
+            Check(method != null && method.IsAssembly && method.GetParameters()[3].IsOut,
+                "Missing exact internal static Recalculate callback interface");
+            return AvaQuantityTakeoffCommand.Recalculate(Data.Application, visibleOnly, present, out Message);
+        }
         public void NoOutput() { Check(!System.IO.Directory.EnumerateFiles(Directory, "*.x31", SearchOption.AllDirectories).Any(), "Unexpected output on failure/cancellation"); }
         public void Dispose()
         {

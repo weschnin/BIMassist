@@ -8,7 +8,10 @@ namespace BIMassist.Ava.Core;
 
 public sealed record QuantityTakeoffRow(string LvItemId, decimal Value, string Unit, string Explanation,
     string ElementId = "", string? GroupLabel = null, string? GroupKind = null,
-    string? FormulaExpression = null, string? CalculationApproach = null);
+    string? FormulaExpression = null, string? CalculationApproach = null)
+{
+    public string? RemarkIdentity { get; init; }
+}
 
 /// <summary>Portable DA31/3.3 (2023-01) writer. Validates substituted numeric REB91 arithmetic;
 /// no Revit API or source-file access.</summary>
@@ -55,6 +58,12 @@ public static class X31Writer
                 if (row.ElementId.StartsWith("+", StringComparison.Ordinal) ||
                     !long.TryParse(row.ElementId, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _))
                     throw new InvalidDataException("Revit-ElementID muss eine gültige 64-Bit-ElementID sein.");
+            }
+            if (row.RemarkIdentity != null)
+            {
+                if (!string.IsNullOrEmpty(row.ElementId))
+                    throw new InvalidDataException("Es darf nur eine X31-Bemerkungsidentität angegeben werden.");
+                CheckText(row.RemarkIdentity, 9, "BIMassistID", false);
             }
             if (row.GroupLabel != null)
             {
@@ -122,6 +131,25 @@ public static class X31Writer
                 new XElement(Ns + "DP", "31"), outputBoq)));
         ValidateXml(document);
         return document.Declaration + "\n" + document;
+    }
+
+    /// <summary>Writes plain measured results only; formula, grouping and review metadata stay in the project run.</summary>
+    public static string SerializeMeasured(AvaTemplate template, IReadOnlyList<AvaQuantityRecord> records, bool useRevitElementId)
+    {
+        return Serialize(template, CreateMeasuredRows(records, useRevitElementId));
+    }
+
+    public static void SaveMeasured(string path, AvaTemplate template, IReadOnlyList<AvaQuantityRecord> records,
+        bool useRevitElementId) => Save(path, template, CreateMeasuredRows(records, useRevitElementId));
+
+    private static QuantityTakeoffRow[] CreateMeasuredRows(IReadOnlyList<AvaQuantityRecord> records, bool useRevitElementId)
+    {
+        if (records == null) throw new InvalidDataException("Mengenermittlungsdatensätze fehlen.");
+        return records.Select(record => record == null
+            ? throw new InvalidDataException("Ein Mengenermittlungsdatensatz ist leer.")
+            : new QuantityTakeoffRow(record.LvItemId, record.Result, record.Unit, "",
+                ElementId: useRevitElementId ? record.RevitElementId : "")
+                { RemarkIdentity = useRevitElementId ? null : record.BimassistId }).ToArray();
     }
 
     /// <summary>Write, flush, re-read and validate a same-directory temporary before atomic publication.
@@ -311,7 +339,7 @@ public static class X31Writer
         }
         else approach = decimal.Round(row.Value, 3, MidpointRounding.AwayFromZero).ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ',');
         var segments = SplitApproach(approach! + "=");
-        var id = string.IsNullOrEmpty(row.ElementId) ? "" : "(ID: " + row.ElementId + ")";
+        var id = row.RemarkIdentity ?? (string.IsNullOrEmpty(row.ElementId) ? "" : "(ID: " + row.ElementId + ")");
         var remark = "";
         var comments = new List<string>();
         if (!standardDa31)
@@ -338,7 +366,8 @@ public static class X31Writer
         }
         else if (formula == null)
         {
-            if (id.Length <= 9) remark = id;
+            if (row.RemarkIdentity != null) remark = id;
+            else if (id.Length <= 9) remark = id;
             else if (id.Length > 0) comments.Add(id);
         }
         else

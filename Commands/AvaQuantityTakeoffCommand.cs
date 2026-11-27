@@ -10,19 +10,36 @@ using BIMassist.Ava.Views;
 
 namespace BIMassist.Commands;
 
-[Transaction(TransactionMode.ReadOnly)]
+[Transaction(TransactionMode.Manual)]
 public sealed class AvaQuantityTakeoffCommand : IExternalCommand
 {
     public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+        => ExecuteCore(commandData.Application, null, null, out message);
+
+    internal static Result Recalculate(UIApplication application, bool visibleOnly, Action<AvaQuantityRun> present, out string message)
+        => ExecuteCore(application, visibleOnly, present, out message);
+
+    // A supplied scope requests a fresh calculation; only ribbon execution reopens the saved run.
+    private static Result ExecuteCore(UIApplication application, bool? requestedVisibleOnly, Action<AvaQuantityRun>? present, out string message)
     {
+        message = "";
         string? scopeDescription = null;
-        string? createdX31Path = null;
         try
         {
-            var uiDocument = commandData.Application.ActiveUIDocument;
+            if (requestedVisibleOnly.HasValue && present == null) throw new ArgumentNullException(nameof(present));
+            var uiDocument = application.ActiveUIDocument;
             if (uiDocument == null) throw new InvalidDataException("Zuerst ein Revit-Projekt öffnen.");
             var document = uiDocument.Document;
             if (document.IsFamilyDocument) throw new InvalidDataException("Mengenermittlung steht nur in einem Projekt, nicht im Familieneditor, zur Verfügung.");
+            if (!requestedVisibleOnly.HasValue)
+            {
+                var savedRun = AvaQuantityRunStorage.Load(document);
+                if (savedRun != null)
+                {
+                    AvaQuantityRunWindowHost.Show(application, document, savedRun);
+                    return Result.Succeeded;
+                }
+            }
             var workspace = new AvaWorkspace();
             AvaTemplate? template = null;
             if (workspace.HasRememberedTemplate)
@@ -40,19 +57,16 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                     Title = "AVA-Vorlage für die Mengenermittlung wählen", Filter = "AVA-Vorlage (*.json)|*.json|Alle Dateien (*.*)|*.*",
                     DefaultExt = ".json", FilterIndex = 1, CheckFileExists = true, Multiselect = false
                 };
-                if (ShowFileDialog(choose, commandData.Application) != true) return Result.Cancelled;
+                if (ShowFileDialog(choose, application) != true) return Result.Cancelled;
                 template = TemplateJson.Load(choose.FileName); TemplateEditor.EnsureValid(template);
                 workspace.Remember(choose.FileName);
             }
             var parameterChoices = new AvaParameterChoiceStore();
             var activeView = uiDocument.ActiveView;
-            var grouping = AvaGroupingDialog.Show(commandData.Application, document, activeView);
+            var grouping = requestedVisibleOnly.HasValue
+                ? new QuantityGroupingSelection(QuantityGroupingMode.Position, VisibleOnly: requestedVisibleOnly.Value)
+                : AvaGroupingDialog.Show(application, document, activeView);
             if (grouping == null) return Result.Cancelled;
-            if (grouping.ExportLvX82 && string.IsNullOrWhiteSpace(template.LvCatalog.Source.X82SnapshotBase64))
-            {
-                TaskDialog.Show("AVA – Mengenermittlung", "Für den optionalen X82-Export fehlt der eingebettete Quell-LV-Snapshot. Importieren Sie das GAEB-LV erneut und starten Sie die Mengenermittlung danach erneut.");
-                return Result.Cancelled;
-            }
             var visibleOnly = grouping.VisibleOnly;
             scopeDescription = visibleOnly
                 ? "Revit-Ansichtssichtbarkeit in „" + activeView.Name + "“ (dauerhaft in Ansicht oder Kategorie sowie temporär ausgeblendete Elemente ausgeschlossen; Zoom-/Pan-Bildausschnitt nicht maßgeblich; Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein; keine pixelgenaue Sichtbarkeits- oder Verdeckungsprüfung)"
@@ -69,7 +83,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                     if (remembered != null) return remembered;
 
                     var dialog = new ParameterChoiceWindow(source.Name, candidates);
-                    var handle = commandData.Application.MainWindowHandle;
+                    var handle = application.MainWindowHandle;
                     if (handle != IntPtr.Zero) new System.Windows.Interop.WindowInteropHelper(dialog).Owner = handle;
                     if (dialog.ShowDialog() != true || dialog.SelectedIdentity == null)
                         throw new OperationCanceledException("Parameterauswahl abgebrochen.");
@@ -110,79 +124,46 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
                 QuantityGroupingMode.FamilyAndType => RevitQuantityReader.ReadFamilyAndTypeLabels(document, result.Rows.Select(r => r.ElementId)),
                 _ => RevitQuantityReader.ReadGroupingLabels(document, result.Rows.Select(r => r.ElementId), grouping.Parameter!)
             };
-            var exportRows = result.Rows.Select(r => new QuantityTakeoffRow(r.LvItemId, r.Value, r.Unit, r.Explanation,
-                r.ElementId, grouping.Mode == QuantityGroupingMode.Position ? null : labels[r.ElementId],
-                grouping.Mode == QuantityGroupingMode.Position ? null : grouping.GroupKind,
-                r.FormulaExpression, r.CalculationApproach)).ToList();
+            var groupingParameter = grouping.Mode switch
+            {
+                QuantityGroupingMode.Position => "",
+                QuantityGroupingMode.FamilyAndType => "Familie und Typ",
+                _ => grouping.Parameter!.DisplayLabel
+            };
+            var run = AvaQuantityRunFactory.Create(template, result, document.Title,
+                string.IsNullOrWhiteSpace(document.PathName) ? "" : Path.GetFullPath(document.PathName),
+                scopeDescription!, Guid.NewGuid(), DateTimeOffset.UtcNow, groupingParameter, labels,
+                RevitQuantityReader.ReadGroupingSnapshots(document, result.Rows.Select(row => row.ElementId)));
+            using (var storageTransaction = new Transaction(document, "BIMassist AVA letzter Mengenermittlungslauf"))
+            {
+                if (storageTransaction.Start() != TransactionStatus.Started)
+                    throw new InvalidOperationException("Die Transaktion zum Speichern des letzten Mengenermittlungslaufs konnte nicht gestartet werden.");
+                // Resolve failures before Commit returns; do not leave a modeless Pending transaction.
+                storageTransaction.SetFailureHandlingOptions(storageTransaction.GetFailureHandlingOptions().SetForcedModalHandling(true));
+                AvaQuantityRunStorage.Save(document, run);
+                if (storageTransaction.Commit() != TransactionStatus.Committed)
+                    throw new InvalidOperationException("Der letzte Mengenermittlungslauf wurde nicht im Revit-Projekt bestätigt.");
+            }
+            var persistedRun = AvaQuantityRunStorage.Load(document)
+                ?? throw new InvalidDataException("Der gerade gespeicherte Mengenermittlungslauf konnte nicht zurückgelesen werden.");
             var warnings = TemplateValidator.Validate(template).Where(d => d.Severity == DiagnosticSeverity.Warning).ToList();
-            var expandedDetails = warnings.Select(w => w.ToString()).ToList();
-            if (result.Skipped.Count > 0)
+            if (warnings.Count > 0 || result.Skipped.Count > 0)
             {
-                expandedDetails.Add("Elemente ohne Mengenzeile (Diagnosedetails, maximal 100):");
-                expandedDetails.AddRange(result.Skipped.Select(skip => skip.Message));
-            }
-            var confirm = new TaskDialog("AVA – Mengenermittlung")
-            {
-                MainInstruction = "Mengenermittlung als X31 exportieren?",
-                MainContent = "Projekt: " + document.Title + "\nVorlage: " + template.Name + "\n" + workspace.LastTemplatePath
-                    + "\nGruppierung: " + (grouping.Mode == QuantityGroupingMode.Position ? "nach Leistungspositionen" : grouping.Mode == QuantityGroupingMode.FamilyAndType ? "nach Familienname und Typ" : grouping.GroupKind + " nach Parameter „" + grouping.Parameter!.DisplayLabel + "“")
-                    + "\n\n" + result.Examined + " Modellelemente untersucht; " + result.Rows.Count + " Mengenzeilen."
-                    + (grouping.ExportLvX82 ? "\nZusätzlich wird das reduzierte GAEB-LV als X82 angeboten." : "")
-                    + "\nOhne vollständige Kennzeichnung: " + result.Unmarked + "; ohne BGK-/Typzuordnung: " + result.Unmapped + "."
-                    + "\nEinheiten: Revit-Spezifikation wird beim Lesen geprüft; physikalische Parameter werden von internen Einheiten zur Vorlageneinheit und bei Bedarf zur LV-Einheit umgerechnet. Parametrisierte Formeln werden dimensional geprüft; parameterfreie Zahlenformeln sind deklarierte Konstanten. Nicht umrechenbare Mengen blockieren den Export."
-                    + "\n\nUmfang: " + scopeDescription
-                    + "; keine verknüpften Modelle. Der textuelle Prüfumfang ist kein Kategorienfilter; dies ist keine vollständige Modellprüfung."
-                    + "\nAlle zutreffenden Regeln werden additiv ausgewertet. Verwendet wird die gespeicherte Vorlage. Keine Revit-Schreibzugriffe.",
-                ExpandedContent = string.Join("\n", expandedDetails),
-                CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No,
-                DefaultButton = TaskDialogResult.No
-            };
-            if (confirm.Show() != TaskDialogResult.Yes) return Result.Cancelled;
-            using var save = new FileSaveDialog("GAEB-Mengenermittlung (*.x31)|*.x31|Alle Dateien (*.*)|*.*")
-            {
-                Title = "AVA-Mengenermittlung speichern",
-                DefaultFilterEntry = "*.x31",
-                InitialFileName = "Mengenermittlung.x31"
-            };
-            if (save.Show() != ItemSelectionDialogResult.Confirmed) return Result.Cancelled;
-            var selectedPath = save.GetSelectedModelPath();
-            if (selectedPath == null) throw new InvalidDataException("Der Revit-Speicherdialog hat keinen Dateipfad zurückgegeben.");
-            var outputPath = Path.GetFullPath(ModelPathUtils.ConvertModelPathToUserVisiblePath(selectedPath));
-            if (string.Equals(outputPath, Path.GetFullPath(workspace.LastTemplatePath!), StringComparison.OrdinalIgnoreCase)
-                || string.Equals(outputPath, Path.GetFullPath(AvaWorkspace.DefaultSettingsPath), StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("Die X31-Ausgabe darf weder die aktive AVA-Vorlage noch die Arbeitsbereich-Einstellungen überschreiben.");
-            X31Writer.Save(outputPath, template, exportRows);
-            createdX31Path = outputPath;
-            string? x82Path = null;
-            if (grouping.ExportLvX82)
-            {
-                using var saveX82 = new FileSaveDialog("GAEB-LV (*.x82)|*.x82|Alle Dateien (*.*)|*.*")
+                var details = new System.Collections.Generic.List<string>();
+                if (warnings.Count > 0)
                 {
-                    Title = "Reduziertes GAEB-LV speichern",
-                    DefaultFilterEntry = "*.x82",
-                    InitialFileName = Path.GetFileNameWithoutExtension(outputPath) + ".x82"
-                };
-                if (saveX82.Show() == ItemSelectionDialogResult.Confirmed)
-                {
-                    var selectedX82 = saveX82.GetSelectedModelPath();
-                    if (selectedX82 == null) throw new InvalidDataException("Der Revit-Speicherdialog hat keinen X82-Dateipfad zurückgegeben.");
-                    x82Path = Path.GetFullPath(ModelPathUtils.ConvertModelPathToUserVisiblePath(selectedX82));
-                    if (string.Equals(x82Path, outputPath, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(x82Path, Path.GetFullPath(workspace.LastTemplatePath!), StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(x82Path, Path.GetFullPath(AvaWorkspace.DefaultSettingsPath), StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(Path.GetFileName(x82Path), template.LvCatalog.Source.FileName, StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidDataException("Die X82-Ausgabe darf weder die X31-Ausgabe noch die aktive AVA-Vorlage, Arbeitsbereich-Einstellungen oder das Quell-LV überschreiben.");
-                    X82QuantityWriter.Save(x82Path, template, exportRows);
-                    try { LvX82ViewerWindow.Show(x82Path, commandData.Application.MainWindowHandle); }
-                    catch (Exception viewerError)
-                    {
-                        TaskDialog.Show("AVA – LV-Viewer", "Die X82-Datei wurde erstellt, der LV-Viewer konnte sie aber nicht öffnen.\n\n" + viewerError.Message + "\n\n" + x82Path);
-                    }
+                    details.Add("Vorlagenhinweise:");
+                    details.AddRange(warnings.Select(warning => warning.ToString()));
                 }
+                if (result.Skipped.Count > 0)
+                {
+                    details.Add("Elemente ohne Mengenzeile (Diagnosedetails, maximal 100):");
+                    details.AddRange(result.Skipped.Take(100).Select(skip => skip.Message));
+                }
+                TaskDialog.Show("AVA – Mengenermittlung Hinweise", string.Join("\n", details));
             }
-            TaskDialog.Show("AVA – Mengenermittlung", "X31-Datei erstellt und zurückgelesen.\n" + result.Rows.Count + " Mengenzeilen.\n\n" + outputPath
-                + (grouping.ExportLvX82 ? x82Path == null ? "\n\nDer optionale X82-Export wurde abgebrochen; die X31-Datei bleibt erstellt." : "\n\nReduziertes X82-LV erstellt:\n" + x82Path : "")
-                + "\n\nDer Import in California ist separat zu prüfen.\n\nUmfang: " + scopeDescription);
+            if (present != null) present(persistedRun);
+            else AvaQuantityRunWindowHost.Show(application, document, persistedRun);
             return Result.Succeeded;
         }
         catch (OperationCanceledException)
@@ -191,10 +172,7 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
         }
         catch (Exception ex)
         {
-            message = (createdX31Path == null
-                ? "Die AVA-Mengenermittlung konnte nicht abgeschlossen werden."
-                : "Die X31-Datei wurde erstellt, aber ein nachgelagerter Schritt ist fehlgeschlagen: " + createdX31Path)
-                + "\n\n" + ex.Message
+            message = "Die AVA-Mengenermittlung konnte nicht abgeschlossen werden.\n\n" + ex.Message
                 + (scopeDescription == null ? "" : "\n\nUmfang: " + scopeDescription);
             return Result.Failed;
         }

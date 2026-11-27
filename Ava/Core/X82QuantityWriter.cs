@@ -7,7 +7,7 @@ using System.Xml.Linq;
 
 namespace BIMassist.Ava.Core;
 
-/// <summary>Creates a reduced DA82 quantity LV from the immutable source snapshot.</summary>
+/// <summary>Creates a complete DA82 LV from the immutable source snapshot and adds quantities only for measured positions.</summary>
 public static class X82QuantityWriter
 {
     private static readonly XNamespace Ns = "http://www.gaeb.de/GAEB_DA_XML/DA82/3.3";
@@ -43,7 +43,7 @@ public static class X82QuantityWriter
         {
             if (!totals.TryGetValue(item.Attribute("ID")!.Value, out var total))
             {
-                item.Remove();
+                item.Element(Ns + "QtyDeterm")?.Remove();
                 continue;
             }
             var rounded = decimal.Round(total, 3, MidpointRounding.AwayFromZero);
@@ -105,10 +105,6 @@ public static class X82QuantityWriter
         }
         if (totals.Keys.Any(id => !items.ContainsKey(id)))
             throw new InvalidDataException("Mindestens eine X82-Position fehlt im eingebetteten Quell-LV.");
-        PruneUnrelatedMarkup(document.Root!, totals.Keys.ToHashSet(StringComparer.Ordinal));
-        foreach (var masterItems in document.Descendants(Ns + "MastAgrItems").Reverse().ToArray())
-            if (!masterItems.Descendants(Ns + "Item").Any()) masterItems.Remove();
-        PruneEmptyContainers(document.Root!);
         using var output = new MemoryStream();
         using (var writer = XmlWriter.Create(output, new XmlWriterSettings { Encoding = new UTF8Encoding(false, true), Indent = true, NewLineHandling = NewLineHandling.Entitize }))
             document.Save(writer);
@@ -131,8 +127,9 @@ public static class X82QuantityWriter
                 stream.Flush(true);
             }
             if (!bytes.SequenceEqual(File.ReadAllBytes(temporary))) throw new IOException("Die gespeicherte X82-Datei stimmt nicht mit der geprüften Ausgabe überein.");
-            if (File.Exists(fullPath)) File.Replace(temporary, fullPath, null);
-            else File.Move(temporary, fullPath);
+            if (File.Exists(fullPath))
+                throw new IOException("Der X82-Export erstellt ausschließlich neue Dateien. Wählen Sie einen noch nicht belegten Dateinamen.");
+            File.Move(temporary, fullPath);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
@@ -215,12 +212,20 @@ public static class X82QuantityWriter
         var document = XDocument.Load(reader);
         if (document.Root?.Name != Ns + "GAEB") throw new InvalidDataException("Der X82-Export ist kein GAEB DA82/3.3-Dokument.");
         var output = document.Descendants(Ns + "Item").ToArray();
-        if (output.Length != totals.Count) throw new InvalidDataException("Die reduzierte X82-Datei enthält eine unerwartete Anzahl LV-Positionen.");
+        if (output.Length != catalog.Count || output.Select(item => (string?)item.Attribute("ID")).Distinct(StringComparer.Ordinal).Count() != catalog.Count)
+            throw new InvalidDataException("Die X82-Datei enthält nicht jede Quell-LV-Position genau einmal.");
         foreach (var item in output)
         {
             var id = RequiredAttribute(item, "ID");
-            if (!totals.TryGetValue(id, out var expected) || !catalog.ContainsKey(id)
-                || !decimal.TryParse(item.Element(Ns + "QtyDeterm")?.Element(Ns + "Qty")?.Value, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var actual)
+            if (!catalog.ContainsKey(id))
+                throw new InvalidDataException("Der X82-Export enthält eine unbekannte LV-Position.");
+            if (!totals.TryGetValue(id, out var expected))
+            {
+                if (item.Element(Ns + "QtyDeterm") != null)
+                    throw new InvalidDataException("Eine nicht ermittelte X82-Position enthält einen Mengenansatz.");
+                continue;
+            }
+            if (!decimal.TryParse(item.Element(Ns + "QtyDeterm")?.Element(Ns + "Qty")?.Value, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var actual)
                 || actual != decimal.Round(expected, 3, MidpointRounding.AwayFromZero))
                 throw new InvalidDataException("Der X82-Export enthält eine falsche Position oder Menge.");
             var lines = item.Element(Ns + "QtyDeterm")!.Elements(Ns + "QDetermItem")

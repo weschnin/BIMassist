@@ -7,11 +7,18 @@ using System.Linq;
 namespace BIMassist.Ava.Core;
 
 public sealed record TakeoffValue(decimal? Number = null, string? Text = null, bool? Boolean = null);
-public sealed record TakeoffElement(string Id, Func<ParameterSource, string, TakeoffValue> Read, string SourceIdentity = "");
+public sealed record TakeoffElement(string Id, Func<ParameterSource, string, TakeoffValue> Read, string SourceIdentity = "")
+{
+    public string ElementUniqueId { get; init; } = "";
+    public string FamilyName { get; init; } = "";
+    public string TypeName { get; init; } = "";
+}
 public sealed record TakeoffIssue(string ElementId, string Message);
 public sealed record TakeoffSkip(string ElementId, string Message);
 public sealed record TakeoffLine(string LvItemId, decimal Value, string Unit, string Explanation, string ElementId = "",
-    string? FormulaExpression = null, string? CalculationApproach = null);
+    string? FormulaExpression = null, string? CalculationApproach = null,
+    string FormulaWithParameters = "", string FormulaWithValues = "", string ElementUniqueId = "",
+    string FamilyName = "", string TypeName = "");
 /// <summary>Rows are ordered by input element, mapping, then position; Errors must block the entire export.
 /// Unmapped counts marked elements without an exact BGK/type rule, not elements whose conditions are false.</summary>
 public sealed record TakeoffResult(IReadOnlyList<TakeoffLine> Rows, IReadOnlyList<TakeoffIssue> Errors,
@@ -137,7 +144,8 @@ public static class QuantityTakeoff
                     try
                     {
                         var lv = template.LvCatalog.Entries.Single(item => item.Id == position.LvItemId);
-                        rows.Add(CalculateLine(element.Id, element.SourceIdentity, rule.Id, position, lv.Unit, Read));
+                        rows.Add(CalculateLine(element.Id, element.SourceIdentity, rule.Id, position, lv.Unit, Read,
+                            element.ElementUniqueId, element.FamilyName, element.TypeName));
                     }
                     catch (Exception ex) when (ex is InvalidDataException or OverflowException)
                     {
@@ -180,12 +188,13 @@ public static class QuantityTakeoff
     }
 
     private static TakeoffLine CalculateLine(string elementId, string sourceIdentity, Guid ruleId, MappingPosition position, string lvUnit,
-        Func<ParameterSource, string, TakeoffValue> read)
+        Func<ParameterSource, string, TakeoffValue> read, string elementUniqueId, string familyName, string typeName)
     {
         var quantity = position.Quantity ?? throw new InvalidDataException("Quantity is not defined.");
         decimal value;
         string expression;
         string? formulaExpression = null, calculationApproach = null;
+        string formulaWithParameters, formulaWithValues;
         if (quantity.Kind == QuantityKind.Formula)
         {
             var values = new Dictionary<string, (decimal Value, string Unit, string Spec)>(StringComparer.Ordinal);
@@ -202,6 +211,9 @@ public static class QuantityTakeoff
             expression = quantity.Expression + " (" + string.Join("; ", inputs) + ")";
             formulaExpression = quantity.Expression;
             calculationApproach = QuantityFormula.CreateReb91Approach(quantity.Expression, values, quantity.Unit, lvUnit);
+            formulaWithParameters = quantity.Expression + " [" + string.Join("; ", quantity.Variables.Select(variable =>
+                $"{variable.Name} ← {variable.Source} ({variable.Unit})")) + "]";
+            formulaWithValues = calculationApproach;
         }
         else
         {
@@ -212,6 +224,10 @@ public static class QuantityTakeoff
                 : Numeric(read(quantity.Source!, quantity.AllowCustomUnit ? "1" : quantity.Unit), quantity.Source!);
             expression = quantity.Kind == QuantityKind.Constant ? "constant" : quantity.Source!.ToString()
                 + (quantity.AllowCustomUnit ? "; explizit manuelle Einheit, Rohwert ohne Umrechnung" : "");
+            formulaWithParameters = quantity.Kind == QuantityKind.Constant
+                ? "Konstante " + quantity.ConstantValue!.Value.ToString(CultureInfo.InvariantCulture) + " " + quantity.Unit
+                : quantity.Source!.ToString() + " (" + quantity.Unit + ")";
+            formulaWithValues = value.ToString(CultureInfo.InvariantCulture) + " " + quantity.Unit;
         }
         var sourceValue = value;
         if (quantity.AllowCustomUnit)
@@ -220,12 +236,14 @@ public static class QuantityTakeoff
                 throw new InvalidDataException($"Manuell deklarierte Einheit '{quantity.Unit}' kann nicht in die LV-Einheit '{lvUnit}' umgerechnet werden. Die Zahl bleibt unverändert; Quell- und LV-Einheit müssen exakt übereinstimmen.");
         }
         else value = UnitCatalog.Convert(value, quantity.Unit, lvUnit);
+        if (quantity.Kind != QuantityKind.Formula && !string.Equals(quantity.Unit, lvUnit, StringComparison.Ordinal))
+            formulaWithValues += " → " + value.ToString(CultureInfo.InvariantCulture) + " " + lvUnit;
         return new(position.LvItemId, value, lvUnit,
             $"Element {elementId}; " + (string.IsNullOrEmpty(sourceIdentity) ? "" : sourceIdentity + "; ") +
             $"Rule {ruleId}; Position {position.Id}; {expression} = {sourceValue.ToString(CultureInfo.InvariantCulture)} {quantity.Unit}"
             + (quantity.AllowCustomUnit ? " (Rohwert ohne Umrechnung; Einheit manuell deklariert)" : "")
             + (quantity.Unit == lvUnit ? "" : $" → {value.ToString(CultureInfo.InvariantCulture)} {lvUnit} (LV-Einheit)"), elementId,
-            formulaExpression, calculationApproach);
+            formulaExpression, calculationApproach, formulaWithParameters, formulaWithValues, elementUniqueId, familyName, typeName);
     }
 
     private readonly record struct ReadKey(ParameterKind Kind, ParameterScope Scope, Guid SharedGuid,

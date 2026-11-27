@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
@@ -92,11 +93,17 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
         }
     }
 
-    private sealed class X31ReviewExternalEventHandler(Document sourceDocument, IReadOnlySet<long> includedIds) : IExternalEventHandler
+    internal sealed class X31ReviewExternalEventHandler(Document sourceDocument, IReadOnlySet<long> includedIds,
+        AvaQuantityRun? quantityRun = null) : IExternalEventHandler
     {
         private X31SelectionPlan? request;
         private bool isolate;
         private bool missingRequest;
+        private bool x31ExportRequest;
+        private bool x31UseRevitElementId;
+        private bool x82ExportRequest;
+        private bool recalculateRequest;
+        private bool recalculateVisibleOnly;
         private Transaction? pendingIsolationTransaction;
         private UIApplication? pendingIsolationApplication;
         private string? pendingIsolationFailure;
@@ -106,21 +113,48 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
         private bool pendingReset;
 
         public X31ReviewWindow? Window { get; set; }
+        public AvaQuantityRunWindow? RunWindow { get; set; }
 
         public string GetName() => "BIMassist X31 review selection and active-view difference";
 
         public void SetRequest(X31SelectionPlan plan, bool isolateRequest)
         {
-            if (request != null || missingRequest) throw new InvalidOperationException("Eine Auswahl/Isolation wartet bereits auf Revit.");
+            if (HasRequest) throw new InvalidOperationException("Eine Revit-Anforderung wartet bereits auf Ausführung.");
             request = plan ?? throw new ArgumentNullException(nameof(plan));
             isolate = isolateRequest;
         }
 
         public void SetMissingRequest(bool isolateRequest)
         {
-            if (request != null || missingRequest) throw new InvalidOperationException("Eine Auswahl/Isolation wartet bereits auf Revit.");
+            if (HasRequest) throw new InvalidOperationException("Eine Revit-Anforderung wartet bereits auf Ausführung.");
             missingRequest = true;
             isolate = isolateRequest;
+        }
+
+        public void SetX31Request(bool useRevitElementId)
+        {
+            if (quantityRun == null) throw new InvalidOperationException("Für den X31-Export ist kein gespeicherter Lauf verfügbar.");
+            if (HasRequest)
+                throw new InvalidOperationException("Eine Revit-Anforderung wartet bereits auf Ausführung.");
+            x31ExportRequest = true;
+            x31UseRevitElementId = useRevitElementId;
+        }
+
+        public void SetX82Request()
+        {
+            if (quantityRun == null) throw new InvalidOperationException("Für den X82-Export ist kein gespeicherter Lauf verfügbar.");
+            if (HasRequest)
+                throw new InvalidOperationException("Eine Revit-Anforderung wartet bereits auf Ausführung.");
+            x82ExportRequest = true;
+        }
+
+        private bool HasRequest => request != null || missingRequest || x31ExportRequest || x82ExportRequest || recalculateRequest;
+
+        public void SetRecalculateRequest(bool visibleOnly)
+        {
+            if (HasRequest) throw new InvalidOperationException("Eine Revit-Anforderung wartet bereits auf Ausführung.");
+            recalculateRequest = true;
+            recalculateVisibleOnly = visibleOnly;
         }
 
         public void CancelRequest()
@@ -128,6 +162,11 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
             request = null;
             missingRequest = false;
             isolate = false;
+            x31ExportRequest = false;
+            x31UseRevitElementId = false;
+            x82ExportRequest = false;
+            recalculateRequest = false;
+            recalculateVisibleOnly = false;
         }
 
         public void Execute(UIApplication app)
@@ -135,6 +174,11 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
             var plan = request;
             var isolateRequest = isolate;
             var selectMissing = missingRequest;
+            var exportX31 = x31ExportRequest;
+            var exportX82 = x82ExportRequest;
+            var useRevitElementId = x31UseRevitElementId;
+            var recalculate = recalculateRequest;
+            var visibleOnly = recalculateVisibleOnly;
             CancelRequest();
             try
             {
@@ -172,6 +216,30 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
                 if (!sourceDocument.Equals(activeDocument))
                 {
                     ReportIsolationStatus($"Die X31-Prüfung gehört zu '{sourceDocument.Title}', aktiv ist '{activeDocument.Title}'. Öffnen Sie die Prüfung für das aktive Dokument erneut.");
+                    return;
+                }
+                if (recalculate)
+                {
+                    var result = AvaQuantityTakeoffCommand.Recalculate(app, visibleOnly, updated =>
+                    {
+                        quantityRun = updated;
+                        includedIds = updated.Records.Select(record => long.Parse(record.RevitElementId, CultureInfo.InvariantCulture)).ToHashSet();
+                        RunWindow?.SetRun(updated);
+                    }, out var message);
+                    if (result != Result.Succeeded)
+                        ReportIsolationStatus(result == Result.Cancelled
+                            ? "Neuberechnung abgebrochen. Der letzte gespeicherte Lauf bleibt unverändert."
+                            : "Neuberechnung fehlgeschlagen: " + message);
+                    return;
+                }
+                if (exportX31)
+                {
+                    ExportMeasuredX31(activeDocument, useRevitElementId);
+                    return;
+                }
+                if (exportX82)
+                {
+                    ExportMeasuredX82(activeDocument);
                     return;
                 }
                 if (!selectMissing && (plan == null || plan.ElementIds.Count == 0))
@@ -345,8 +413,72 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
             }
             catch (Exception ex)
             {
-                ReportIsolationStatus("Revit konnte die Auswahl/Isolation nicht ausführen: " + ex.Message);
+                ReportIsolationStatus(recalculate
+                    ? "Neuberechnung fehlgeschlagen: " + ex.Message
+                    : exportX31
+                    ? "Der X31-Export des gespeicherten Laufs ist fehlgeschlagen: " + ex.Message
+                    : exportX82
+                        ? "Der X82-Export des gespeicherten Laufs ist fehlgeschlagen: " + ex.Message
+                        : "Revit konnte die Auswahl/Isolation nicht ausführen: " + ex.Message);
             }
+        }
+
+        private void ExportMeasuredX31(Document document, bool useRevitElementId)
+        {
+            if (quantityRun == null) throw new InvalidOperationException("Der gespeicherte Mengenermittlungslauf ist nicht verfügbar.");
+            using var save = new FileSaveDialog("GAEB-Mengenermittlung (*.x31)|*.x31|Alle Dateien (*.*)|*.*")
+            {
+                Title = "Gemessene Mengen als X31 speichern",
+                DefaultFilterEntry = "*.x31",
+                InitialFileName = "Mengenermittlung.x31"
+            };
+            if (save.Show() != ItemSelectionDialogResult.Confirmed)
+            {
+                ReportIsolationStatus("X31-Export abgebrochen. Der gespeicherte Mengenermittlungslauf bleibt unverändert.");
+                return;
+            }
+            var selectedPath = save.GetSelectedModelPath()
+                ?? throw new InvalidDataException("Der Revit-Speicherdialog hat keinen X31-Dateipfad zurückgegeben.");
+            var outputPath = Path.GetFullPath(ModelPathUtils.ConvertModelPathToUserVisiblePath(selectedPath));
+            var workspace = new AvaWorkspace();
+            var protectedPaths = new[] { document.PathName, workspace.LastTemplatePath, AvaWorkspace.DefaultSettingsPath }
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(Path.GetFullPath);
+            if (protectedPaths.Contains(outputPath, StringComparer.OrdinalIgnoreCase))
+                throw new InvalidDataException("Die X31-Ausgabe darf das Revit-Projekt, die aktive AVA-Vorlage oder die Arbeitsbereich-Einstellungen nicht überschreiben.");
+
+            AvaQuantityRunExport.SaveX31(outputPath, quantityRun, useRevitElementId);
+            ReportIsolationStatus("X31-Datei erstellt und gelesen geprüft.\n" + outputPath);
+        }
+
+        private void ExportMeasuredX82(Document document)
+        {
+            if (quantityRun == null) throw new InvalidOperationException("Der gespeicherte Mengenermittlungslauf ist nicht verfügbar.");
+            using var save = new FileSaveDialog("GAEB-LV mit Mengenermittlung (*.x82)|*.x82|Alle Dateien (*.*)|*.*")
+            {
+                Title = "Vollständiges LV mit gemessenen Mengen als X82 speichern",
+                DefaultFilterEntry = "*.x82",
+                InitialFileName = "Mengenermittlung.x82"
+            };
+            if (save.Show() != ItemSelectionDialogResult.Confirmed)
+            {
+                ReportIsolationStatus("X82-Export abgebrochen. Der gespeicherte Mengenermittlungslauf bleibt unverändert.");
+                return;
+            }
+            var selectedPath = save.GetSelectedModelPath()
+                ?? throw new InvalidDataException("Der Revit-Speicherdialog hat keinen X82-Dateipfad zurückgegeben.");
+            var outputPath = Path.GetFullPath(ModelPathUtils.ConvertModelPathToUserVisiblePath(selectedPath));
+            var workspace = new AvaWorkspace();
+            var template = TemplateJson.Deserialize(quantityRun.TemplateJson);
+            var protectedPaths = new[] { document.PathName, workspace.LastTemplatePath, AvaWorkspace.DefaultSettingsPath,
+                    template.LvCatalog.Source.FileName }
+                .Where(path => !string.IsNullOrWhiteSpace(path) && Path.IsPathRooted(path))
+                .Select(Path.GetFullPath);
+            if (protectedPaths.Contains(outputPath, StringComparer.OrdinalIgnoreCase))
+                throw new InvalidDataException("Die X82-Ausgabe darf das Revit-Projekt, die aktive AVA-Vorlage, Arbeitsbereich-Einstellungen oder ein Quell-LV nicht überschreiben.");
+
+            AvaQuantityRunExport.SaveX82(outputPath, quantityRun);
+            ReportIsolationStatus("Vollständige X82-Datei erstellt und geprüft. Nicht gemessene LV-Positionen und ihre Einheit bleiben aus dem Quell-LV erhalten.\n" + outputPath);
         }
 
         private bool ClearPreviousTemporaryIsolation(UIApplication app, UIDocument uiDocument, Document document)
@@ -536,7 +668,11 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
 
         private void ReportIsolationStatus(string message)
         {
-            try { Window?.ShowStatus(message); }
+            try
+            {
+                Window?.ShowStatus(message);
+                RunWindow?.ShowStatus(message);
+            }
             catch (Exception) { /* The modeless window may be closing during Idling. */ }
         }
     }

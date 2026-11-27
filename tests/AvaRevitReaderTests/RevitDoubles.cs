@@ -90,7 +90,7 @@ public sealed class Parameter(string name, ForgeTypeId spec, object? value, Stor
     public bool IsShared => guid != Guid.Empty;
     public Guid GUID => guid;
     public StorageType StorageType { get; } = storage;
-    public string? AsString() => (string?)value;
+    public string? AsString() => ReadError is { } error ? throw error : (string?)value;
     public int AsInteger() => (int)value!;
     public double AsDouble() => ReadError is { } error ? throw error : (double)value!;
 }
@@ -128,8 +128,10 @@ public sealed class Document
     public string PathName { get; set; } = "";
     public string Title { get; set; } = "Unsaved project";
     public bool IsFamilyDocument { get; set; }
+    public bool IsModifiable { get; set; }
     public Units ProjectUnits { get; } = new();
     public Units GetUnits() => ProjectUnits;
+    public int CollectionPasses { get; set; }
     public List<Element> Elements { get; } = [];
     public Element? GetElement(ElementId id) => Elements.SingleOrDefault(e => e.Id == id);
 }
@@ -156,7 +158,11 @@ public sealed class FilteredElementCollector : IEnumerable<Element>, IDisposable
         document.GetElement(viewId) is View { IsTemplate: false };
     public ElementId? ViewId => viewId;
     public FilteredElementCollector WhereElementIsNotElementType() => this;
-    public IEnumerator<Element> GetEnumerator() => document.Elements.Where(e => e is not ElementType && (viewId == null || e.VisibleInViews.Contains(viewId.Value))).GetEnumerator();
+    public IEnumerator<Element> GetEnumerator()
+    {
+        document.CollectionPasses++;
+        return document.Elements.Where(e => e is not ElementType && (viewId == null || e.VisibleInViews.Contains(viewId.Value))).GetEnumerator();
+    }
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     public void Dispose() { }
 }

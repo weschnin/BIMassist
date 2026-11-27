@@ -6,6 +6,70 @@ internal static class Program
     private static void Main()
     {
         BgkReferenceTransferTests.Run();
+        Test("factory captures immutable independent per-element grouping snapshots and legacy JSON", GroupingSnapshotTests.FactoryCopiesIndependentSnapshots);
+        Test("codec validates grouping dictionaries, labels and values without rejecting empty values", GroupingSnapshotTests.CodecRejectsInvalidSnapshots);
+        Test("measured run JSON round-trips every stored field and rejects unsupported schemas", () =>
+        {
+            var record = new AvaQuantityRecord(Guid.NewGuid(), "B0000001", "lv-1", "01.02.0030", "Wandfläche", "m²",
+                "123456", "Länge × Höhe [L ← Shared:Länge; H ← Instanz:Höhe]", "2.4 m × 3.1 m = 7.44 m²",
+                "Geschoss", "EG", "Wandfamilie", "Typ A", 7.44m);
+            var run = new AvaQuantityRun(1, Guid.NewGuid(), DateTimeOffset.UnixEpoch, "Projekt", "P:/Projekt.rvt", "gesamtes Modell",
+                "{template-json}", [record]);
+            var json = AvaQuantityRunCodec.Serialize(run);
+            var loaded = AvaQuantityRunCodec.Deserialize(json);
+            Equal(run.SchemaVersion, loaded.SchemaVersion);
+            Equal(run.ProjectTitle, loaded.ProjectTitle);
+            Equal(run.ProjectPath, loaded.ProjectPath);
+            Equal(run.ScopeDescription, loaded.ScopeDescription);
+            Equal(run.TemplateJson, loaded.TemplateJson);
+            Equal(record, loaded.Records.Single());
+            Reject<InvalidDataException>(() => AvaQuantityRunCodec.Serialize(run with { SchemaVersion = 77 }));
+            Reject<InvalidDataException>(() => AvaQuantityRunCodec.Deserialize(json.Replace("\"SchemaVersion\": 1", "\"SchemaVersion\": 77", StringComparison.Ordinal)));
+        });
+        Test("measured run storage chunks round-trip large payloads and BIMassist IDs are compact and unique", () =>
+        {
+            var random = new Random(20261127);
+            const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            var detail = new string(Enumerable.Range(0, 300_000).Select(_ => alphabet[random.Next(alphabet.Length)]).ToArray());
+            var run = new AvaQuantityRun(1, Guid.NewGuid(), DateTimeOffset.UnixEpoch, "Projekt", "", "gesamtes Modell", "{}",
+                [new AvaQuantityRecord(Guid.NewGuid(), "B0000001", "lv-1", "01", detail, "m²", "123", "Parameter", "1 m²", "", "", "Family", "Type", 1m)]);
+            var chunks = AvaQuantityRunCodec.ToStorageChunks(run);
+            if (chunks.Count < 2) throw new Exception("Large run was not split into storage-safe chunks");
+            if (chunks.Any(chunk => chunk.Length > AvaQuantityRunCodec.MaxStorageChunkCharacters))
+                throw new Exception("A storage chunk exceeded the configured field size");
+            var restored = AvaQuantityRunCodec.FromStorageChunks(chunks);
+            Equal(detail, restored.Records.Single().Kurztext);
+            var ids = Enumerable.Range(1, 100).Select(AvaQuantityRunCodec.CreateBimassistId).ToList();
+            Equal(100, ids.Distinct(StringComparer.Ordinal).Count());
+            if (ids.Any(id => id.Length > 9)) throw new Exception("BIMassistID does not fit the X31 remark field");
+        });
+        Test("run factory preserves LV identity, takeoff formulas and element provenance", () =>
+        {
+            var template = Template();
+            var takeoff = new TakeoffResult(
+                [new TakeoffLine("lv1", 7.44m, "St", "diagnostic", "123", "A*B", "2*3",
+                    "[A] × [B]", "2 × 3 = 7.44 St", "unique-123", "Family", "Type")],
+                [], 1, 0, 0, []);
+            var runId = Guid.Parse("ed3556c2-26fa-4b80-930d-cc9f3ff8dc88");
+            var created = DateTimeOffset.Parse("2026-11-27T12:00:00Z");
+            var run = AvaQuantityRunFactory.Create(template, takeoff, "Projekt", "P:/Projekt.rvt", "gesamtes Modell", runId, created,
+                "Geschoss (Instanz)", new Dictionary<string, string> { ["123"] = "EG" });
+            var record = run.Records.Single();
+            Equal(runId, run.RunId);
+            Equal("lv1", record.LvItemId);
+            Equal(template.LvCatalog.Entries.Single().Ordinal, record.Ordinal);
+            Equal(template.LvCatalog.Entries.Single().Text, record.Kurztext);
+            Equal("123", record.RevitElementId);
+            Equal("[A] × [B]", record.FormulaWithParameters);
+            Equal("2 × 3 = 7.44 St", record.FormulaWithValues);
+            Equal("Geschoss (Instanz)", record.GroupingParameter);
+            Equal("EG", record.GroupingValue);
+            Equal("Family", record.FamilyName);
+            Equal("Type", record.TypeName);
+            Equal(7.44m, record.Result);
+            Reject<InvalidDataException>(() => AvaQuantityRunFactory.Create(template,
+                takeoff with { Errors = [new("123", "invalid")] }, "Projekt", "", "gesamtes Modell", runId, created));
+        });
         Test("constant positions use no quantity parameter", () =>
         {
             var template = Template();
@@ -208,13 +272,21 @@ internal static class Program
                     { Name: "Volumen", Scope: ParameterScope.Instance, Spec: "VOLUME" } when unit == "m3" => new(Number: 1.30086m),
                     _ => throw new InvalidDataException("Wrong source identity, scope or unit: " + source)
                 };
-            }, "Structural Framing / Wood / 300x300")]);
+            }, "Structural Framing / Wood / 300x300")
+            { ElementUniqueId = "unique-42", FamilyName = "Timber Beam", TypeName = "300x300" }]);
             Equal(0, result.Errors.Count); Equal(2, result.Rows.Count);
+            Equal("unique-42", result.Rows[1].ElementUniqueId);
+            Equal("Timber Beam", result.Rows[1].FamilyName);
+            Equal("300x300", result.Rows[1].TypeName);
             Equal(13.0086m, result.Rows[0].Value); Equal(4.3362m, result.Rows[1].Value);
             Equal("m²", result.Rows[0].Unit); Equal("m²", result.Rows[1].Unit);
             Equal("m²", template.LvCatalog.Entries[0].Unit);
             Equal(4, reads.Count); // Shared Schnittlänge is read once from the same source/unit.
             Contains("Volumen=1.30086 m3", result.Rows[1].Explanation);
+            Contains("sqrt(Volumen/Schnittlänge)*Schnittlänge", result.Rows[1].FormulaWithParameters);
+            Contains("Volumen", result.Rows[1].FormulaWithParameters);
+            Contains("**", result.Rows[1].FormulaWithValues);
+            Contains(1.30086m.ToString(System.Globalization.CultureInfo.CurrentCulture), result.Rows[1].FormulaWithValues);
             Contains("Structural Framing", result.Rows[1].Explanation);
             var symbolic = typeof(TakeoffLine).GetProperty("FormulaExpression");
             var numeric = typeof(TakeoffLine).GetProperty("CalculationApproach");

@@ -1,6 +1,7 @@
 ﻿using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Events;
 using BIMassist.Commands;
+using BIMassist.Ava.Views;
 using BIMassist.Core;
 using BIMassist.Helpers;
 using BIMassist.ViewModels;
@@ -79,10 +80,8 @@ namespace BIMassist
                 { ToolTip = "AVA-Vorlagen verwalten", LongDescription = "Bearbeitet portable AVA-Vorlagen und Prüfvorschriften." });
                 bgkGroup.AddPushButton(new PushButtonData("AVA LV-Viewer", "LV-Viewer / X82", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaLvViewerCommand")
                 { ToolTip = "GAEB DA82/3.3-LV öffnen und Mengen, Positionstexte sowie Hierarchie prüfen" });
-                bgkGroup.AddPushButton(new PushButtonData("AVA Mengenermittlung", "Mengenermittlung / X31", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaQuantityTakeoffCommand")
-                { ToolTip = "Mengen gemäß gespeicherter AVA-Vorlage ermitteln und als X31 speichern" });
-                bgkGroup.AddPushButton(new PushButtonData("AVA Mengenermittlung kontrollieren oder prüfen", "Mengenermittlung kontrollieren oder prüfen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaX31ReviewCommand")
-                { ToolTip = "Vorhandene X31-Datei tabellarisch prüfen und zugehörige Revit-Elemente selektieren oder temporär isolieren" });
+                bgkGroup.AddPushButton(new PushButtonData("AVA Mengenermittlung", "Mengenermittlung", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaQuantityTakeoffCommand")
+                { ToolTip = "Mengenermittlung öffnen, prüfen und nach X31 oder X82 exportieren" });
 
                 //Matadata-Funktionen
 
@@ -562,7 +561,7 @@ namespace BIMassist
             {
                 foreach (Window window in windows.OfType<Window>().ToList())
                 {
-                    if (window is SnapshotManagerWindow || window is Einstellungen || window is ElementCoordinatesWindow)
+                    if (window is SnapshotManagerWindow || window is Einstellungen || window is ElementCoordinatesWindow || window is AvaQuantityRunWindow)
                     {
                         try { window.Close(); } catch { }
                     }

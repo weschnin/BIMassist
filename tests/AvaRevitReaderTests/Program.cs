@@ -5,6 +5,7 @@ using System.IO;
 
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
 static void Reject(Action action, string message) { try { action(); } catch (InvalidDataException) { return; } throw new Exception(message); }
+GroupingSnapshotTests.Run();
 var manualUnits = RevitUnitCatalog.GetManualUnitChoices();
 Check(manualUnits.Contains("m") && manualUnits.Contains("Feet"), "manual units must include common symbols and Revit's complete runtime unit catalog");
 var document = new Document(); var instance = new FamilyInstance { Id = new(100), TypeId = new(200) }; var symbol = new FamilySymbol { Id = new(200) };

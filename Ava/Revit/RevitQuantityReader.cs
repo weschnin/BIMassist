@@ -19,11 +19,20 @@ public static class RevitQuantityReader
         foreach (var element in ModelInstances(document, viewId))
         {
             var captured = element;
+            var type = document.GetElement(element.GetTypeId()) as ElementType;
+            var typeName = string.IsNullOrWhiteSpace(type?.Name) ? element.Name : type.Name;
+            var familyName = type is FamilySymbol symbol ? symbol.Family?.Name : null;
+            familyName = string.IsNullOrWhiteSpace(familyName) ? element.Category?.Name : familyName;
             yield return new TakeoffElement(element.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 (source, unit) => Read(document, captured, source, unit,
                     ReferenceEquals(source, template.BgkIdentification) || ReferenceEquals(source, template.TypeIdentification),
                     chooseAmbiguous == null ? null : candidates => chooseAmbiguous(captured, source, candidates)),
-                $"Dokument: {(string.IsNullOrWhiteSpace(document.PathName) ? document.Title : document.PathName)}; UniqueId: {element.UniqueId}");
+                $"Dokument: {(string.IsNullOrWhiteSpace(document.PathName) ? document.Title : document.PathName)}; UniqueId: {element.UniqueId}")
+            {
+                ElementUniqueId = element.UniqueId,
+                FamilyName = familyName ?? "",
+                TypeName = typeName ?? ""
+            };
         }
     }
 
@@ -39,6 +48,97 @@ public static class RevitQuantityReader
         return options.OrderBy(option => option.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(option => option.Scope).ToArray();
     }
+
+    /// <summary>Captures grouping values only for the measured host instances, without modifying the model.</summary>
+    public static IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> ReadGroupingSnapshots(
+        Document document, IEnumerable<string> elementIds)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(elementIds);
+        var requested = elementIds.ToHashSet(StringComparer.Ordinal);
+        var snapshots = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
+        if (requested.Count == 0) return snapshots;
+        // Collect once, not once per offered parameter. Parameter discovery is measured-scope only.
+        var measured = ModelInstances(document)
+            .Select(instance => (Id: instance.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), Instance: instance))
+            .Where(item => requested.Contains(item.Id))
+            .Select(item => (item.Id, item.Instance, Type: document.GetElement(item.Instance.GetTypeId())))
+            .ToArray();
+        var missing = requested.Except(measured.Select(item => item.Id), StringComparer.Ordinal)
+            .OrderBy(id => id, StringComparer.Ordinal).FirstOrDefault();
+        if (missing != null)
+            throw new InvalidDataException($"Modellelement {missing} konnte für die Gruppierung nicht gefunden werden.");
+        var options = new HashSet<GroupingParameterOption>();
+        foreach (var item in measured)
+        {
+            AddSnapshotTextParameters(item.Instance, ParameterScope.Instance, options);
+            if (item.Type != null) AddSnapshotTextParameters(item.Type, ParameterScope.Type, options);
+        }
+        foreach (var option in options.OrderBy(option => option.Name, StringComparer.OrdinalIgnoreCase).ThenBy(option => option.Scope))
+        {
+            var values = new Dictionary<string, string>(StringComparer.Ordinal);
+            var compatible = true;
+            foreach (var item in measured)
+            {
+                var owner = option.Scope == ParameterScope.Type ? item.Type : item.Instance;
+                if (!TryReadSnapshotValue(owner, option.Name, out var value))
+                {
+                    compatible = false;
+                    break;
+                }
+                values.Add(item.Id, value);
+            }
+            // An option is usable only when every present parameter has the exact unambiguous text contract.
+            if (compatible)
+                snapshots.Add(option.DisplayLabel, new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(values));
+        }
+        return new System.Collections.ObjectModel.ReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>(snapshots);
+    }
+
+    private static void AddSnapshotTextParameters(Element owner, ParameterScope scope, HashSet<GroupingParameterOption> options)
+    {
+        foreach (Parameter parameter in owner.Parameters)
+        {
+            try
+            {
+                var option = new GroupingParameterOption(parameter.Definition.Name, scope);
+                if (!string.IsNullOrWhiteSpace(option.Name) && IsSnapshotText(option.DisplayLabel, 1024)
+                    && parameter.StorageType == StorageType.String && parameter.Definition.GetDataType().Equals(SpecTypeId.String.Text))
+                    options.Add(option);
+            }
+            catch (Exception ex) when (IsCandidateDiagnosticException(ex))
+            {
+                // Uninspectable parameters cannot create grouping options. A same-name option discovered
+                // on another measured element is checked against this owner before it is offered.
+            }
+        }
+    }
+
+    private static bool TryReadSnapshotValue(Element? owner, string name, out string value)
+    {
+        value = "";
+        if (owner == null) return true;
+        try
+        {
+            var matches = owner.GetParameters(name);
+            if (matches.Count == 0) return true;
+            if (matches.Count != 1) return false;
+            var parameter = matches[0];
+            if (parameter.StorageType != StorageType.String || !parameter.Definition.GetDataType().Equals(SpecTypeId.String.Text))
+                return false;
+            if (!parameter.HasValue) return true;
+            var text = parameter.AsString() ?? "";
+            if (!IsSnapshotText(text, 32768)) return false;
+            value = string.IsNullOrWhiteSpace(text) ? "" : text;
+            return true;
+        }
+        catch (Exception ex) when (IsCandidateDiagnosticException(ex)) { return false; }
+    }
+
+    private static bool IsSnapshotText(string text, int maxLength) => text.Length <= maxLength
+        && !text.Any(character => char.IsControl(character) || char.IsSurrogate(character)
+            || char.GetUnicodeCategory(character) is System.Globalization.UnicodeCategory.Format
+                or System.Globalization.UnicodeCategory.LineSeparator or System.Globalization.UnicodeCategory.ParagraphSeparator);
 
     public static IReadOnlyDictionary<string, string> ReadGroupingLabels(Document document,
         IEnumerable<string> elementIds, GroupingParameterOption option)

@@ -48,10 +48,10 @@ if (!segment.Contains("Image = GetImageSource(\"label_16px.png\")", StringCompar
     || !segment.Contains("BIMassist.Commands.AvaQuantityTakeoffCommand", StringComparison.Ordinal)
     || !segment.Contains("Vorlagen verwalten", StringComparison.Ordinal))
     throw new Exception("BGK/GAEB group must carry the former BGK icon while its commands remain icon-free.");
-int takeoff = segment.IndexOf("new PushButtonData(\"AVA Mengenermittlung\", \"Mengenermittlung / X31\"", StringComparison.Ordinal);
-int review = segment.IndexOf("new PushButtonData(\"AVA Mengenermittlung kontrollieren oder prüfen\", \"Mengenermittlung kontrollieren oder prüfen\"", StringComparison.Ordinal);
-if (takeoff < 0 || review <= takeoff || !segment[review..].Contains("BIMassist.Commands.AvaX31ReviewCommand", StringComparison.Ordinal))
-    throw new Exception("X31 review command must be the final entry in the AVA group after quantity export.");
+int takeoff = segment.IndexOf("new PushButtonData(\"AVA Mengenermittlung\", \"Mengenermittlung\"", StringComparison.Ordinal);
+int review = segment.IndexOf("new PushButtonData(\"AVA Mengenermittlung kontrollieren oder prüfen\"", StringComparison.Ordinal);
+if (takeoff < 0 || review >= 0)
+    throw new Exception("BGK/GAEB must expose one unified Mengenermittlung action instead of a separate X31 review button.");
 string reviewCommand = File.ReadAllText(Path.Combine(root, "Commands", "AvaX31ReviewCommand.cs"));
 if (!reviewCommand.Contains("sourceDocument.Equals(activeDocument)", StringComparison.Ordinal)
     || reviewCommand.Contains("ReferenceEquals(uiDocument.Document, sourceDocument)", StringComparison.Ordinal))

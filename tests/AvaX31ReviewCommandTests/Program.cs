@@ -137,11 +137,116 @@ internal static class Program
             Check(rowPlan?.ElementIds.SequenceEqual(["1"]) == true, "Existing row-select action changed.");
         }
         finally { window.Close(); }
+        var runRecord = new AvaQuantityRecord(Guid.NewGuid(), "B0000001", "Item1", "0010", "Menge", "m",
+            "12", "Length", "Length=3", "Teilbereich (Instanz)", "Raum A", "Familie", "Typ", 3m);
+        var savedRun = new AvaQuantityRun(AvaQuantityRunCodec.CurrentSchemaVersion, Guid.NewGuid(), DateTimeOffset.UtcNow,
+            "Testprojekt", "", "alle Elemente", "{}", [runRecord]);
+        IReadOnlyList<string>? requestedIds = null;
+        bool? requestedIsolation = null;
+        bool? requestedRevitIdentity = null;
+        var requestedX82 = false;
+        var runWindow = new AvaQuantityRunWindow(savedRun, [new GroupingParameterOption("Teilbereich", ParameterScope.Instance)], (ids, isolate) =>
+        {
+            requestedIds = ids;
+            requestedIsolation = isolate;
+        }, (useRevitId, _) => requestedRevitIdentity = useRevitId, () => requestedX82 = true, _ => { }, _ => { },
+            actionsEnabled: false, selectionActionsEnabled: true, x31ExportEnabled: true, x82ExportEnabled: true);
+        try
+        {
+            var runLayout = (Grid)runWindow.Content;
+            var runToolbar = runLayout.Children.OfType<WrapPanel>().Single();
+            var runButtons = runToolbar.Children.OfType<Button>().ToDictionary(button => button.Content?.ToString() ?? string.Empty);
+            var grouping = runToolbar.Children.OfType<ComboBox>().Single(combo => combo.DisplayMemberPath == "DisplayName");
+            Check(grouping.IsEnabled, "Saved-run grouping must be selectable without another Revit transaction.");
+            var runGrid = runLayout.Children.OfType<DataGrid>().Single();
+            Check(runWindow.GroupingDescriptionCount == 1, "The saved grouping parameter and value must group the run rows initially.");
+            grouping.SelectedIndex = 0;
+            Check(runWindow.GroupingDescriptionCount == 0, "Selecting no grouping must remove the local grouping view.");
+            grouping.SelectedIndex = 1;
+            Check(runWindow.GroupingDescriptionCount == 1, "Selecting a saved grouping parameter must regroup locally.");
+            Check(runButtons["Selektieren"].IsEnabled && runButtons["Isolieren"].IsEnabled,
+                "Select and Isolate must remain available when recalculation and exports are not yet connected.");
+            Check(!runButtons["Neu berechnen"].IsEnabled && runButtons["X31 exportieren"].IsEnabled
+                && runButtons["X82 exportieren"].IsEnabled,
+                "Implemented exports must be available while unimplemented recalculation stays disabled.");
+            runGrid.SelectedItem = runGrid.Items[0];
+            runButtons["Selektieren"].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(requestedIds?.SequenceEqual(["12"]) == true && requestedIsolation == false,
+                "Select must post only the selected row's Revit IDs without isolation.");
+            runButtons["Isolieren"].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(requestedIds?.SequenceEqual(["12"]) == true && requestedIsolation == true,
+                "Isolate must be a separate action using the selected row's Revit IDs.");
+            var identity = runToolbar.Children.OfType<ComboBox>().Single(combo => combo.Items.Count == 2);
+            identity.SelectedIndex = 1;
+            runButtons["X31 exportieren"].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(requestedRevitIdentity == true,
+                "X31 must offer the Revit ElementID identity choice and post it to the export callback.");
+            runButtons["X82 exportieren"].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(requestedX82, "X82 export must post through its independent callback.");
+        }
+        finally { runWindow.Close(); }
+        bool? requestedVisibility = null;
+        var calculatingWindow = new AvaQuantityRunWindow(savedRun, [], (_, _) => { }, (_, _) => { }, () => { },
+            _ => { }, visible => requestedVisibility = visible);
+        try
+        {
+            var layout = (Grid)calculatingWindow.Content;
+            var toolbar = layout.Children.OfType<WrapPanel>().Single();
+            var visibility = toolbar.Children.OfType<CheckBox>().Single();
+            visibility.IsChecked = true;
+            var calculate = toolbar.Children.OfType<Button>().Single(button => Equals(button.Content, "Neu berechnen"));
+            Check(calculate.IsEnabled && visibility.IsEnabled, "Recalculation and the active-view switch must be enabled together.");
+            calculate.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(requestedVisibility == true, "Recalculate must post the selected active-view scope, not read Revit from WPF.");
+            var refreshed = savedRun with { ProjectTitle = "Aktualisiertes Projekt", CreatedUtc = savedRun.CreatedUtc.AddMinutes(1),
+                Records = [runRecord with { GroupingParameter = "", GroupingValue = "", Result = 9m }] };
+            calculatingWindow.SetRun(refreshed);
+            var heading = layout.Children.OfType<StackPanel>().Single();
+            Check(heading.Children.OfType<TextBlock>().Any(text => text.Text.Contains("Aktualisiertes Projekt")),
+                "Refreshing a calculated run must also update project and timestamp metadata.");
+            var selector = toolbar.Children.OfType<ComboBox>().Single(combo => combo.DisplayMemberPath == "DisplayName");
+            Check(selector.Items.Count == 3, "After recalculation no grouping parameter from the previous run may remain offered.");
+        }
+        finally { calculatingWindow.Close(); }
+        var snapshotRecord = runRecord with
+        {
+            GroupingValues = new Dictionary<string, string> { ["Teilbereich (Instanz)"] = "Raum A", ["Gewerk (Typ)"] = "Rohbau" }
+        };
+        var snapshotWindow = new AvaQuantityRunWindow(savedRun with { Records = [snapshotRecord] }, [], (_, _) => { },
+            (_, _) => { }, () => { }, _ => { }, _ => { });
+        try
+        {
+            var layout = (Grid)snapshotWindow.Content;
+            var toolbar = layout.Children.OfType<WrapPanel>().Single();
+            var selector = toolbar.Children.OfType<ComboBox>().Single(combo => combo.DisplayMemberPath == "DisplayName");
+            var grid = layout.Children.OfType<DataGrid>().Single();
+            Check(selector.Items.Count == 5, "Every captured grouping parameter must be offered without querying the live document.");
+            selector.SelectedItem = selector.Items.Cast<object>().Single(item =>
+                Equals(item.GetType().GetProperty("DisplayName")!.GetValue(item), "Gewerk (Typ)"));
+            var row = grid.Items[0];
+            Check(Equals(row.GetType().GetProperty("GroupingValue")!.GetValue(row), "Rohbau"),
+                "Changing grouping must use that parameter's own saved value, not the previous group's label.");
+            Check(Equals(row.GetType().GetProperty("GroupingParameter")!.GetValue(row), "Gewerk (Typ)"),
+                "The table must identify the currently selected grouping parameter.");
+        }
+        finally { snapshotWindow.Close(); }
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root != null && !File.Exists(Path.Combine(root.FullName, "Commands", "AvaX31ReviewCommand.cs")))
             root = root.Parent;
         Check(root != null, "Could not locate production command source.");
-        var command = File.ReadAllText(Path.Combine(root!.FullName, "Commands", "AvaX31ReviewCommand.cs"));
+        var groupingDialog = File.ReadAllText(Path.Combine(root!.FullName, "Ava", "Revit", "AvaGroupingDialog.cs"));
+        Check(!groupingDialog.Contains("X31-Ausgabe-LV", StringComparison.Ordinal)
+            && !groupingDialog.Contains("exportLv", StringComparison.Ordinal)
+            && !groupingDialog.Contains("Reduziertes GAEB-LV", StringComparison.Ordinal),
+            "Initial grouping must not promise X31 output grouping or offer/return an automatic reduced-X82 export checkbox.");
+        Check(groupingDialog.Contains("Fenster Mengenermittlung", StringComparison.Ordinal)
+            && groupingDialog.Contains("zunächst gruppiert", StringComparison.Ordinal),
+            "First-run setup must describe the initial grouping in the Mengenermittlung window.");
+        Check(groupingDialog.Contains("X31 und X82 exportieren Sie", StringComparison.Ordinal)
+            && groupingDialog.Contains("Hauptfenster Mengenermittlung", StringComparison.Ordinal),
+            "First-run setup must direct users to explicit X31/X82 exports in the main window.");
+        Console.WriteLine("PASS: first-run grouping and explicit main-window export guidance (production source/UI contract; no live Revit).");
+        var command = File.ReadAllText(Path.Combine(root.FullName, "Commands", "AvaX31ReviewCommand.cs"));
         Check(command.Contains("workspace.LoadLast()", StringComparison.Ordinal)
             && command.Contains("new X31ReviewPosition(", StringComparison.Ordinal)
             && command.Contains("X31ReviewReader.ReadFile(dialog.FileName, positions, X31Writer.EvaluateReb91)", StringComparison.Ordinal),
@@ -152,6 +257,29 @@ internal static class Program
             && command.Contains("uiDocument.ActiveView", StringComparison.Ordinal)
             && command.Contains("uiDocument.ActiveView.IsolateElementsTemporary(allIds)", StringComparison.Ordinal),
             "The command must wire both missing actions through the Revit external event, compare every X31 row, and isolate in the active view.");
+        var runHost = File.ReadAllText(Path.Combine(root.FullName, "Ava", "Revit", "AvaQuantityRunWindowHost.cs"));
+        Check(!runHost.Contains("MatchesProject(", StringComparison.Ordinal),
+            "A run loaded from project storage must remain openable after first Save, Save As or moving the RVT.");
+        Check(runHost.Contains("currentWindow?.Close()", StringComparison.Ordinal)
+            && runHost.Contains("currentWindow = window", StringComparison.Ordinal),
+            "Opening the ribbon action again must retire any previous run window to prevent stale exports.");
+        Check(runHost.Contains("SetRecalculateRequest", StringComparison.Ordinal)
+            && command.Contains("AvaQuantityTakeoffCommand.Recalculate(", StringComparison.Ordinal)
+            && command.Contains("RunWindow?.SetRun(", StringComparison.Ordinal)
+            && !runHost.Contains("actionsEnabled: false", StringComparison.Ordinal),
+            "The saved-run window must route recalculation through ExternalEvent and refresh the same window.");
+        Check(command.Contains("internal sealed class X31ReviewExternalEventHandler", StringComparison.Ordinal)
+            && command.Contains("public AvaQuantityRunWindow? RunWindow", StringComparison.Ordinal)
+            && command.Contains("public void SetX31Request(bool useRevitElementId)", StringComparison.Ordinal)
+            && command.Contains("public void SetX82Request()", StringComparison.Ordinal)
+            && command.Contains("AvaQuantityRunExport.SaveX31(", StringComparison.Ordinal)
+            && command.Contains("AvaQuantityRunExport.SaveX82(", StringComparison.Ordinal)
+            && runHost.Contains("new AvaX31ReviewCommand.X31ReviewExternalEventHandler(", StringComparison.Ordinal)
+            && runHost.Contains("ExternalEvent.Create(handler)", StringComparison.Ordinal)
+            && runHost.Contains("handler.SetRequest(new X31SelectionPlan(elementIds, SelectionIncomplete: false), isolate)", StringComparison.Ordinal)
+            && runHost.Contains("handler.SetX31Request(useRevitElementId)", StringComparison.Ordinal)
+            && runHost.Contains("Post(handler.SetX82Request)", StringComparison.Ordinal),
+            "The persisted-run window must route Select/Isolate and measured GAEB exports through the checked ExternalEvent handler.");
         Check(command.IndexOf("X31ReviewViewCandidates.Find(document, uiDocument.ActiveView, includedIds)", StringComparison.Ordinal)
                 < command.IndexOf("if (!ClearPreviousTemporaryIsolation(app, uiDocument, document)) return;", StringComparison.Ordinal),
             "Candidate snapshot must respect temporary hide/isolate before resetting the view mode.");
