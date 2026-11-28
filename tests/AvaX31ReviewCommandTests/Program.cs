@@ -17,6 +17,12 @@ internal static class Program
         {
             if (!condition) throw new Exception(message);
         }
+        QuantityRunWindowTests.GroupingAlwaysReflectsCurrentChoice();
+        QuantityRunWindowTests.SettingsRoundTripAndRefresh();
+        QuantityRunWindowTests.TwoActionRowsAndMissingCallbacks();
+        QuantityRunWindowTests.ExcelCapturesCurrentPresentation();
+        QuantityRunWindowTests.ExcelEmptyStateIsVisible();
+        QuantityRunWindowTests.DisplayRoundsWithoutChangingStoredValues();
         var document = new Document();
         var rollbackCalls = 0;
         var pendingRecovery = X31ReviewTransactionRecovery.Resolve(
@@ -154,8 +160,9 @@ internal static class Program
         try
         {
             var runLayout = (Grid)runWindow.Content;
-            var runToolbar = runLayout.Children.OfType<WrapPanel>().Single();
-            var runButtons = runToolbar.Children.OfType<Button>().ToDictionary(button => button.Content?.ToString() ?? string.Empty);
+            var runToolbar = runLayout.Children.OfType<WrapPanel>().OrderBy(Grid.GetRow).First();
+            var runButtons = runLayout.Children.OfType<WrapPanel>().SelectMany(panel => panel.Children.OfType<Button>())
+                .ToDictionary(button => button.Content?.ToString() ?? string.Empty);
             var grouping = runToolbar.Children.OfType<ComboBox>().Single(combo => combo.DisplayMemberPath == "DisplayName");
             Check(grouping.IsEnabled, "Saved-run grouping must be selectable without another Revit transaction.");
             var runGrid = runLayout.Children.OfType<DataGrid>().Single();
@@ -176,7 +183,7 @@ internal static class Program
             runButtons["Isolieren"].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(requestedIds?.SequenceEqual(["12"]) == true && requestedIsolation == true,
                 "Isolate must be a separate action using the selected row's Revit IDs.");
-            var identity = runToolbar.Children.OfType<ComboBox>().Single(combo => combo.Items.Count == 2);
+            var identity = runLayout.Children.OfType<WrapPanel>().SelectMany(panel => panel.Children.OfType<ComboBox>()).Single(combo => combo.Items.Count == 2);
             identity.SelectedIndex = 1;
             runButtons["X31 exportieren"].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(requestedRevitIdentity == true,
@@ -191,7 +198,7 @@ internal static class Program
         try
         {
             var layout = (Grid)calculatingWindow.Content;
-            var toolbar = layout.Children.OfType<WrapPanel>().Single();
+            var toolbar = layout.Children.OfType<WrapPanel>().OrderBy(Grid.GetRow).First();
             var visibility = toolbar.Children.OfType<CheckBox>().Single();
             visibility.IsChecked = true;
             var calculate = toolbar.Children.OfType<Button>().Single(button => Equals(button.Content, "Neu berechnen"));
@@ -217,7 +224,7 @@ internal static class Program
         try
         {
             var layout = (Grid)snapshotWindow.Content;
-            var toolbar = layout.Children.OfType<WrapPanel>().Single();
+            var toolbar = layout.Children.OfType<WrapPanel>().OrderBy(Grid.GetRow).First();
             var selector = toolbar.Children.OfType<ComboBox>().Single(combo => combo.DisplayMemberPath == "DisplayName");
             var grid = layout.Children.OfType<DataGrid>().Single();
             Check(selector.Items.Count == 5, "Every captured grouping parameter must be offered without querying the live document.");
@@ -226,8 +233,8 @@ internal static class Program
             var row = grid.Items[0];
             Check(Equals(row.GetType().GetProperty("GroupingValue")!.GetValue(row), "Rohbau"),
                 "Changing grouping must use that parameter's own saved value, not the previous group's label.");
-            Check(Equals(row.GetType().GetProperty("GroupingParameter")!.GetValue(row), "Gewerk (Typ)"),
-                "The table must identify the currently selected grouping parameter.");
+            Check(snapshotWindow.CaptureSettings().Grouping == "Gewerk (Typ)",
+                "Presentation settings must identify the currently selected grouping parameter.");
         }
         finally { snapshotWindow.Close(); }
         var root = new DirectoryInfo(AppContext.BaseDirectory);
@@ -261,8 +268,11 @@ internal static class Program
         Check(!runHost.Contains("MatchesProject(", StringComparison.Ordinal),
             "A run loaded from project storage must remain openable after first Save, Save As or moving the RVT.");
         Check(runHost.Contains("currentWindow?.Close()", StringComparison.Ordinal)
-            && runHost.Contains("currentWindow = window", StringComparison.Ordinal),
-            "Opening the ribbon action again must retire any previous run window to prevent stale exports.");
+            && runHost.Contains("currentWindow = window", StringComparison.Ordinal)
+            && runHost.Contains("currentHandler?.IsForDocument(document) == true", StringComparison.Ordinal)
+            && runHost.Contains("currentWindow.SetRun(run)", StringComparison.Ordinal)
+            && runHost.Contains("currentWindow.Activate()", StringComparison.Ordinal),
+            "Repeated ribbon execution must refresh the same-document window and retire a different-document window.");
         Check(runHost.Contains("SetRecalculateRequest", StringComparison.Ordinal)
             && command.Contains("AvaQuantityTakeoffCommand.Recalculate(", StringComparison.Ordinal)
             && command.Contains("RunWindow?.SetRun(", StringComparison.Ordinal)

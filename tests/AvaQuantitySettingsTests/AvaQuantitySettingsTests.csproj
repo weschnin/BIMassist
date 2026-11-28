@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <BaseOutputPath Condition="'$(AVA_SETTINGS_TEST_OUTPUT)' != ''">$(AVA_SETTINGS_TEST_OUTPUT)/bin/</BaseOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="ApiCompile/**" />
+    <Compile Include="../../Ava/Core/AvaQuantityViewSettings.cs" Link="AvaQuantityViewSettings.cs" />
+    <Compile Include="../../Ava/Revit/AvaQuantityViewSettingsStorage.cs" Link="AvaQuantityViewSettingsStorage.cs" />
+    <Compile Include="../../Ava/Revit/AvaQuantityViewSettingsSession.cs" Link="AvaQuantityViewSettingsSession.cs" Condition="Exists('../../Ava/Revit/AvaQuantityViewSettingsSession.cs')" />
+    <Compile Include="../../Ava/Revit/X31ReviewTransactionRecovery.cs" Link="X31ReviewTransactionRecovery.cs" />
+  </ItemGroup>
+</Project>

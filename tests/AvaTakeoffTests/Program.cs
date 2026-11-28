@@ -70,6 +70,39 @@ internal static class Program
             Reject<InvalidDataException>(() => AvaQuantityRunFactory.Create(template,
                 takeoff with { Errors = [new("123", "invalid")] }, "Projekt", "", "gesamtes Modell", runId, created));
         });
+        Test("takeoff presentation metadata is concise while diagnostics and machine calculations stay exact", () =>
+        {
+            var template = Template();
+            var position = template.Mappings[0].Positions[0];
+            position.Quantity = Constant(2.123456789m);
+            position.Quantity.Unit = "m";
+            template.LvCatalog.Entries[0] = template.LvCatalog.Entries[0] with { Unit = "m" };
+            var constant = QuantityTakeoff.Calculate(template, [Element("42", template)]).Rows.Single();
+            Equal("2.123456789", constant.FormulaWithParameters);
+            Equal(2.123456789m, constant.Value);
+            Contains("constant", constant.Explanation);
+            template.LvCatalog.Entries[0] = template.LvCatalog.Entries[0] with { Unit = "m" };
+            var source = Local("MeasuredLength", scope: ParameterScope.Type);
+            position.Quantity = new() { Source = source, Unit = "m" };
+            var direct = QuantityTakeoff.Calculate(template, [Element("42", template, (_, _) => new(Number: 1.23456789m))]).Rows.Single();
+            Equal(source.Name, direct.FormulaWithParameters);
+            Equal(1.23456789m, direct.Value);
+            Contains(source.ToString(), direct.Explanation);
+            Equal("1.23456789 m", direct.FormulaWithValues);
+            Equal<string?>(null, direct.FormulaExpression);
+            Equal<string?>(null, direct.CalculationApproach);
+            position.Quantity = new() { Kind = QuantityKind.Formula, Source = null, Expression = "[L] * 2", Unit = "m",
+                Variables = [new() { Name = "L", Source = source, Unit = "m" }] };
+            var formula = QuantityTakeoff.Calculate(template, [Element("42", template, (_, _) => new(Number: 1.23456789m))]).Rows.Single();
+            Equal("[L] * 2", formula.FormulaWithParameters);
+            Equal("[L] * 2", formula.FormulaExpression);
+            Equal(2.46913578m, formula.Value);
+            Equal(QuantityFormula.CreateReb91Approach("[L] * 2", new Dictionary<string, (decimal Value, string Unit, string Spec)>
+                { ["L"] = (1.23456789m, "m", "LENGTH") }, "m", "m"), formula.CalculationApproach);
+            Equal(formula.CalculationApproach, formula.FormulaWithValues);
+            Contains(source.ToString(), formula.Explanation);
+            Contains("1.23456789", formula.Explanation);
+        });
         Test("constant positions use no quantity parameter", () =>
         {
             var template = Template();

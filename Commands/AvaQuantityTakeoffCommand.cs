@@ -133,7 +133,8 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             var run = AvaQuantityRunFactory.Create(template, result, document.Title,
                 string.IsNullOrWhiteSpace(document.PathName) ? "" : Path.GetFullPath(document.PathName),
                 scopeDescription!, Guid.NewGuid(), DateTimeOffset.UtcNow, groupingParameter, labels,
-                RevitQuantityReader.ReadGroupingSnapshots(document, result.Rows.Select(row => row.ElementId)));
+                RevitQuantityReader.ReadGroupingSnapshots(document, result.Rows.Select(row => row.ElementId)))
+                with { VisibleOnly = visibleOnly };
             using (var storageTransaction = new Transaction(document, "BIMassist AVA letzter Mengenermittlungslauf"))
             {
                 if (storageTransaction.Start() != TransactionStatus.Started)

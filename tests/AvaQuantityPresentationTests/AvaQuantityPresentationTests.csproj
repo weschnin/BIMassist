@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Ava/Core/AvaQuantityViewSettings.cs" Link="Core/AvaQuantityViewSettings.cs" Condition="Exists('../../Ava/Core/AvaQuantityViewSettings.cs')" />
+    <Compile Include="../../Ava/Core/AvaQuantityDisplay.cs" Link="Core/AvaQuantityDisplay.cs" Condition="Exists('../../Ava/Core/AvaQuantityDisplay.cs')" />
+    <Compile Include="../../Ava/Core/AvaQuantityTable.cs" Link="Core/AvaQuantityTable.cs" Condition="Exists('../../Ava/Core/AvaQuantityTable.cs')" />
+    <Compile Include="../../Ava/Core/AvaQuantityXlsxWriter.cs" Link="Core/AvaQuantityXlsxWriter.cs" Condition="Exists('../../Ava/Core/AvaQuantityXlsxWriter.cs')" />
+  </ItemGroup>
+</Project>

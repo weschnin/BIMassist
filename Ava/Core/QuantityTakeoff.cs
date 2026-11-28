@@ -211,8 +211,7 @@ public static class QuantityTakeoff
             expression = quantity.Expression + " (" + string.Join("; ", inputs) + ")";
             formulaExpression = quantity.Expression;
             calculationApproach = QuantityFormula.CreateReb91Approach(quantity.Expression, values, quantity.Unit, lvUnit);
-            formulaWithParameters = quantity.Expression + " [" + string.Join("; ", quantity.Variables.Select(variable =>
-                $"{variable.Name} ← {variable.Source} ({variable.Unit})")) + "]";
+            formulaWithParameters = quantity.Expression;
             formulaWithValues = calculationApproach;
         }
         else
@@ -225,8 +224,8 @@ public static class QuantityTakeoff
             expression = quantity.Kind == QuantityKind.Constant ? "constant" : quantity.Source!.ToString()
                 + (quantity.AllowCustomUnit ? "; explizit manuelle Einheit, Rohwert ohne Umrechnung" : "");
             formulaWithParameters = quantity.Kind == QuantityKind.Constant
-                ? "Konstante " + quantity.ConstantValue!.Value.ToString(CultureInfo.InvariantCulture) + " " + quantity.Unit
-                : quantity.Source!.ToString() + " (" + quantity.Unit + ")";
+                ? quantity.ConstantValue!.Value.ToString(CultureInfo.InvariantCulture)
+                : quantity.Source!.Name;
             formulaWithValues = value.ToString(CultureInfo.InvariantCulture) + " " + quantity.Unit;
         }
         var sourceValue = value;

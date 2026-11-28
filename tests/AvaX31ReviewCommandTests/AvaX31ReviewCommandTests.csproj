@@ -7,7 +7,11 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+
     <Compile Include="../../Ava/Core/AvaQuantityRun.cs" Link="AvaQuantityRun.cs" />
+    <Compile Include="../../Ava/Core/AvaQuantityViewSettings.cs" Link="AvaQuantityViewSettings.cs" />
+    <Compile Include="../../Ava/Core/AvaQuantityDisplay.cs" Link="AvaQuantityDisplay.cs" />
+    <Compile Include="../../Ava/Core/AvaQuantityTable.cs" Link="AvaQuantityTable.cs" />
     <Compile Include="../../Ava/Views/AvaQuantityRunWindow.cs" Link="AvaQuantityRunWindow.cs" />
     <Compile Include="../../Ava/Core/X31ReviewReader.cs" Link="X31ReviewReader.cs" />
     <Compile Include="../../Ava/Core/X31ElementSelectionPlanner.cs" Link="X31ElementSelectionPlanner.cs" />

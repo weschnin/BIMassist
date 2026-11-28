@@ -14,7 +14,10 @@ public sealed record AvaQuantityRun(
     string ProjectPath,
     string ScopeDescription,
     string TemplateJson,
-    IReadOnlyList<AvaQuantityRecord> Records);
+    IReadOnlyList<AvaQuantityRecord> Records)
+{
+    public bool VisibleOnly { get; init; }
+}
 
 public sealed record AvaQuantityRecord(
     Guid RecordId,

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems><PlatformTarget>x64</PlatformTarget>
+    <BaseOutputPath Condition="'$(AVA_SETTINGS_TEST_OUTPUT)' != ''">$(AVA_SETTINGS_TEST_OUTPUT)/api-bin/</BaseOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <!-- Original Autodesk API binaries, same pinned net8 baseline as BIMassist. No doubles. -->
+    <PackageReference Include="Autodesk.Revit.SDK" Version="[2026.0.0.9999]" GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
+    <Reference Include="RevitAPI"><HintPath>$(PkgAutodesk_Revit_SDK)/ref/net8.0/RevitAPI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="RevitAPIUI"><HintPath>$(PkgAutodesk_Revit_SDK)/ref/net8.0/RevitAPIUI.dll</HintPath><Private>false</Private></Reference>
+    <Compile Include="../../../Ava/Core/AvaQuantityViewSettings.cs" Link="AvaQuantityViewSettings.cs" />
+    <Compile Include="../../../Ava/Revit/AvaQuantityViewSettingsStorage.cs" Link="AvaQuantityViewSettingsStorage.cs" />
+    <Compile Include="../../../Ava/Revit/AvaQuantityViewSettingsSession.cs" Link="AvaQuantityViewSettingsSession.cs" />
+    <Compile Include="../../../Ava/Revit/X31ReviewTransactionRecovery.cs" Link="X31ReviewTransactionRecovery.cs" />
+  </ItemGroup>
+</Project>

@@ -56,38 +56,71 @@ internal static class Program
         });
         Test("X82 quantity export clones the source, reduces positions, sums quantities and preserves LV text and units", () =>
         {
-            var template = Read(Fixture);
-            var before = template.LvCatalog.Source.X82SnapshotBase64;
+            var source = XDocument.Parse(Fixture);
+            source.Descendants(SourceNs + "Itemlist").Single().Add(new XElement(SourceNs + "Item",
+                new XAttribute("ID", "UnmeasuredItem"), new XAttribute("RNoPart", "0030"),
+                new XElement(SourceNs + "Qty", "777"), new XElement(SourceNs + "QU", "kg"),
+                new XElement(SourceNs + "QtyDeterm", new XElement(SourceNs + "Qty", "123"))));
+            var template = Read(source.ToString());
+            var before = TemplateJson.Serialize(template);
             var output = X82QuantityWriter.Serialize(template, [
                 new("FirstItem", 1.25m, "m2", "", "101"), new("FirstItem", 2.25m, "m2", "", "102"),
                 new("SecondItem", 4m, "m3", "", "103")]);
             var doc = XDocument.Parse(output);
             Equal(2, doc.Descendants(SourceNs + "Item").Count());
+            Require(doc.Descendants(SourceNs + "Item").Select(item => (string?)item.Attribute("ID"))
+                .ToHashSet(StringComparer.Ordinal).SetEquals(["FirstItem", "SecondItem"]), "Exported item IDs differ from the measured IDs");
             var first = doc.Descendants(SourceNs + "Item").Single(item => (string?)item.Attribute("ID") == "FirstItem");
-            Equal("999", (string?)first.Element(SourceNs + "Qty"));
+            Equal("3.5", (string?)first.Element(SourceNs + "Qty"));
             Equal("3.5", (string?)first.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
             Equal("m2", (string?)first.Element(SourceNs + "QU"));
             var second = doc.Descendants(SourceNs + "Item").Single(item => (string?)item.Attribute("ID") == "SecondItem");
-            Equal("888", (string?)second.Element(SourceNs + "Qty"));
+            Equal("4", (string?)second.Element(SourceNs + "Qty"));
             Equal("4", (string?)second.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
+            Equal("m3", (string?)second.Element(SourceNs + "QU"));
             Require(!output.Contains("do not copy me", StringComparison.Ordinal), "Stale quantity calculation remained in X82 output");
-            Equal(before, template.LvCatalog.Source.X82SnapshotBase64);
+            Equal(before, TemplateJson.Serialize(template));
             using var check = new MemoryStream(Encoding.UTF8.GetBytes(output));
             Equal(2, CatalogReaders.ReadX82(check, "reduced.x82").Entries.Count);
+            ValidateX82(doc);
         });
-        Test("X82 export keeps every source position but only writes totals for measured positions", () =>
+        Test("X82 export includes only distinct measured positions and replaces the LV quantity with the current cumulative total", () =>
         {
             var template = Read(Fixture);
-            var output = X82QuantityWriter.Serialize(template, [new("FirstItem", 1.25m, "m2", "", "101")]);
+            var before = TemplateJson.Serialize(template);
+            var output = X82QuantityWriter.Serialize(template, [new("FirstItem", 1.25m, "m2", "", "101"),
+                new("FirstItem", 0.0005m, "m2", "", "102")]);
             var doc = XDocument.Parse(output);
-            Equal(2, doc.Descendants(SourceNs + "Item").Count());
-            var first = doc.Descendants(SourceNs + "Item").Single(item => (string?)item.Attribute("ID") == "FirstItem");
-            var unmeasured = doc.Descendants(SourceNs + "Item").Single(item => (string?)item.Attribute("ID") == "SecondItem");
-            Equal("999", (string?)first.Element(SourceNs + "Qty"));
-            Equal("1.25", (string?)first.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
-            Equal("888", (string?)unmeasured.Element(SourceNs + "Qty"));
-            Equal("m3", (string?)unmeasured.Element(SourceNs + "QU"));
-            Require(unmeasured.Element(SourceNs + "QtyDeterm") == null, "An unmeasured position received a fabricated quantity");
+            var first = doc.Descendants(SourceNs + "Item").Single();
+            Equal("FirstItem", (string?)first.Attribute("ID"));
+            Equal("1.251", (string?)first.Element(SourceNs + "Qty"));
+            Equal("1.251", (string?)first.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
+            Equal("m2", (string?)first.Element(SourceNs + "QU"));
+            Require(!output.Contains("SecondItem", StringComparison.Ordinal), "An unmeasured source position was exported");
+            Equal(before, TemplateJson.Serialize(template));
+            ValidateX82(doc);
+        });
+        Test("X82 measured quantity is inserted in schema order when the source has no optional Qty", () =>
+        {
+            foreach (var freeQuantity in new[] { false, true })
+            foreach (var hasUnit in new[] { false, true })
+            {
+                var source = XDocument.Parse(Fixture);
+                var item = source.Descendants(SourceNs + "Item").First();
+                item.Element(SourceNs + "Qty")!.Remove();
+                if (!hasUnit) item.Element(SourceNs + "QU")!.Remove();
+                item.AddFirst(new XElement(SourceNs + "KeyIt", "Yes"));
+                if (freeQuantity) item.Element(SourceNs + "KeyIt")!.AddAfterSelf(new XElement(SourceNs + "QtyTBD", "Yes"));
+                var template = Read(source.ToString());
+                var before = TemplateJson.Serialize(template);
+                var saved = XDocument.Parse(X82QuantityWriter.Serialize(template, [new("FirstItem", 2.3456m, hasUnit ? "m2" : "", "")]));
+                var measured = saved.Descendants(SourceNs + "Item").Single();
+                Equal("2.346", (string?)measured.Element(SourceNs + "Qty"));
+                Equal("2.346", (string?)measured.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
+                Equal(hasUnit ? "m2" : null, (string?)measured.Element(SourceNs + "QU"));
+                Equal(before, TemplateJson.Serialize(template));
+                ValidateX82(saved);
+            }
         });
         Test("X82 new-file export refuses an existing path without replacing its bytes", () =>
         {
@@ -117,7 +150,7 @@ internal static class Program
                 var saved = XDocument.Load(path);
                 var item = saved.Descendants(SourceNs + "Item").Single(candidate => candidate.Element(SourceNs + "QtyDeterm") != null);
                 Equal("FirstItem", (string?)item.Attribute("ID"));
-                Equal("999", (string?)item.Element(SourceNs + "Qty"));
+                Equal("3.5", (string?)item.Element(SourceNs + "Qty"));
                 Equal("m2", (string?)item.Element(SourceNs + "QU"));
                 Equal("3.5", (string?)item.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
                 Equal("REB23003-2009", (string?)saved.Descendants(SourceNs + "BoQInfo")
@@ -137,7 +170,7 @@ internal static class Program
             var saved = XDocument.Parse(X82QuantityWriter.Serialize(Read(Fixture),
                 Enumerable.Range(0, 4).Select(i => new QuantityTakeoffRow("FirstItem", 0.0005m, "m2", "", i.ToString())).ToArray()));
             var item = saved.Descendants(SourceNs + "Item").Single(candidate => candidate.Element(SourceNs + "QtyDeterm") != null);
-            Equal("999", (string?)item.Element(SourceNs + "Qty"));
+            Equal("0.002", (string?)item.Element(SourceNs + "Qty"));
             Equal("m2", (string?)item.Element(SourceNs + "QU"));
             Equal("0.002", (string?)item.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
             var values = item.Descendants(SourceNs + "QTakeoff")
@@ -161,9 +194,9 @@ internal static class Program
                 var saved = XDocument.Parse(X82QuantityWriter.Serialize(Read(Fixture),
                     inputs.Select((value, i) => new QuantityTakeoffRow("FirstItem", value, "m2", "", i.ToString())).ToArray()));
                 var item = saved.Descendants(SourceNs + "Item").Single(candidate => candidate.Element(SourceNs + "QtyDeterm") != null);
-                Equal("999", (string?)item.Element(SourceNs + "Qty"));
                 Equal("m2", (string?)item.Element(SourceNs + "QU"));
                 var expected = decimal.Round(inputs.Sum(), 3, MidpointRounding.AwayFromZero);
+                Equal(expected.ToString("0.###", CultureInfo.InvariantCulture), (string?)item.Element(SourceNs + "Qty"));
                 Equal(expected.ToString("0.###", CultureInfo.InvariantCulture),
                     (string?)item.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
                 var measured = item.Descendants(SourceNs + "QTakeoff")
@@ -205,34 +238,31 @@ internal static class Program
                     foreach (var item in actualItems)
                     {
                         var before = originalItems.Single(candidate => (string?)candidate.Attribute("ID") == (string?)item.Attribute("ID"));
-                        Equal((string?)before.Element(SourceNs + "Qty"), (string?)item.Element(SourceNs + "Qty"));
+                        Equal((string?)before.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"), (string?)item.Element(SourceNs + "Qty"));
                         Equal((string?)before.Element(SourceNs + "QU"), (string?)item.Element(SourceNs + "QU"));
                         Equal((string?)before.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"),
                             (string?)item.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
                         Equal(1, item.Descendants(SourceNs + "QTakeoff").Count());
                     }
                     ValidateX82(exported);
-                    Console.WriteLine($"  historical file: {actualItems.Length} measured items; source Item/Qty unchanged; {actualItems.Length} REB rows; official DA82 schema valid");
+                    Console.WriteLine($"  historical file: {actualItems.Length} measured items; Item/Qty equals measured total; {actualItems.Length} REB rows; official DA82 schema valid");
                 });
                 Require(originalBytes.SequenceEqual(File.ReadAllBytes(historicalFile)), "Historical reference file was changed");
             });
-        Test("X82 quantity export preserves unmeasured positions and refuses unknown IDs or unit changes", () =>
+        Test("X82 quantity export removes unmeasured positions and refuses unknown IDs or unit changes", () =>
         {
             var template = Read(Fixture);
             var output = X82QuantityWriter.Serialize(template, [new("FirstItem", 5m, "m2", "", "101")]);
             var doc = XDocument.Parse(output);
-            Equal(2, doc.Descendants(SourceNs + "Item").Count());
-            var first = doc.Descendants(SourceNs + "Item").Single(item => (string?)item.Attribute("ID") == "FirstItem");
+            var first = doc.Descendants(SourceNs + "Item").Single();
             Equal("FirstItem", (string?)first.Attribute("ID"));
-            Equal("999", (string?)first.Element(SourceNs + "Qty"));
+            Equal("5", (string?)first.Element(SourceNs + "Qty"));
             Equal("5", (string?)first.Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
-            var unmeasured = doc.Descendants(SourceNs + "Item").Single(item => (string?)item.Attribute("ID") == "SecondItem");
-            Equal("888", (string?)unmeasured.Element(SourceNs + "Qty"));
-            Require(unmeasured.Element(SourceNs + "QtyDeterm") == null, "An unmeasured position retained stale quantity data");
+            Require(!output.Contains("SecondItem", StringComparison.Ordinal), "An unmeasured position retained stale quantity data");
             Reject(() => X82QuantityWriter.Serialize(template, [new("MissingItem", 1m, "m2", "")]));
             Reject(() => X82QuantityWriter.Serialize(template, [new("FirstItem", 1m, "m", "")]));
         });
-        Test("X82 export retains all source positions, hierarchy and text while calculating only measured quantities", () =>
+        Test("X82 measured-only export preserves retained hierarchy and descriptions while pruning empty branches and dangling markup", () =>
         {
             var source = XDocument.Parse(Fixture);
             var ns = SourceNs;
@@ -246,6 +276,12 @@ internal static class Program
                 new(ns + "MarkupItem", new XAttribute("ID", id), new XAttribute("RNoPart", ordinal),
                     new XElement(ns + "RefRNo", new XAttribute("IDRef", reference)), new XElement(ns + "MarkupType", "IdentAsMark"),
                     TextDescription(ns, text));
+            var first = list.Elements(ns + "Item").Single();
+            var description = TextDescription(ns, "Unveränderter Leistungstext mit Maß und Einheit m²");
+            first.Element(ns + "QtyDeterm")!.AddBeforeSelf(description);
+            list.Add(new XElement(ns + "Item", new XAttribute("ID", "ThirdItem"), new XAttribute("RNoPart", "0030"),
+                new XElement(ns + "Qty", "777"), new XElement(ns + "QU", "m"),
+                new XElement(ns + "QtyDeterm", new XElement(ns + "Qty", "123"))));
             list.AddFirst(new XElement(ns + "Remark", new XAttribute("ID", "RelevantRemark"), TextDescription(ns, "Relevanter Hinweistext")));
             list.Add(new XElement(ns + "PerfDescr", new XAttribute("ID", "RelevantPerf"),
                 new XElement(ns + "PerfNo", "01"), new XElement(ns + "PerfLbl", "Ausführungsbeschreibung"),
@@ -257,6 +293,18 @@ internal static class Program
                 new XElement(ns + "BoQBody", originalCategory));
             source.Descendants(ns + "BoQBody").First().AddFirst(parentCategory);
             list.Add(MarkupPosition(ns, "SelectedMarkup", "0090", "FirstItem", "Zuschlag zu gemessener Position"));
+            list.Add(MarkupPosition(ns, "SameBranchUnmeasuredMarkup", "0092", "ThirdItem", "Unbeteiligter Zuschlag im gemessenen Titel"));
+            var mixedMarkup = MarkupPosition(ns, "MixedMarkup", "0093", "FirstItem", "Gemischter Zuschlag");
+            mixedMarkup.Element(ns + "Description")!.AddBeforeSelf(
+                new XElement(ns + "MarkupSubQty", new XElement(ns + "RefItem", new XAttribute("IDRef", "FirstItem")), new XElement(ns + "SubQty", "1")),
+                new XElement(ns + "MarkupSubQty", new XElement(ns + "RefItem", new XAttribute("IDRef", "SecondItem")), new XElement(ns + "SubQty", "2")));
+            list.Add(mixedMarkup);
+            var perfMarkup = MarkupPosition(ns, "PerfMarkup", "0094", "RelevantPerf", "Zuschlag zur relevanten Ausführungsbeschreibung");
+            perfMarkup.Element(ns + "RefRNo")!.Name = ns + "RefPerfNo";
+            list.Add(perfMarkup);
+            var unrelatedPerfMarkup = MarkupPosition(ns, "UnrelatedPerfMarkup", "0095", "UnrelatedPerf", "Zuschlag zur unbeteiligten Ausführungsbeschreibung");
+            unrelatedPerfMarkup.Element(ns + "RefRNo")!.Name = ns + "RefPerfNo";
+            list.Add(unrelatedPerfMarkup);
             var unrelated = new XElement(ns + "BoQCtgy", new XAttribute("ID", "UnrelatedCategory"), new XAttribute("RNoPart", "02"),
                 new XElement(ns + "LblTx", new XElement(ns + "p", new XElement(ns + "span", "Unbeteiligter Titel"))),
                 new XElement(ns + "BoQBody", new XElement(ns + "Itemlist",
@@ -264,37 +312,50 @@ internal static class Program
                     new XElement(ns + "Item", new XAttribute("ID", "SecondItem"), new XAttribute("RNoPart", "0020"),
                         new XElement(ns + "Qty", "888"), new XElement(ns + "QU", "m3")))));
             unrelated.Descendants(ns + "Itemlist").Single().Add(MarkupPosition(ns, "UnselectedMarkup", "0091", "SecondItem", "Zuschlag zu nicht gemessener Position"));
+            unrelated.Descendants(ns + "Itemlist").Single().Add(new XElement(ns + "PerfDescr", new XAttribute("ID", "UnrelatedPerf"),
+                new XElement(ns + "PerfNo", "02"), new XElement(ns + "PerfLbl", "Unbeteiligte Ausführungsbeschreibung"),
+                TextDescription(ns, "Unbeteiligtes Ausführungsdetail")));
             source.Descendants(ns + "BoQBody").First().Add(unrelated);
             var template = Read(source.ToString(SaveOptions.DisableFormatting));
+            var before = TemplateJson.Serialize(template);
             var output = X82QuantityWriter.Serialize(template, [new("FirstItem", 3.5m, "m2", "", "101")]);
             var result = XDocument.Parse(output);
             var items = result.Descendants(ns + "Item").ToArray();
-            Equal(2, items.Length);
+            Equal(1, items.Length);
             var measuredItem = items.Single(item => (string?)item.Attribute("ID") == "FirstItem");
-            var unmeasuredItem = items.Single(item => (string?)item.Attribute("ID") == "SecondItem");
-            Equal("888", (string?)unmeasuredItem.Element(ns + "Qty"));
-            Equal("m3", (string?)unmeasuredItem.Element(ns + "QU"));
-            Require(unmeasuredItem.Element(ns + "QtyDeterm") == null, "Unmeasured position retained a calculated quantity");
+            Equal("3.5", (string?)measuredItem.Element(ns + "Qty"));
+            Equal("m2", (string?)measuredItem.Element(ns + "QU"));
+            Require(XNode.DeepEquals(description, measuredItem.Element(ns + "Description")), "Retained position description changed");
             var markupItems = result.Descendants(ns + "MarkupItem").ToArray();
-            Equal(2, markupItems.Length);
-            Require(markupItems.Any(markup => (string?)markup.Attribute("ID") == "SelectedMarkup")
-                && markupItems.Any(markup => (string?)markup.Attribute("ID") == "UnselectedMarkup"),
-                "Source markup attached to a retained LV position was lost.");
+            Equal(3, markupItems.Length);
+            Require(markupItems.Select(markup => (string?)markup.Attribute("ID")).ToHashSet(StringComparer.Ordinal)
+                .SetEquals(["SelectedMarkup", "MixedMarkup", "PerfMarkup"]), "Unrelated markup survived or relevant markup was lost");
+            var mixed = markupItems.Single(markup => (string?)markup.Attribute("ID") == "MixedMarkup");
+            Equal(1, mixed.Elements(ns + "MarkupSubQty").Count());
+            Equal("FirstItem", (string?)mixed.Descendants(ns + "RefItem").Single().Attribute("IDRef"));
+            var retainedIds = result.Descendants().Attributes("ID").Select(attribute => attribute.Value).ToHashSet(StringComparer.Ordinal);
+            Require(result.Descendants().Attributes("IDRef").All(reference => retainedIds.Contains(reference.Value)), "Dangling markup reference survived");
             var categories = result.Descendants(ns + "BoQCtgy").ToArray();
-            Equal(3, categories.Length);
+            Equal(2, categories.Length);
             Require(categories.Select(category => (string?)category.Attribute("ID")).ToHashSet(StringComparer.Ordinal)
-                .SetEquals(["ParentCategory", "OriginalCategory", "UnrelatedCategory"]), "The source LV hierarchy was not retained exactly.");
+                .SetEquals(["ParentCategory", "OriginalCategory"]), "Measured position ancestors changed or an empty unrelated branch survived");
+            Require(measuredItem.Ancestors(ns + "BoQCtgy").Select(category => (string?)category.Attribute("ID"))
+                .SequenceEqual(["OriginalCategory", "ParentCategory"]), "Retained hierarchy was flattened or reordered");
+            Equal("0010", (string?)measuredItem.Attribute("RNoPart"));
             Require(output.Contains("Relevanter Hinweistext", StringComparison.Ordinal)
                 && output.Contains("Ausführungsdetail", StringComparison.Ordinal)
                 && output.Contains("Übergeordneter Titel", StringComparison.Ordinal)
                 && output.Contains("Original Category", StringComparison.Ordinal),
                 "The measured LV hierarchy or its applicable text context was lost.");
-            Require(output.Contains("SecondItem", StringComparison.Ordinal)
-                && output.Contains("UnselectedMarkup", StringComparison.Ordinal)
-                && output.Contains("Unbeteiligter Titel", StringComparison.Ordinal)
-                && output.Contains("Unbeteiligter Fließtext", StringComparison.Ordinal),
-                "A source position or its original branch text was removed from the complete X82 output.");
+            Require(!output.Contains("SecondItem", StringComparison.Ordinal)
+                && !output.Contains("ThirdItem", StringComparison.Ordinal)
+                && !output.Contains("UnselectedMarkup", StringComparison.Ordinal)
+                && !output.Contains("Unbeteiligter Titel", StringComparison.Ordinal)
+                && !output.Contains("Unbeteiligter Fließtext", StringComparison.Ordinal)
+                && !output.Contains("Unbeteiligtes Ausführungsdetail", StringComparison.Ordinal),
+                "An unmeasured position or unrelated branch text survived in measured-only output.");
             Require(measuredItem.Element(ns + "QtyDeterm") != null, "Measured position has no calculated quantity.");
+            Equal(before, TemplateJson.Serialize(template));
             if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("BIMASSIST_AVA_X82_SCHEMA")))
             {
                 var schemas = new XmlSchemaSet { XmlResolver = new XmlUrlResolver() };
@@ -306,7 +367,7 @@ internal static class Program
                 Require(issues.Count == 0, string.Join(Environment.NewLine, issues));
             }
         });
-        Test("Complete X82 quantity output validates against the official DA82 schema when supplied", () =>
+        Test("Measured-only X82 quantity output validates against the official DA82 schema when supplied", () =>
         {
             var schemaPath = Environment.GetEnvironmentVariable("BIMASSIST_AVA_X82_SCHEMA");
             if (string.IsNullOrWhiteSpace(schemaPath)) return;
@@ -385,13 +446,14 @@ internal static class Program
             AvaQuantityRunExport.SaveX31(path, run, useRevitElementId: false);
             Validate(File.ReadAllText(path));
         });
-        Test("persisted run X82 keeps the complete source LV and saves only to a new path", () =>
+        Test("persisted run X82 keeps only measured source positions and saves only to a new path", () =>
         {
             var template = Read(Fixture);
             var record = new AvaQuantityRecord(Guid.NewGuid(), "B0000001", "FirstItem", "01.0010",
                 "Erste Position", "m2", "42", "Konstante 5 m2", "5 m2", "", "", "", "", 5m);
             var run = new AvaQuantityRun(AvaQuantityRunCodec.CurrentSchemaVersion, Guid.NewGuid(), DateTimeOffset.UtcNow,
-                "Testprojekt", "", "alle Elemente", TemplateJson.Serialize(template), [record]);
+                "Testprojekt", "", "alle Elemente", TemplateJson.Serialize(template), [record,
+                    record with { RecordId = Guid.NewGuid(), BimassistId = "B0000002", RevitElementId = "43", Result = 0.0005m }]);
             var xml = XDocument.Parse(AvaQuantityRunExport.SerializeX82(run));
             ValidateX82(xml);
             var formulaRun = run with { Records = [record with { FormulaWithParameters = "B*H [B: Breite (Typ); H: Höhe (Instanz)]",
@@ -401,13 +463,14 @@ internal static class Program
                 .Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
             ValidateX82(formulaXml);
             var items = xml.Descendants(SourceNs + "Item").ToArray();
-            Equal(2, items.Length);
-            Equal("999", (string?)items.Single(item => (string?)item.Attribute("ID") == "FirstItem").Element(SourceNs + "Qty"));
-            Equal("5", (string?)items.Single(item => (string?)item.Attribute("ID") == "FirstItem")
+            Equal(1, items.Length);
+            Equal("5.001", (string?)items.Single(item => (string?)item.Attribute("ID") == "FirstItem").Element(SourceNs + "Qty"));
+            Equal("5.001", (string?)items.Single(item => (string?)item.Attribute("ID") == "FirstItem")
                 .Element(SourceNs + "QtyDeterm")?.Element(SourceNs + "Qty"));
-            var unmeasured = items.Single(item => (string?)item.Attribute("ID") == "SecondItem");
-            Equal("888", (string?)unmeasured.Element(SourceNs + "Qty"));
-            Require(unmeasured.Element(SourceNs + "QtyDeterm") == null, "Unmeasured source position retained calculated quantity data.");
+            Require(items.All(item => (string?)item.Attribute("ID") != "SecondItem"), "An unmeasured source position was exported.");
+            Equal(5.001m, items.Single().Descendants(SourceNs + "QTakeoff")
+                .Select(line => X31Writer.EvaluateReb91(((string)line.Attribute("Row")!).Substring(31, 38).TrimEnd())).Sum());
+            Equal(TemplateJson.Serialize(template), run.TemplateJson);
 
             WithDirectory(directory =>
             {
@@ -471,7 +534,7 @@ internal static class Program
                 FormulaExpression: "sqrt(V/L)*L", CalculationApproach: "((1,30086/14,454)**(0,5))*14,454");
             var output = XDocument.Parse(X82QuantityWriter.Serialize(Read(Fixture), [row]));
             var item = output.Descendants(SourceNs + "Item").Single(candidate => candidate.Element(SourceNs + "QtyDeterm") != null);
-            Equal("999", item.Element(SourceNs + "Qty")!.Value);
+            Equal("4.336", item.Element(SourceNs + "Qty")!.Value);
             Equal("m2", item.Element(SourceNs + "QU")!.Value);
             Equal("4.336", item.Element(SourceNs + "QtyDeterm")!.Element(SourceNs + "Qty")!.Value);
             var calculation = item.Descendants(SourceNs + "QTakeoff").Select(x => (string)x.Attribute("Row")!)

@@ -106,6 +106,7 @@ internal static class ExecuteTests
             Equal(2, AvaQuantityRunStorage.SaveCount);
             Check(Transaction.LastCommitForcedModal, "Recalculation committed without modal failure handling");
             Equal(visibleOnly ? 1 : 2, presented!.Records.Count);
+            Equal(visibleOnly, (bool?)typeof(AvaQuantityRun).GetProperty("VisibleOnly")?.GetValue(presented));
             Check(presented.Records.All(record => record.Result == 7m && record.Unit == "m"), "New quantities or LV units were not persisted");
             Equal("", presented.Records[0].GroupingParameter);
             Contains(visibleOnly ? "Revit-Ansichtssichtbarkeit" : "alle Modellelement-Instanzen", presented.ScopeDescription);
@@ -189,6 +190,7 @@ internal static class ExecuteTests
             Equal(Result.Succeeded, f.Execute());
             var run = AvaQuantityRunStorage.LastRun!;
             Contains("Revit-Ansichtssichtbarkeit in „Grundriss EG“", run.ScopeDescription);
+            Equal(true, (bool?)typeof(AvaQuantityRun).GetProperty("VisibleOnly")?.GetValue(run));
             Contains("Elemente außerhalb des Zuschneidebereichs können dennoch enthalten sein", run.ScopeDescription);
             Equal(1, run.Records.Count);
         });
