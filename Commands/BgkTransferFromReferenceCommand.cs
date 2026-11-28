@@ -7,6 +7,7 @@ using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using BIMassist.Ava.Core;
+using BIMassist.Core;
 
 namespace BIMassist.Commands;
 
@@ -15,19 +16,34 @@ public sealed class BgkTransferFromReferenceCommand : IExternalCommand
 {
     public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
     {
+        var session = new BgkReferenceImportSession(commandData.Application, _ => { });
+        try { return session.RunInContext(commandData.Application, commandData.Application.ActiveUIDocument?.Document, out message); }
+        finally { session.Close(); }
+    }
+}
+
+/// <summary>Shared API-context workflow, used by the manager and the compatibility command.</summary>
+internal static class BgkReferenceImportWorkflow
+{
+    internal static Result Run(UIApplication uiapp, Document? targetDocument, BgkReferenceImportWriter writer, ref string message,
+        Func<UIApplication, IReadOnlyList<Document>, Document?>? selectReference = null)
+    {
         try
         {
-            var uiapp = commandData.Application;
             var activeDocument = uiapp.ActiveUIDocument?.Document
                 ?? throw new InvalidOperationException("Zuerst ein Revit-Projekt öffnen.");
+            if (targetDocument == null || !targetDocument.IsValidObject || !targetDocument.Equals(activeDocument))
+                throw new InvalidOperationException("Das Projekt wurde seit dem Klick gewechselt oder geschlossen. Bitte erneut auslösen.");
             if (activeDocument.IsFamilyDocument)
                 throw new InvalidOperationException("Die BGK-Übernahme ist nur in einem Revit-Projekt verfügbar.");
             var references = uiapp.Application.Documents.Cast<Document>()
-                .Where(document => !ReferenceEquals(document, activeDocument) && !document.IsFamilyDocument).ToArray();
+                .Where(document => !document.Equals(activeDocument) && !document.IsFamilyDocument).ToArray();
             if (references.Length == 0)
                 throw new InvalidOperationException("Es ist kein weiteres geöffnetes Projekt als Referenz verfügbar.");
-            var reference = SelectReferenceProject(uiapp, references);
+            var reference = (selectReference ?? SelectReferenceProject)(uiapp, references);
             if (reference == null) return Result.Cancelled;
+            if (!reference.IsValidObject || reference.IsFamilyDocument || !references.Contains(reference))
+                throw new InvalidOperationException("Das Referenzprojekt wurde geschlossen oder ist nicht mehr verfügbar.");
 
             var targetSymbols = new FilteredElementCollector(activeDocument).OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>().ToArray();
             var sourceSymbols = new FilteredElementCollector(reference).OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>().ToArray();
@@ -53,39 +69,33 @@ public sealed class BgkTransferFromReferenceCommand : IExternalCommand
                 DefaultButton = TaskDialogResult.No
             };
             if (confirm.Show() != TaskDialogResult.Yes) return Result.Cancelled;
+            if (!activeDocument.IsValidObject || !activeDocument.Equals(uiapp.ActiveUIDocument?.Document))
+                throw new InvalidOperationException("Das Projekt wurde während der Bestätigung gewechselt oder geschlossen. Bitte erneut auslösen.");
+            if (!reference.IsValidObject)
+                throw new InvalidOperationException("Das Referenzprojekt wurde während der Bestätigung geschlossen. Bitte erneut auslösen.");
 
-            using (var transaction = new Transaction(activeDocument, "BGK aus Referenzprojekt übernehmen"))
+            writer.Committed = () =>
             {
-                transaction.Start();
-                foreach (var decision in plan.Where(x => x.Status == BgkTransferStatus.Copy))
+                var resultDialog = new TaskDialog("BGK-Übernahme abgeschlossen")
                 {
-                    var symbol = targetSymbols.Single(x => FamilyName(x) == decision.Target.FamilyName && x.Name == decision.Target.TypeName);
-                    var parameter = symbol.get_Parameter(BuiltInParameter.ASSEMBLY_CODE)
-                        ?? throw new InvalidOperationException("ASSEMBLY_CODE verschwand während der Übernahme.");
-                    if (!parameter.Set(decision.Value!))
-                        throw new InvalidOperationException($"BGK konnte nicht gesetzt werden: {decision.Target.FamilyName} / {decision.Target.TypeName}.");
+                    MainInstruction = "BGK-Übernahme abgeschlossen und rückgelesen.",
+                    MainContent = "Referenz: " + DocumentLabel(reference) + "\nAktives Projekt: " + DocumentLabel(activeDocument) + "\n\n" + summary,
+                    CommonButtons = TaskDialogCommonButtons.Ok
+                };
+                resultDialog.Show();
+                var skipped = plan.Where(x => x.Status != BgkTransferStatus.Copy).ToArray();
+                if (skipped.Length > 0 && TaskDialog.Show("Nicht übernommene Typen", "Sollen die nicht übernommenen aktiven Familien/Typen als tabellarische Textdatei ausgegeben werden?") == TaskDialogResult.Yes)
+                {
+                    try { SaveSkippedReport(uiapp, skipped); }
+                    catch (Exception ex) { TaskDialog.Show("Bericht konnte nicht gespeichert werden", "Die BGK-Übernahme ist abgeschlossen. Der optionale Bericht konnte nicht gespeichert werden:\n" + ex.Message); }
                 }
-                if (transaction.Commit() != TransactionStatus.Committed)
-                    throw new InvalidOperationException("Revit hat die BGK-Transaktion nicht übernommen.");
-            }
-
-            var resultDialog = new TaskDialog("BGK-Übernahme abgeschlossen")
-            {
-                MainInstruction = "BGK-Übernahme abgeschlossen.",
-                MainContent = "Referenz: " + DocumentLabel(reference) + "\nAktives Projekt: " + DocumentLabel(activeDocument) + "\n\n" + summary,
-                CommonButtons = TaskDialogCommonButtons.Ok
             };
-            resultDialog.Show();
-            var skipped = plan.Where(x => x.Status != BgkTransferStatus.Copy).ToArray();
-            if (skipped.Length > 0 && TaskDialog.Show("Nicht übernommene Typen", "Sollen die nicht übernommenen aktiven Familien/Typen als tabellarische Textdatei ausgegeben werden?") == TaskDialogResult.Yes)
-            {
-                try { SaveSkippedReport(uiapp, skipped); }
-                catch (Exception ex) { TaskDialog.Show("Bericht konnte nicht gespeichert werden", "Die BGK-Übernahme ist abgeschlossen. Der optionale Bericht konnte nicht gespeichert werden:\n" + ex.Message); }
-            }
+            writer.Write(activeDocument, targetSymbols, plan);
             return Result.Succeeded;
         }
         catch (Exception ex)
         {
+            writer.Committed = null;
             message = ex.Message;
             TaskDialog.Show("BGK-Übernahme fehlgeschlagen", ex.Message);
             return Result.Failed;

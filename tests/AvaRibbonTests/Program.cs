@@ -29,11 +29,9 @@ if (!ava.Success || info <= ava.Index) throw new Exception("AVA group must prece
 int nextGroup = ribbon.IndexOf("new PushButtonData(\"Metadaten\"", ava.Index, StringComparison.Ordinal);
 if (nextGroup <= ava.Index || nextGroup >= info) throw new Exception("Metadata ribbon group boundary was not found.");
 string segment = ribbon[ava.Index..nextGroup];
-int viewer = segment.IndexOf("new PushButtonData(\"AVA LV-Viewer\", \"LV-Viewer / X82\"", StringComparison.Ordinal);
-if (viewer < 0 || !segment[viewer..].Contains("BIMassist.Commands.AvaLvViewerCommand", StringComparison.Ordinal)
-    || segment.IndexOf("new PushButtonData(\"AVA Vorlagen\"", StringComparison.Ordinal) >= viewer
-    || viewer >= segment.IndexOf("new PushButtonData(\"AVA Mengenermittlung\"", StringComparison.Ordinal))
-    throw new Exception("The X82 LV viewer must be available in BGK/GAEB before quantity takeoff.");
+if (segment.Contains("BIMassist.Commands.AvaLvViewerCommand", StringComparison.Ordinal)
+    || segment.Contains("BIMassist.Commands.BgkTransferFromReferenceCommand", StringComparison.Ordinal))
+    throw new Exception("File viewers belong in Mengenermittlung and reference transfer belongs in BGK-Manager, not separate ribbon entries.");
 string viewerCommand = File.ReadAllText(Path.Combine(root, "Commands", "AvaLvViewerCommand.cs"));
 if (!viewerCommand.Contains("TransactionMode.ReadOnly", StringComparison.Ordinal)
     || !viewerCommand.Contains("new FileOpenDialog(\"GAEB-LV (*.x82)", StringComparison.Ordinal)

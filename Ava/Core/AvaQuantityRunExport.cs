@@ -23,10 +23,15 @@ public static class AvaQuantityRunExport
         return X82QuantityWriter.Serialize(template, ToTakeoffRows(run));
     }
 
-    public static void SaveX82(string path, AvaQuantityRun run)
+    public static void SaveX82(string path, AvaQuantityRun run) => SaveX82(path, run, null);
+
+    public static void SaveX82(string path, AvaQuantityRun run, AvaExportDestination? destination)
     {
         var template = Prepare(run);
-        X82QuantityWriter.Save(path, template, ToTakeoffRows(run));
+        AvaExportDestination.EnsureNotProtected(path, [run.ProjectPath, template.LvCatalog.Source.FileName]);
+        AvaExportDestination.EnsureNotSource(path, template.LvCatalog.Source);
+        (destination ?? AvaExportDestination.NewFile(path)).Save(path,
+            temporary => X82QuantityWriter.Save(temporary, template, ToTakeoffRows(run)));
     }
 
     private static IReadOnlyList<QuantityTakeoffRow> ToTakeoffRows(AvaQuantityRun run) => run.Records

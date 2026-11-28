@@ -22,6 +22,94 @@ internal static class ExecuteTests
 
     public static void Run()
     {
+        Test("recalculation diagnoses exact identification source and missing versus empty without guessing values", f =>
+        {
+            var template = f.Template();
+            f.Type.BuiltIns.Remove(BuiltInParameter.ASSEMBLY_CODE);
+            f.Type.BuiltIns[BuiltInParameter.ALL_MODEL_TYPE_COMMENTS] = new("Typ", SpecTypeId.String.Text, " ", StorageType.String);
+            // A populated opposite-scope value must remain diagnostic only, never become a replacement.
+            f.Instance.BuiltIns[BuiltInParameter.ASSEMBLY_CODE] = new("BGK", SpecTypeId.String.Text, "001", StorageType.String);
+            f.Instance.Category!.Name = "Skelettbau";
+            f.Remember(template);
+            Equal(Result.Cancelled, f.Recalculate(false, _ => throw new Exception("Unmarked element was measured")));
+            var notice = TaskDialog.Notices.Single();
+            Contains("Klasse: FamilyInstance", notice);
+            Contains("Kategorie: Skelettbau", notice);
+            Contains("Familie: Sample family", notice);
+            Contains("Revit-Typ: Sample type", notice);
+            Contains("ASSEMBLY_CODE", notice);
+            Contains("ALL_MODEL_TYPE_COMMENTS", notice);
+            Contains("BGK-Quelle: Baugruppenkennzeichen | TEXT | Type", notice);
+            Contains("nicht vorhanden", notice);
+            Contains("vorhanden, aber leer", notice);
+            Equal(0, Transaction.StartCount);
+        });
+        Test("successful diagnostics reconcile distinct elements versus rows and disclose capped skips", f =>
+        {
+            var template = f.Template();
+            template.Mappings[0].Positions.Add(new() { LvItemId = "FirstItem", Quantity = new()
+                { Kind = QuantityKind.Constant, Source = null, ConstantValue = 3, Unit = "m" } });
+            template.Mappings[0].Conditions.Add(new() { Source = new() { Kind = ParameterKind.ByName,
+                Name = "Include", Spec = "TEXT", Scope = ParameterScope.Instance }, Operand = OperandKind.Text, Text = "yes" });
+            f.Instance.Parameters.Add(new("Include", SpecTypeId.String.Text, "yes", StorageType.String));
+            var excluded = new FamilyInstance { Id = new(430000), TypeId = f.Type.Id };
+            excluded.Parameters.Add(new("Include", SpecTypeId.String.Text, "no", StorageType.String));
+            f.Document.Elements.Add(excluded);
+            for (var i = 0; i < 101; i++) f.Document.Elements.Add(new FamilyInstance { Id = new(500000 + i), TypeId = new(999999) });
+            f.Remember(template);
+            Equal(Result.Succeeded, f.Recalculate(false, _ => { }));
+            var notice = TaskDialog.Notices.Single();
+            Contains("Untersuchte Modellelemente: 103 (verschiedene ElementIDs)", notice);
+            Contains("Mit passender BGK-/Typzuordnung: 2", notice);
+            Contains("Elemente mit Mengenzeile: 1 (verschiedene ElementIDs)", notice);
+            Contains("Ermittelte Mengenzeilen: 2", notice);
+            Contains("Elemente ohne Mengenzeile: 102", notice);
+            Contains("Ohne vollständige BGK-/Typkennzeichnung: 101", notice);
+            Contains("Diagnosedetails: 100 von 102", notice);
+            Contains("2 weitere Elemente ohne Mengenzeile nicht angezeigt", notice);
+            Contains("Ein Element kann mehrere Mengenzeilen erzeugen", notice);
+            Contains("benutzerweit zuletzt gewählt, nicht projektgebunden", notice);
+            Contains(f.TemplatePath, notice);
+            Contains("Umfang: alle Modellelement-Instanzen", notice);
+        });
+        Test("three physical beams plus cameras HVAC zone and model line report only the genuinely unmarked beam", f =>
+        {
+            var template = f.Template();
+            template.Mappings[0].Positions.Add(new() { LvItemId = "FirstItem", Quantity = new()
+                { Kind = QuantityKind.Constant, Source = null, ConstantValue = 3, Unit = "m" } });
+            f.Instance.Id = new(19100416);
+            var emptyType = new FamilySymbol { Id = new(14549342), Name = "Bohrpfahlwandverbau Aussteifung HEB 300",
+                Family = new() { Name = "HEB Träger" } };
+            emptyType.BuiltIns[BuiltInParameter.ASSEMBLY_CODE] = new("Baugruppenkennzeichen", SpecTypeId.String.Text, "", StorageType.String);
+            emptyType.BuiltIns[BuiltInParameter.ALL_MODEL_TYPE_COMMENTS] = new("Typenkommentare", SpecTypeId.String.Text, "", StorageType.String);
+            f.Document.Elements.AddRange([emptyType,
+                new FamilyInstance { Id = new(19101376), TypeId = emptyType.Id, Category = new() { Name = "Skelettbau" } },
+                new FamilyInstance { Id = new(19101312), TypeId = f.Type.Id },
+                new Autodesk.Revit.DB.Mechanical.Zone { Id = new(570537), Name = "Standard" },
+                new ModelLine { Id = new(6247427), Name = "Modelllinien" }]);
+            foreach (var id in new[] { 13032132, 17810710 })
+                f.Document.Elements.Add(new Element { Id = new(id), Category = new() { Name = "Kameras", CanAddSubcategory = false } });
+            foreach (var element in f.Document.Elements) element.VisibleInViews.Add(700);
+            f.Remember(template);
+            foreach (var visibleOnly in new[] { false, true })
+            {
+                TaskDialog.Notices.Clear();
+                Equal(Result.Succeeded, f.Recalculate(visibleOnly, _ => { }));
+                var notice = TaskDialog.Notices.Single();
+                Contains("Untersuchte Modellelemente: 3", notice);
+                Contains("Ohne vollständige BGK-/Typkennzeichnung: 1", notice);
+                Contains("Elemente mit Mengenzeile: 2", notice);
+                Contains("Ermittelte Mengenzeilen: 4", notice);
+                Contains("Element 19101376: BGK '' / Typ '' unvollständig", notice);
+                Contains("BGK: vorhanden, aber leer; Typ: vorhanden, aber leer", notice);
+                Check(new[] { "13032132", "17810710", "570537", "6247427" }.All(id => !notice.Contains(id)),
+                    "Camera/zone/model-line resources were diagnosed as physical model instances");
+                Equal(4, AvaQuantityRunStorage.LastRun!.Records.Count);
+                var collected = RevitQuantityReader.Elements(f.Document, template, viewId: visibleOnly ? new ElementId(700) : null);
+                Check(collected.Select(element => element.Id).OrderBy(id => id).SequenceEqual(new[] { "19100416", "19101312", "19101376" }),
+                    "Physical candidate IDs differ from the three actual placed beams");
+            }
+        });
         Test("project run captures multiple grouping parameters before the modeless window opens", f =>
         {
             f.Instance.Parameters.Add(new("Teilbereich", SpecTypeId.String.Text, "Raum A", StorageType.String));

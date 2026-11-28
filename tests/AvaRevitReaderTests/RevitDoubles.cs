@@ -4,7 +4,14 @@ public record ForgeTypeId(string Value) { public string TypeId => Value; }
 public enum StorageType { None, Integer, Double, String, ElementId }
 public enum BuiltInParameter { INVALID = -1, ASSEMBLY_CODE = -2, ALL_MODEL_TYPE_COMMENTS = -3, ALL_MODEL_DESCRIPTION = -4, HOST_VOLUME_COMPUTED = -5, RBS_PIPE_DIAMETER_PARAM = -6 }
 public enum CategoryType { Model, Annotation }
-public sealed class Category { public ElementId Id { get; set; } = new(-1); public CategoryType CategoryType { get; set; } = CategoryType.Model; public string Name { get; set; } = "Model"; }
+public sealed class Category
+{
+    public ElementId Id { get; set; } = new(-1);
+    public CategoryType CategoryType { get; set; } = CategoryType.Model;
+    public string Name { get; set; } = "Model";
+    public bool CanAddSubcategory { get; set; } = true;
+    public bool HasMaterialQuantities { get; set; }
+}
 public static class SpecTypeId
 {
     public static ForgeTypeId Length = new("LENGTH"), PipeSize = new("PIPE_SIZE"), PipeDimension = new("PIPE_DIMENSION"), Area = new("AREA"), Volume = new("VOLUME"), Angle = new("ANGLE"), Number = new("NUMBER"), MassDensity = new("MASS_DENSITY");
@@ -107,6 +114,7 @@ public class Element
     public string Name { get; set; } = "TestType";
     public Category? Category { get; set; } = new();
     public ElementId TypeId { get; set; } = new(2);
+    public bool ViewSpecific { get; set; }
     public HashSet<long> VisibleInViews { get; } = [];
     public HashSet<long> HiddenInViews { get; } = [];
     public List<Parameter> Parameters { get; } = [];
@@ -118,6 +126,13 @@ public class Element
     public bool IsHidden(View view) => HiddenInViews.Contains(view.Id.Value);
 }
 public sealed class FamilyInstance : Element { }
+public sealed class DirectShape : Element { }
+public class CurveElement : Element { }
+public class ModelCurve : CurveElement { }
+public sealed class ModelLine : ModelCurve { }
+public sealed class DetailLine : CurveElement { }
+public class MEPCurve : Element { }
+public class SpatialElement : Element { }
 public sealed class RevitLinkInstance : Element { }
 public sealed class ImportInstance : Element { public bool IsLinked { get; init; } }
 public class ElementType : Element { }

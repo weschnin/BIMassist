@@ -463,89 +463,99 @@ public sealed class AvaX31ReviewCommand : IExternalCommand
         private void ExportMeasuredX31(Document document, bool useRevitElementId)
         {
             if (quantityRun == null) throw new InvalidOperationException("Der gespeicherte Mengenermittlungslauf ist nicht verfügbar.");
-            using var save = new FileSaveDialog("GAEB-Mengenermittlung (*.x31)|*.x31|Alle Dateien (*.*)|*.*")
-            {
-                Title = "Gemessene Mengen als X31 speichern",
-                DefaultFilterEntry = "*.x31",
-                InitialFileName = "Mengenermittlung.x31"
-            };
-            if (save.Show() != ItemSelectionDialogResult.Confirmed)
+            var save = CreateExportPicker("GAEB-Mengenermittlung (*.x31)|*.x31|Alle Dateien (*.*)|*.*",
+                "Gemessene Mengen als X31 speichern", ".x31");
+            if (save.ShowDialog() != true)
             {
                 ReportIsolationStatus("X31-Export abgebrochen. Der gespeicherte Mengenermittlungslauf bleibt unverändert.");
                 return;
             }
-            var selectedPath = save.GetSelectedModelPath()
-                ?? throw new InvalidDataException("Der Revit-Speicherdialog hat keinen X31-Dateipfad zurückgegeben.");
-            var outputPath = Path.GetFullPath(ModelPathUtils.ConvertModelPathToUserVisiblePath(selectedPath));
-            var workspace = new AvaWorkspace();
-            var protectedPaths = new[] { document.PathName, workspace.LastTemplatePath, AvaWorkspace.DefaultSettingsPath }
-                .Where(path => !string.IsNullOrWhiteSpace(path))
-                .Select(Path.GetFullPath);
-            if (protectedPaths.Contains(outputPath, StringComparer.OrdinalIgnoreCase))
-                throw new InvalidDataException("Die X31-Ausgabe darf das Revit-Projekt, die aktive AVA-Vorlage oder die Arbeitsbereich-Einstellungen nicht überschreiben.");
-
-            AvaQuantityRunExport.SaveX31(outputPath, quantityRun, useRevitElementId);
+            var outputPath = Path.GetFullPath(save.FileName);
+            var destination = ChooseExportDestination(document, outputPath);
+            if (destination == null)
+            {
+                ReportIsolationStatus("X31-Export abgebrochen. Die vorhandene Datei bleibt unverändert.");
+                return;
+            }
+            destination.Save(outputPath, temporary => AvaQuantityRunExport.SaveX31(temporary, quantityRun, useRevitElementId));
             ReportIsolationStatus("X31-Datei erstellt und gelesen geprüft.\n" + outputPath);
         }
 
         private void ExportMeasuredX82(Document document)
         {
             if (quantityRun == null) throw new InvalidOperationException("Der gespeicherte Mengenermittlungslauf ist nicht verfügbar.");
-            using var save = new FileSaveDialog("GAEB-LV mit Mengenermittlung (*.x82)|*.x82|Alle Dateien (*.*)|*.*")
-            {
-                Title = "Ermittelte LV-Positionen mit kumulierten Mengen als X82 speichern",
-                DefaultFilterEntry = "*.x82",
-                InitialFileName = "Mengenermittlung.x82"
-            };
-            if (save.Show() != ItemSelectionDialogResult.Confirmed)
+            var save = CreateExportPicker("GAEB-LV mit Mengenermittlung (*.x82)|*.x82|Alle Dateien (*.*)|*.*",
+                "Ermittelte LV-Positionen mit kumulierten Mengen als X82 speichern", ".x82");
+            if (save.ShowDialog() != true)
             {
                 ReportIsolationStatus("X82-Export abgebrochen. Der gespeicherte Mengenermittlungslauf bleibt unverändert.");
                 return;
             }
-            var selectedPath = save.GetSelectedModelPath()
-                ?? throw new InvalidDataException("Der Revit-Speicherdialog hat keinen X82-Dateipfad zurückgegeben.");
-            var outputPath = Path.GetFullPath(ModelPathUtils.ConvertModelPathToUserVisiblePath(selectedPath));
-            var workspace = new AvaWorkspace();
-            var template = TemplateJson.Deserialize(quantityRun.TemplateJson);
-            var protectedPaths = new[] { document.PathName, workspace.LastTemplatePath, AvaWorkspace.DefaultSettingsPath,
-                    template.LvCatalog.Source.FileName }
-                .Where(path => !string.IsNullOrWhiteSpace(path) && Path.IsPathRooted(path))
-                .Select(Path.GetFullPath);
-            if (protectedPaths.Contains(outputPath, StringComparer.OrdinalIgnoreCase))
-                throw new InvalidDataException("Die X82-Ausgabe darf das Revit-Projekt, die aktive AVA-Vorlage, Arbeitsbereich-Einstellungen oder ein Quell-LV nicht überschreiben.");
-
-            AvaQuantityRunExport.SaveX82(outputPath, quantityRun);
+            var outputPath = Path.GetFullPath(save.FileName);
+            var destination = ChooseExportDestination(document, outputPath);
+            if (destination == null)
+            {
+                ReportIsolationStatus("X82-Export abgebrochen. Die vorhandene Datei bleibt unverändert.");
+                return;
+            }
+            AvaQuantityRunExport.SaveX82(outputPath, quantityRun, destination);
             ReportIsolationStatus("X82-Datei mit den ermittelten LV-Positionen und kumulierten Mengen erstellt und geprüft. Die LV-Einheiten bleiben unverändert.\n" + outputPath);
         }
 
         private void ExportConfiguredExcel(Document document, AvaQuantityTable table)
         {
             if (table.Columns.Count == 0) throw new InvalidDataException("Für den Excel-Export muss mindestens eine Spalte sichtbar sein.");
-            using var save = new FileSaveDialog("Excel-Arbeitsmappe (*.xlsx)|*.xlsx|Alle Dateien (*.*)|*.*")
-            {
-                Title = "Konfigurierte Mengenermittlung als Excel speichern",
-                DefaultFilterEntry = "*.xlsx",
-                InitialFileName = "Mengenermittlung.xlsx"
-            };
-            if (save.Show() != ItemSelectionDialogResult.Confirmed)
+            var save = CreateExportPicker("Excel-Arbeitsmappe (*.xlsx)|*.xlsx|Alle Dateien (*.*)|*.*",
+                "Konfigurierte Mengenermittlung als Excel speichern", ".xlsx");
+            if (save.ShowDialog() != true)
             {
                 ReportIsolationStatus("Excel-Export abgebrochen. Die Mengenermittlung bleibt unverändert.");
                 return;
             }
-            var modelPath = save.GetSelectedModelPath()
-                ?? throw new InvalidDataException("Der Revit-Speicherdialog hat keinen Excel-Dateipfad zurückgegeben.");
-            var path = Path.GetFullPath(ModelPathUtils.ConvertModelPathToUserVisiblePath(modelPath));
+            var path = Path.GetFullPath(save.FileName);
             if (!string.Equals(Path.GetExtension(path), ".xlsx", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Für den Excel-Export einen Dateinamen mit der Erweiterung .xlsx wählen.");
-            var workspace = new AvaWorkspace();
-            var sourceLv = quantityRun == null ? null : TemplateJson.Deserialize(quantityRun.TemplateJson).LvCatalog.Source.FileName;
-            var protectedPaths = new[] { document.PathName, workspace.LastTemplatePath, AvaWorkspace.DefaultSettingsPath, sourceLv }
-                .Where(value => !string.IsNullOrWhiteSpace(value) && Path.IsPathRooted(value))
-                .Select(Path.GetFullPath);
-            if (protectedPaths.Contains(path, StringComparer.OrdinalIgnoreCase))
-                throw new InvalidDataException("Der Excel-Export darf das Revit-Projekt, die AVA-Vorlage, die Einstellungen oder das Quell-LV nicht überschreiben.");
-            AvaQuantityXlsxWriter.Save(path, table);
+            var destination = ChooseExportDestination(document, path);
+            if (destination == null)
+            {
+                ReportIsolationStatus("Excel-Export abgebrochen. Die vorhandene Datei bleibt unverändert.");
+                return;
+            }
+            destination.Save(path, temporary => AvaQuantityXlsxWriter.Save(temporary, table));
             ReportIsolationStatus($"Excel-Datei mit {table.Rows.Count} Zeilen und {table.Columns.Count} sichtbaren Spalten erstellt und geprüft.\n" + path);
+        }
+
+        private static Microsoft.Win32.SaveFileDialog CreateExportPicker(string filter, string title, string extension) => new()
+        {
+            Filter = filter,
+            Title = title,
+            DefaultExt = extension,
+            FileName = "Mengenermittlung" + extension,
+            FilterIndex = 1,
+            AddExtension = true,
+            CheckPathExists = true,
+            // Choosing a name must not create a placeholder or authorize replacement.
+            CreateTestFile = false,
+            OverwritePrompt = false
+        };
+
+        private AvaExportDestination? ChooseExportDestination(Document document, string path)
+        {
+            var workspace = new AvaWorkspace();
+            var sourceLv = quantityRun == null ? null : TemplateJson.Deserialize(quantityRun.TemplateJson).LvCatalog.Source;
+            var protectedPaths = new[] { document.PathName, quantityRun?.ProjectPath, workspace.LastTemplatePath,
+                AvaWorkspace.DefaultSettingsPath, sourceLv?.FileName };
+            return AvaExportDestination.Choose(path, protectedPaths, existingPath =>
+            {
+                var dialog = new TaskDialog("AVA – vorhandene Exportdatei ersetzen?")
+                {
+                    MainInstruction = "Die ausgewählte Datei ist bereits vorhanden. Soll sie ersetzt werden?",
+                    MainContent = existingPath + "\n\nErst nach erfolgreicher Prüfung wird die vorhandene Datei atomar ersetzt. Bei Abbruch oder Fehler bleibt sie unverändert.",
+                    CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No,
+                    DefaultButton = TaskDialogResult.No
+                };
+                return dialog.Show() == TaskDialogResult.Yes;
+            }, source: sourceLv);
         }
 
         private bool ClearPreviousTemporaryIsolation(UIApplication app, UIDocument uiDocument, Document document)

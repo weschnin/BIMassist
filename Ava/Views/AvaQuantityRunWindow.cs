@@ -41,7 +41,8 @@ internal sealed class AvaQuantityRunWindow : Window
         Action<GroupingParameterOption?> postGrouping, Action<bool> postRecalculate, bool actionsEnabled = true,
         bool selectionActionsEnabled = true, bool x31ExportEnabled = false, bool x82ExportEnabled = false,
         AvaQuantityViewSettings? settings = null, Action<AvaQuantityViewSettings>? postSettings = null,
-        Action<bool>? postMissing = null, Action<AvaQuantityTable>? postExcel = null)
+        Action<bool>? postMissing = null, Action<AvaQuantityTable>? postExcel = null,
+        Action? openX31Viewer = null, Action? openX82Viewer = null)
     {
         this.actionsEnabled = actionsEnabled;
         this.postSettings = postSettings;
@@ -61,6 +62,7 @@ internal sealed class AvaQuantityRunWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         var layout = new Grid { Margin = new Thickness(12) };
+        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -152,6 +154,17 @@ internal sealed class AvaQuantityRunWindow : Window
         Grid.SetRow(exports, 2);
         layout.Children.Add(exports);
 
+        var viewers = new WrapPanel { Margin = new Thickness(0, 0, 0, 8), VerticalAlignment = VerticalAlignment.Center };
+        viewers.Children.Add(new TextBlock { Text = "Dateiansicht (schreibgeschützt):", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) });
+        var x31Viewer = Button("X31 Viewer", () => openX31Viewer?.Invoke(), 110);
+        var x82Viewer = Button("X82 Viewer", () => openX82Viewer?.Invoke(), 110);
+        x31Viewer.IsEnabled = openX31Viewer != null;
+        x82Viewer.IsEnabled = openX82Viewer != null;
+        x31Viewer.ToolTip = "X31-Datei ohne Modellprüfung öffnen; keine Zeilenauswahl erforderlich.";
+        x82Viewer.ToolTip = "X82-Datei im bestehenden LV-Viewer öffnen; keine Zeilenauswahl erforderlich.";
+        viewers.Children.Add(x31Viewer); viewers.Children.Add(x82Viewer);
+        Grid.SetRow(viewers, 3); layout.Children.Add(viewers);
+
         grid = new DataGrid
         {
             AutoGenerateColumns = false,
@@ -197,11 +210,11 @@ internal sealed class AvaQuantityRunWindow : Window
         grid.ContextMenu = columnMenu;
         rowsView = CollectionViewSource.GetDefaultView(rows);
         grid.ItemsSource = rowsView;
-        Grid.SetRow(grid, 3);
+        Grid.SetRow(grid, 4);
         layout.Children.Add(grid);
 
         status = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) };
-        Grid.SetRow(status, 4);
+        Grid.SetRow(status, 5);
         layout.Children.Add(status);
         Content = layout;
         SetRun(run);
@@ -232,9 +245,11 @@ internal sealed class AvaQuantityRunWindow : Window
     }
 
     internal int GroupingDescriptionCount => rowsView.GroupDescriptions.Count;
+    internal AvaQuantityRun CurrentRun { get; private set; } = null!;
 
     internal void SetRun(AvaQuantityRun run)
     {
+        CurrentRun = run ?? throw new ArgumentNullException(nameof(run));
         var selectedParameter = hasRun ? SelectedGrouping() : initialGrouping
             ?? run.Records.Select(record => record.GroupingParameter).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? "";
         var previousSuppression = suppressSettings;

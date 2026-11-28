@@ -35,6 +35,7 @@ internal static class AvaQuantityRunWindowHost
         handler.UpdateRun(run);
         var externalEvent = ExternalEvent.Create(handler);
         AvaQuantityViewSettingsSession? settingsSession = null;
+        AvaFileViewerSession? fileViewers = null;
         try
         {
             AvaQuantityRunWindow? window = null;
@@ -59,7 +60,11 @@ internal static class AvaQuantityRunWindowHost
                     catch (Exception ex) { window?.ShowStatus("Fenster-Einstellungen konnten nicht vorgemerkt werden: " + ex.Message); }
                 },
                 postMissing: isolate => Post(() => handler.SetMissingRequest(isolate)),
-                postExcel: table => Post(() => handler.SetExcelRequest(table)));
+                postExcel: table => Post(() => handler.SetExcelRequest(table)),
+                openX31Viewer: () => fileViewers?.OpenX31(),
+                openX82Viewer: () => fileViewers?.OpenX82());
+            fileViewers = new AvaFileViewerSession(window, window.ShowStatus,
+                templateSnapshot: () => window.CurrentRun.TemplateJson);
             handler.RunWindow = window;
             void Post(Action setRequest)
             {
@@ -98,6 +103,7 @@ internal static class AvaQuantityRunWindowHost
         }
         catch
         {
+            fileViewers?.Dispose();
             settingsSession?.Close();
             externalEvent.Dispose();
             throw;

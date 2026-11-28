@@ -74,12 +74,10 @@ namespace BIMassist
                 }) as PulldownButton ?? throw new InvalidOperationException("Die BGK-Gruppe konnte nicht angelegt werden.");
                 bgkGroup.AddPushButton(new PushButtonData("BGK-Manager", "BGK-Manager", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.BGKManagerCommandStartup")
                 { ToolTip = "BGK-Manager öffnen", LongDescription = "Öffnet das BGK-Manager Fenster" });
-                bgkGroup.AddPushButton(new PushButtonData("BGK-Referenzprojekt", "BGK aus Referenzprojekt übernehmen", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.BgkTransferFromReferenceCommand")
-                { ToolTip = "BGK-Werte passender Familien und Typen aus einem geöffneten Referenzprojekt übernehmen" });
+
                 bgkGroup.AddPushButton(new PushButtonData("AVA Vorlagen", "AVA-Vorlagen verwalten", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaTemplateCommand")
                 { ToolTip = "AVA-Vorlagen verwalten", LongDescription = "Bearbeitet portable AVA-Vorlagen und Prüfvorschriften." });
-                bgkGroup.AddPushButton(new PushButtonData("AVA LV-Viewer", "LV-Viewer / X82", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaLvViewerCommand")
-                { ToolTip = "GAEB DA82/3.3-LV öffnen und Mengen, Positionstexte sowie Hierarchie prüfen" });
+
                 bgkGroup.AddPushButton(new PushButtonData("AVA Mengenermittlung", "Mengenermittlung", Assembly.GetExecutingAssembly().Location, "BIMassist.Commands.AvaQuantityTakeoffCommand")
                 { ToolTip = "Mengenermittlung öffnen, prüfen und nach X31 oder X82 exportieren" });
 
@@ -561,7 +559,8 @@ namespace BIMassist
             {
                 foreach (Window window in windows.OfType<Window>().ToList())
                 {
-                    if (window is SnapshotManagerWindow || window is Einstellungen || window is ElementCoordinatesWindow || window is AvaQuantityRunWindow)
+                    if (window is SnapshotManagerWindow || window is Einstellungen || window is ElementCoordinatesWindow
+                        || window is AvaQuantityRunWindow || window is X31FileViewerWindow || window is LvX82ViewerWindow)
                     {
                         try { window.Close(); } catch { }
                     }

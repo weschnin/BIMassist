@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Ava/Core/*.cs" LinkBase="Core" />
+    <Compile Include="../../Ava/Views/AvaQuantityRunWindow.cs" Link="Views/AvaQuantityRunWindow.cs" />
+    <Compile Include="../../Ava/Views/LvX82ViewerWindow.cs" Link="Views/LvX82ViewerWindow.cs" />
+    <Compile Include="../../Ava/Views/X31FileViewerWindow.cs" Link="Views/X31FileViewerWindow.cs" Condition="Exists('../../Ava/Views/X31FileViewerWindow.cs')" />
+    <Compile Include="../../Ava/Views/AvaFileViewerSession.cs" Link="Views/AvaFileViewerSession.cs" Condition="Exists('../../Ava/Views/AvaFileViewerSession.cs')" />
+  </ItemGroup>
+</Project>

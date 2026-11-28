@@ -116,13 +116,15 @@ internal static class QuantityRunWindowTests
         try
         {
             var toolbars = Toolbars(window).OrderBy(System.Windows.Controls.Grid.GetRow).ToArray();
-            Check(toolbars.Length == 2, "The window must have distinct model and export action rows.");
+            Check(toolbars.Length == 3, "The window must retain distinct model/export rows and a third file-viewer row.");
             Check(toolbars[0].Children.OfType<Control>().Take(4).Select(control => control is ComboBox ? "Gruppierung" : ((Button)control).Content?.ToString())
                 .SequenceEqual(["Gruppierung", "Neu berechnen", "Selektieren", "Isolieren"]),
                 "Row one must start with grouping, recalculate, select, isolate in that order.");
             Check(toolbars[1].Children.OfType<Control>().Select(control => control is ComboBox ? "X31-Bemerkung" : ((Button)control).Content?.ToString())
                 .SequenceEqual(["X31-Bemerkung", "X31 exportieren", "X82 exportieren", "Excel exportieren"]),
                 "Row two must contain the identity selector and X31, X82, Excel exports in that order.");
+            Check(toolbars[2].Children.OfType<Button>().Select(button => button.Content?.ToString()).SequenceEqual(["X31 Viewer", "X82 Viewer"]),
+                "Row three must contain the independent file viewers, not model/preflight actions.");
             Check(missing == null, "Initialization must not post missing actions.");
             Button(window, "Fehlende selektieren").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
             Check(missing == false, "Missing select must post false without any row selection.");
@@ -150,7 +152,7 @@ internal static class QuantityRunWindowTests
         var savedScope = WithSettings(Run(Record()) with { VisibleOnly = true }, new() { VisibleOnly = false }, _ => { });
         try { Check(!Capture(savedScope).VisibleOnly, "Stored view settings must override run scope, including an explicit false."); }
         finally { savedScope.Close(); }
-        Console.WriteLine("PASS: two ordered action rows, missing callbacks, scope defaults, and settings controls (real WPF).");
+        Console.WriteLine("PASS: ordered model/export rows plus file-viewer row, missing callbacks, scope defaults, and settings controls (real WPF).");
     }
 
     internal static void ExcelCapturesCurrentPresentation()

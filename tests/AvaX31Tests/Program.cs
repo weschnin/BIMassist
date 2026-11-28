@@ -446,6 +446,122 @@ internal static class Program
             AvaQuantityRunExport.SaveX31(path, run, useRevitElementId: false);
             Validate(File.ReadAllText(path));
         });
+        ExportDestinationTests.Run(Test);
+        ExportConsentWiringTests.Run(Test);
+        Test("persisted run X82 replaces existing output only with checked explicit user consent", () =>
+        {
+            WithDirectory(directory =>
+            {
+                var path = Path.Combine(directory, "approved.x82");
+                File.WriteAllText(path, "previous export");
+                var template = Read(Fixture);
+                var record = new AvaQuantityRecord(Guid.NewGuid(), "B0000001", "FirstItem", "01.0010",
+                    "Position", "m2", "42", "", "", "", "", "", "", 5m);
+                var run = new AvaQuantityRun(1, Guid.NewGuid(), DateTimeOffset.UtcNow, "Project", "", "all",
+                    TemplateJson.Serialize(template), [record]);
+                var confirmations = 0;
+                Func<string, bool> confirm = selected => { Equal(Path.GetFullPath(path), selected); confirmations++; return true; };
+                var destination = AvaExportDestination.Choose(path, [], confirm);
+                AvaQuantityRunExport.SaveX82(path, run, destination);
+                Equal(1, confirmations);
+                Equal(AvaQuantityRunExport.SerializeX82(run), File.ReadAllText(path));
+                ValidateX82(XDocument.Load(path));
+                Equal(1, Directory.GetFiles(directory).Length);
+            });
+        });
+        Test("portable source stamps protect original outside cwd renamed identical copies and modified source basenames", () =>
+        {
+            WithDirectory(directory =>
+            {
+                var sourceDirectory = Directory.CreateDirectory(Path.Combine(directory, "original-location")).FullName;
+                var otherDirectory = Directory.CreateDirectory(Path.Combine(directory, "other-location")).FullName;
+                var sourcePath = Path.Combine(sourceDirectory, "catalog.x82");
+                var renamedPath = Path.Combine(otherDirectory, "renamed-copy.x82");
+                var modifiedPath = Path.Combine(otherDirectory, "CATALOG.X82");
+                File.WriteAllText(sourcePath, Fixture);
+                File.Copy(sourcePath, renamedPath);
+                File.WriteAllText(modifiedPath, "modified original catalog");
+                AvaTemplate template;
+                using (var input = File.OpenRead(sourcePath))
+                    template = new AvaTemplate { LvCatalog = CatalogReaders.ReadX82(input, sourcePath) };
+                Equal("catalog.x82", template.LvCatalog.Source.FileName);
+                var before = TemplateJson.Serialize(template);
+                var record = new AvaQuantityRecord(Guid.NewGuid(), "B0000001", "FirstItem", "01.0010",
+                    "Position", "m2", "42", "", "", "", "", "", "", 5m);
+                var run = new AvaQuantityRun(1, Guid.NewGuid(), DateTimeOffset.UtcNow, "Project", "", "all", before, [record]);
+                foreach (var path in new[] { sourcePath, renamedPath, modifiedPath })
+                {
+                    var original = File.ReadAllBytes(path);
+                    var destination = AvaExportDestination.Choose(path, [], _ => true)!;
+                    try
+                    {
+                        AvaQuantityRunExport.SaveX82(path, run, destination);
+                        throw new Exception("Portable source catalog was overwritten: " + path);
+                    }
+                    catch (InvalidDataException ex)
+                    {
+                        Require(ex.Message.Contains("Dateinamen", StringComparison.Ordinal), "Source protection must explain choosing a new output name");
+                    }
+                    Require(original.SequenceEqual(File.ReadAllBytes(path)), "Source bytes changed");
+                }
+                var unrelated = Path.Combine(otherDirectory, "previous-export.x82");
+                File.WriteAllText(unrelated, "unrelated export");
+                AvaQuantityRunExport.SaveX82(unrelated, run, AvaExportDestination.Choose(unrelated, [], _ => true));
+                Equal(AvaQuantityRunExport.SerializeX82(run), File.ReadAllText(unrelated));
+                Equal(before, TemplateJson.Serialize(template));
+                Equal(before, run.TemplateJson);
+            });
+        });
+        Test("X82 consent never permits replacing its source LV or captured Revit project", () =>
+        {
+            WithDirectory(directory =>
+            {
+                var sourcePath = Path.Combine(directory, "source.x82");
+                var projectPath = Path.Combine(directory, "project.rvt");
+                File.WriteAllText(sourcePath, Fixture);
+                File.WriteAllText(projectPath, "protected Revit bytes");
+                var template = Read(Fixture);
+                template.LvCatalog = template.LvCatalog with { Source = template.LvCatalog.Source with { FileName = sourcePath } };
+                var record = new AvaQuantityRecord(Guid.NewGuid(), "B0000001", "FirstItem", "01.0010",
+                    "Position", "m2", "42", "", "", "", "", "", "", 5m);
+                var run = new AvaQuantityRun(1, Guid.NewGuid(), DateTimeOffset.UtcNow, "Project", projectPath, "all",
+                    TemplateJson.Serialize(template), [record]);
+                foreach (var path in new[] { sourcePath, sourcePath.ToUpperInvariant(), projectPath })
+                {
+                    var original = File.ReadAllBytes(path);
+                    var destination = AvaExportDestination.Choose(path, [], _ => true)!;
+                    Reject(() => AvaQuantityRunExport.SaveX82(path, run, destination));
+                    Require(original.SequenceEqual(File.ReadAllBytes(path)), "Protected file was changed");
+                }
+                Equal(2, Directory.GetFiles(directory).Length);
+            });
+        });
+        Test("approved X82 validation and locked-destination failures leave old bytes intact", () =>
+        {
+            WithDirectory(directory =>
+            {
+                var path = Path.Combine(directory, "preserve.x82");
+                var original = new byte[] { 0, 255, 128, 10, 42 };
+                var record = new AvaQuantityRecord(Guid.NewGuid(), "B0000001", "FirstItem", "01.0010",
+                    "Position", "m2", "42", "", "", "", "", "", "", 5m);
+                var run = new AvaQuantityRun(1, Guid.NewGuid(), DateTimeOffset.UtcNow, "Project", "", "all",
+                    TemplateJson.Serialize(Read(Fixture)), [record]);
+                File.WriteAllBytes(path, original);
+                var destination = AvaExportDestination.Choose(path, [], _ => true)!;
+                Reject(() => AvaQuantityRunExport.SaveX82(path, run with { Records = [record with { Unit = "m" }] }, destination));
+                Require(original.SequenceEqual(File.ReadAllBytes(path)), "Invalid output changed existing bytes");
+                destination = AvaExportDestination.Choose(path, [], _ => true)!;
+                using (var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    var failed = false;
+                    try { AvaQuantityRunExport.SaveX82(path, run, destination); }
+                    catch (IOException) { failed = true; }
+                    Require(failed, "Locked existing target was replaced");
+                }
+                Require(original.SequenceEqual(File.ReadAllBytes(path)), "IO error changed existing bytes");
+                Equal(1, Directory.GetFiles(directory).Length);
+            });
+        });
         Test("persisted run X82 keeps only measured source positions and saves only to a new path", () =>
         {
             var template = Read(Fixture);

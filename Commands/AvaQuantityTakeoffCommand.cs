@@ -94,12 +94,9 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             {
                 const int errorLimit = 15;
                 message = "Mengenermittlung abgebrochen: " + result.Errors.Count + " Fehler. Keine X31-Datei erstellt oder ersetzt.\n\n"
-                    + "Vorlage: " + template.Name + " (" + template.Version + ")\n" + workspace.LastTemplatePath + "\n\n"
-                    + "Untersuchte Modellelemente: " + result.Examined
-                    + "\nOhne vollständige BGK-/Typkennzeichnung: " + result.Unmarked
-                    + "\nOhne passende BGK-/Typzuordnung: " + result.Unmapped
-                    + "\nErmittelte Mengenzeilen (nicht exportiert): " + result.Rows.Count
-                    + "\nAuswahl-/Bedingungsdetails (maximal 20):\n" + string.Join("\n", result.Skipped.Select(s => s.Message))
+                    + TemplateDiagnostics(template, workspace) + "\n\n"
+                    + ResultDiagnostics(result, failed: true)
+                    + "\n" + SkipDiagnostics(result)
                     + "\nUmfang: " + scopeDescription
                     + "\nVerknüpfte Modelle werden nicht ausgewertet."
                     + "\n\nFehlerdetails (erste " + Math.Min(errorLimit, result.Errors.Count) + " von " + result.Errors.Count + ", maximal " + errorLimit + "):\n"
@@ -110,10 +107,9 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             }
             if (result.Rows.Count == 0)
             {
-                TaskDialog.Show("AVA – Mengenermittlung", "Keine passenden Mengenzeilen gefunden.\nUntersuchte Modellelemente: " + result.Examined
-                    + "\nOhne vollständige BGK-/Typkennzeichnung: " + result.Unmarked + "\nOhne passende BGK-/Typzuordnung: " + result.Unmapped
-                    + "\nAuswahl-/Bedingungsdetails (maximal 20):\n" + (result.Skipped.Count == 0
-                        ? "Keine Modellelement-Instanzen im gewählten Umfang oder keine auswertbare Position." : string.Join("\n", result.Skipped.Select(s => s.Message)))
+                TaskDialog.Show("AVA – Mengenermittlung", "Keine passenden Mengenzeilen gefunden.\n" + TemplateDiagnostics(template, workspace)
+                    + "\n" + ResultDiagnostics(result)
+                    + "\n" + SkipDiagnostics(result)
                     + "\nUmfang: " + scopeDescription
                     + "\nKeine Datei erstellt. Verknüpfte Modelle werden nicht ausgewertet.");
                 return Result.Cancelled;
@@ -151,15 +147,17 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             if (warnings.Count > 0 || result.Skipped.Count > 0)
             {
                 var details = new System.Collections.Generic.List<string>();
+                details.Add(TemplateDiagnostics(template, workspace));
+                details.Add(ResultDiagnostics(result));
+                details.Add("Umfang: " + scopeDescription + "\nVerknüpfte Modelle werden nicht ausgewertet.");
                 if (warnings.Count > 0)
                 {
-                    details.Add("Vorlagenhinweise:");
+                    details.Add("Vorlagenhinweise (gesamte Vorlage; keine zusätzlichen Modellelemente):");
                     details.AddRange(warnings.Select(warning => warning.ToString()));
                 }
                 if (result.Skipped.Count > 0)
                 {
-                    details.Add("Elemente ohne Mengenzeile (Diagnosedetails, maximal 100):");
-                    details.AddRange(result.Skipped.Take(100).Select(skip => skip.Message));
+                    details.Add(SkipDiagnostics(result));
                 }
                 TaskDialog.Show("AVA – Mengenermittlung Hinweise", string.Join("\n", details));
             }
@@ -178,6 +176,27 @@ public sealed class AvaQuantityTakeoffCommand : IExternalCommand
             return Result.Failed;
         }
     }
+
+    private static string ResultDiagnostics(TakeoffResult result, bool failed = false) =>
+        "Untersuchte Modellelemente: " + result.Examined + " (verschiedene ElementIDs)"
+        + "\nMit passender BGK-/Typzuordnung: " + result.MatchedElements + " (vor Bedingungsprüfung)"
+        + "\nElemente mit Mengenzeile: " + result.MeasuredElements + " (verschiedene ElementIDs)"
+        + (failed ? "\nErmittelte Mengenzeilen (nicht exportiert): " : "\nErmittelte Mengenzeilen: ") + result.Rows.Count
+        + "\nElemente ohne Mengenzeile: " + (result.Examined - result.MeasuredElements)
+        + "\nOhne vollständige BGK-/Typkennzeichnung: " + result.Unmarked
+        + "\nOhne passende BGK-/Typzuordnung: " + result.Unmapped
+        + "\nEin Element kann mehrere Mengenzeilen erzeugen (mehrere Regeln/LV-Positionen); Mengenzeilen sind keine Elementanzahl.";
+
+    private static string SkipDiagnostics(TakeoffResult result) =>
+        "Elemente ohne Mengenzeile – Diagnosedetails: " + result.Skipped.Count + " von " + result.SkippedTotal
+        + " (maximal 100):\n" + string.Join("\n", result.Skipped.Select(skip => skip.Message))
+        + (result.SkippedTotal > result.Skipped.Count
+            ? "\n" + (result.SkippedTotal - result.Skipped.Count) + " weitere Elemente ohne Mengenzeile nicht angezeigt." : "");
+
+    private static string TemplateDiagnostics(AvaTemplate template, AvaWorkspace workspace) =>
+        "Vorlage (benutzerweit zuletzt gewählt, nicht projektgebunden): " + template.Name + " (" + template.Version + ")\n"
+        + workspace.LastTemplatePath + "\nBGK-Quelle: " + template.BgkIdentification
+        + "\nTyp-Quelle: " + template.TypeIdentification + "\nKeine automatische Typ-/Instanz-Ausweichsuche.";
 
     // Mirror WpfOwner's Revit HWND ownership without showing a second window.
     // WPF CommonDialog accepts a Window, not an arbitrary external HWND.

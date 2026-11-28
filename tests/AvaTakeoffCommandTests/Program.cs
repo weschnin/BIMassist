@@ -1,4 +1,9 @@
 using System.Text.RegularExpressions;
+if (args.Contains("--execute-only", StringComparer.Ordinal))
+{
+    ExecuteTests.Run();
+    return;
+}
 string? root = AppContext.BaseDirectory;
 while (root != null && !File.Exists(Path.Combine(root, "App.cs"))) root = Directory.GetParent(root)?.FullName;
 if (root == null) throw new Exception("Repository not found");
@@ -7,7 +12,9 @@ var app = File.ReadAllText(Path.Combine(root, "App.cs"));
 var ava = app.IndexOf("new PulldownButtonData(\"AVA\"", StringComparison.Ordinal);
 var info = app.IndexOf("new PushButtonData(\"BIMassist Info\"", StringComparison.Ordinal);
 Check(ava >= 0 && info > ava && app[ava..info].Contains("BIMassist.Commands.AvaQuantityTakeoffCommand")
-    && app[ava..info].Contains("BIMassist.Commands.BgkTransferFromReferenceCommand")
+    && !app[ava..info].Contains("BIMassist.Commands.BgkTransferFromReferenceCommand")
+    && !app[ava..info].Contains("BIMassist.Commands.AvaLvViewerCommand")
+    && app[ava..info].Contains("BIMassist.Commands.BGKManagerCommandStartup")
     && !app.Contains("new PulldownButtonData(\"BGK\"", StringComparison.Ordinal), "AVA functions are not grouped under AVA or the obsolete BGK group remains");
 var source = File.ReadAllText(Path.Combine(root, "Commands", "AvaQuantityTakeoffCommand.cs"));
 var options = File.ReadAllText(Path.Combine(root, "Ava", "Revit", "AvaGroupingDialog.cs"));
@@ -37,10 +44,13 @@ Check(validation.Contains("LV-Einheit") && validation.Contains("nicht umrechenba
     "Quantity unit conversion and incompatible-unit blocking must remain validated before persistence/export");
 Check(source.Contains("result.Unmarked") && source.Contains("result.Unmapped"), "Scope omissions must be visible, not claimed a complete audit");
 var transfer = File.ReadAllText(Path.Combine(root, "Commands", "BgkTransferFromReferenceCommand.cs"));
-Check(transfer.Contains("Application.Documents") && transfer.Contains("ReferenceEquals(document, activeDocument)"), "Reference chooser must enumerate open projects and exclude the active project");
+Check(transfer.Contains("Application.Documents") && transfer.Contains("!document.Equals(activeDocument)"), "Reference chooser must enumerate open projects and exclude the active document identity, even through a separate wrapper");
 Check(transfer.Contains("BgkReferenceTransfer.CreatePlan") && transfer.Contains("BuiltInParameter.ASSEMBLY_CODE")
     && transfer.Contains("FamilyName(symbol)") && transfer.Contains("symbol.Name"), "Reference transfer does not use strict type identity and BGK field");
-Check(transfer.Contains("new Transaction(activeDocument") && transfer.Contains("parameter.Set(decision.Value!)")
-    && transfer.Contains("FileSaveDialog(\"Tabellarischer Text"), "Reference transfer write transaction or optional text report missing");
+var transferWriter = File.ReadAllText(Path.Combine(root, "Core", "BgkReferenceImportWriter.cs"));
+Check(transfer.Contains("writer.Write(activeDocument, targetSymbols, plan)")
+    && transferWriter.Contains("new Transaction(target") && transferWriter.Contains("parameter.Set(entry.Value)")
+    && transferWriter.Contains("BuiltInParameter.ASSEMBLY_CODE") && transferWriter.Contains("target!.GetElement(entry.Id)")
+    && transfer.Contains("FileSaveDialog(\"Tabellarischer Text"), "Shared reference transfer transaction, committed readback or optional text report missing");
 ExecuteTests.Run();
 Console.WriteLine("PASS AVA quantity command ribbon/context/read-only/export-blocking and X31 save-dialog wiring (static, no Revit-host claim)");

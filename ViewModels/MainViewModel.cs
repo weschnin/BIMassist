@@ -84,6 +84,7 @@ namespace BIMassist
         private readonly BgkSelectionSnapshot<Document, ElementId> _projectSelection = new();
         private ExternalEvent _textEvent;
         private Bgk3DTextExternalEventHandler _textHandler;
+        private BgkReferenceImportSession _referenceImport;
         private int _selectedTypCount;
         public int SelectedTypCount
         {
@@ -373,6 +374,7 @@ namespace BIMassist
 
         public ICommand SendValues { get; }
         public ICommand Generate3DText { get; }
+        public ICommand ImportBgkFromReference { get; }
 
         public ICommand LoadOwnDataFromConfiguredPathCommand { get; }
         public ICommand CloseSettingsWindow { get; }
@@ -406,6 +408,7 @@ namespace BIMassist
                 _projectSelection.Update(doc, uidoc.Selection.GetElementIds(), false);
             _textHandler = new Bgk3DTextExternalEventHandler { Report = message => ShowStatus(message, 30000) };
             _textEvent = ExternalEvent.Create(_textHandler);
+            _referenceImport = new BgkReferenceImportSession(uiapp, message => ShowStatus(message, 30000));
 
             Baugruppen = new ObservableCollection<Baugruppe>();
             // Observe collection changes so we can track edits in nodes/typen
@@ -456,10 +459,12 @@ namespace BIMassist
 
             SendValues = new RelayCommands<Typmarkierung>(SendValuesExecute);
             Generate3DText = new RelayCommands<IList>(Generate3DTextExecute);
+            ImportBgkFromReference = new RelayCommand(() => _referenceImport.Queue(doc));
         }
 
         public void DisposeEvents()
         {
+            _referenceImport.Close();
             if (_selectionApp != null)
             {
                 _selectionApp.SelectionChanged -= OnRevitSelectionChanged;

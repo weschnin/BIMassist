@@ -14,6 +14,10 @@
     <Compile Include="../../Ava/Core/UnitCatalog.cs" Link="Core/UnitCatalog.cs" />
     <Compile Include="../../Ava/Core/QuantityTakeoff.cs" Link="Core/QuantityTakeoff.cs" />
     <Compile Include="../../Ava/Core/AvaQuantityRun.cs" Link="Core/AvaQuantityRun.cs" />
+    <Compile Include="../../Ava/Core/AvaExportDestination.cs" Link="Core/AvaExportDestination.cs" />
+    <Compile Include="../../Ava/Core/AvaQuantityTable.cs" Link="Core/AvaQuantityTable.cs" />
+    <Compile Include="../../Ava/Core/AvaQuantityDisplay.cs" Link="Core/AvaQuantityDisplay.cs" />
+    <Compile Include="../../Ava/Core/AvaQuantityXlsxWriter.cs" Link="Core/AvaQuantityXlsxWriter.cs" />
     <Compile Include="../../Ava/Core/AvaQuantityRunExport.cs" Link="Core/AvaQuantityRunExport.cs" />
     <Compile Include="../../Ava/Core/X31Writer*.cs" LinkBase="Core" />
     <Compile Include="../../Ava/Core/X82QuantityWriter.cs" Link="Core/X82QuantityWriter.cs" />

@@ -431,6 +431,29 @@ AbsenceTest("host scope excludes model-category Revit and linked CAD containers 
     Check(RevitQuantityReader.Elements(host, template).Select(e => e.Id).SequenceEqual(new[] { "503", "504" }),
         "Linked container counted as a host model element or imported copy wrongly excluded");
 });
+AbsenceTest("physical scope excludes model resources and view-specific details without filtering unmarked system families or DirectShape", () =>
+{
+    var host = new Document();
+    Category Resource(string name) => new() { Name = name, CanAddSubcategory = false, HasMaterialQuantities = false };
+    host.Elements.AddRange([
+        new Element { Id = new(1), Category = Resource("Kameras") },
+        new Element { Id = new(2), Category = Resource("Materialien") },
+        new Element { Id = new(3), Category = Resource("Projektinformationen") },
+        new Element { Id = new(4), ViewSpecific = true },
+        new Element { Id = new(5), Category = new() { Name = "Wände", CanAddSubcategory = false, HasMaterialQuantities = true } },
+        new DirectShape { Id = new(6), Category = Resource("Generic Models") },
+        new ImportInstance { Id = new(7), IsLinked = false, Category = Resource("import.dwg") },
+        new FamilyInstance { Id = new(8), Category = Resource("Skelettbau") },
+        new Autodesk.Revit.DB.Mechanical.Zone { Id = new(570537), Name = "Standard" },
+        new ModelLine { Id = new(6247427), Name = "Modelllinien" },
+        new DetailLine { Id = new(9) },
+        new MEPCurve { Id = new(10) },
+        new Autodesk.Revit.DB.Mechanical.Space { Id = new(11) },
+        new Autodesk.Revit.DB.Architecture.Room { Id = new(12) }
+    ]);
+    Check(RevitQuantityReader.Elements(host, template).Select(e => e.Id).SequenceEqual(new[] { "5", "6", "7", "8", "10", "11", "12" }),
+        "Nonphysical model-category resources leaked into takeoff or genuine unmarked instances were hidden");
+});
 AbsenceTest("missing shared DN reports a same-name different GUID but never uses it", () =>
 {
     var host = new Document();

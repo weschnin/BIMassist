@@ -31,7 +31,9 @@ public static class RevitQuantityReader
             {
                 ElementUniqueId = element.UniqueId,
                 FamilyName = familyName ?? "",
-                TypeName = typeName ?? ""
+                TypeName = typeName ?? "",
+                ElementClass = element.GetType().Name,
+                CategoryName = element.Category?.Name ?? ""
             };
         }
     }
@@ -214,8 +216,7 @@ public static class RevitQuantityReader
             ? new FilteredElementCollector(document)
             : new FilteredElementCollector(document, viewId);
         var elements = collector.WhereElementIsNotElementType()
-            .Where(element => element is not (RevitLinkInstance or ImportInstance { IsLinked: true })
-                && element.Category?.CategoryType == CategoryType.Model).ToArray();
+            .Where(AvaPhysicalModelCandidates.IsCandidate).ToArray();
         if (activeView != null)
         {
             elements = elements.Where(element => !element.IsHidden(activeView)
@@ -354,7 +355,9 @@ public static class RevitQuantityReader
         }
         if (parameter == null)
         {
-            if (allowMissingText && source.Spec == "TEXT" && unit.Length == 0) return new(Text: "");
+            if (allowMissingText && source.Spec == "TEXT" && unit.Length == 0)
+                return new(Text: "") { TextState = owner == null ? "kein Revit-Typ vorhanden; Parameter nicht vorhanden"
+                    : "Parameter im gewählten Geltungsbereich nicht vorhanden" };
             throw MissingSource(document, instance, source, unit, false);
         }
         if (!MatchesSpec(parameter, source.Spec, spec))
@@ -376,7 +379,8 @@ public static class RevitQuantityReader
         }
         if (!parameter.HasValue)
         {
-            if (allowMissingText && source.Spec == "TEXT") return new(Text: "");
+            if (allowMissingText && source.Spec == "TEXT")
+                return new(Text: "") { TextState = "Parameter vorhanden, aber ohne Wert (HasValue=false)" };
             throw MissingSource(document, instance, source, unit, true);
         }
         return ReadParameterValue(document, parameter, source, unit);

@@ -6,12 +6,18 @@ using System.Linq;
 
 namespace BIMassist.Ava.Core;
 
-public sealed record TakeoffValue(decimal? Number = null, string? Text = null, bool? Boolean = null);
+public sealed record TakeoffValue(decimal? Number = null, string? Text = null, bool? Boolean = null)
+{
+    // Read-time evidence for optional identification text; never a replacement source/value.
+    public string TextState { get; init; } = "";
+}
 public sealed record TakeoffElement(string Id, Func<ParameterSource, string, TakeoffValue> Read, string SourceIdentity = "")
 {
     public string ElementUniqueId { get; init; } = "";
     public string FamilyName { get; init; } = "";
     public string TypeName { get; init; } = "";
+    public string ElementClass { get; init; } = "";
+    public string CategoryName { get; init; } = "";
 }
 public sealed record TakeoffIssue(string ElementId, string Message);
 public sealed record TakeoffSkip(string ElementId, string Message);
@@ -22,7 +28,12 @@ public sealed record TakeoffLine(string LvItemId, decimal Value, string Unit, st
 /// <summary>Rows are ordered by input element, mapping, then position; Errors must block the entire export.
 /// Unmapped counts marked elements without an exact BGK/type rule, not elements whose conditions are false.</summary>
 public sealed record TakeoffResult(IReadOnlyList<TakeoffLine> Rows, IReadOnlyList<TakeoffIssue> Errors,
-    int Examined, int Unmarked, int Unmapped, IReadOnlyList<TakeoffSkip> Skipped);
+    int Examined, int Unmarked, int Unmapped, IReadOnlyList<TakeoffSkip> Skipped)
+{
+    public int MatchedElements { get; init; }
+    public int SkippedTotal { get; init; }
+    public int MeasuredElements => Rows.Select(row => row.ElementId).Distinct(StringComparer.Ordinal).Count();
+}
 
 /// <summary>Read-only, decimal takeoff. Any Errors must block export of the entire result.</summary>
 public static class QuantityTakeoff
@@ -36,8 +47,10 @@ public static class QuantityTakeoff
         var rows = new List<TakeoffLine>();
         var errors = new List<TakeoffIssue>();
         var skipped = new List<TakeoffSkip>();
+        int skippedTotal = 0, matchedElements = 0;
         void Skip(TakeoffElement element, string reason)
         {
+            skippedTotal++;
             if (skipped.Count < MaxSkipDetails)
             {
                 var message = $"Element {element.Id}: {reason}";
@@ -72,10 +85,13 @@ public static class QuantityTakeoff
                 return value;
             }
             string? bgk, type;
+            TakeoffValue bgkValue, typeValue;
             try
             {
-                bgk = Identification(Read(template.BgkIdentification, ""), template.BgkIdentification);
-                type = Identification(Read(template.TypeIdentification, ""), template.TypeIdentification);
+                bgkValue = Read(template.BgkIdentification, "");
+                bgk = Identification(bgkValue, template.BgkIdentification);
+                typeValue = Read(template.TypeIdentification, "");
+                type = Identification(typeValue, template.TypeIdentification);
             }
             catch (Exception ex) when (ex is InvalidDataException or OverflowException)
             {
@@ -84,7 +100,10 @@ public static class QuantityTakeoff
             }
             if (string.IsNullOrWhiteSpace(bgk) || string.IsNullOrWhiteSpace(type))
             {
-                unmarked++; Skip(element, $"BGK '{bgk}' / Typ '{type}' unvollständig (Quelle: {element.SourceIdentity})."); continue;
+                unmarked++; Skip(element, $"BGK '{bgk}' / Typ '{type}' unvollständig. "
+                    + $"BGK: {IdentificationState(bgkValue)}; Typ: {IdentificationState(typeValue)}; "
+                    + $"Klasse: {element.ElementClass}; Kategorie: {element.CategoryName}; "
+                    + $"Familie: {element.FamilyName}; Revit-Typ: {element.TypeName}; Quelle: {element.SourceIdentity}."); continue;
             }
             var rules = template.Mappings.Where(r => string.Equals(r.BgkKey, bgk, StringComparison.Ordinal)
                 && string.Equals(r.TypeNumber, type, StringComparison.Ordinal)).ToList();
@@ -101,6 +120,7 @@ public static class QuantityTakeoff
                         && string.Equals(r.TypeNumber, type, StringComparison.Ordinal)).ToList();
             }
             if (rules.Count == 0) { unmapped++; Skip(element, $"BGK '{bgk}' / Typ '{type}': keine exakte Zuordnung."); continue; }
+            matchedElements++;
             var conditionReasons = new List<string>();
             int rowsBefore = rows.Count, errorsBefore = errors.Count;
             foreach (var rule in rules)
@@ -157,7 +177,8 @@ public static class QuantityTakeoff
                 Skip(element, $"BGK '{bgk}' / Typ '{type}' zugeordnet, aber keine Bedingung erfüllt. "
                     + string.Join(" | ", conditionReasons.Take(3)));
         }
-        return new(rows.AsReadOnly(), errors.AsReadOnly(), examined, unmarked, unmapped, skipped.AsReadOnly());
+        return new(rows.AsReadOnly(), errors.AsReadOnly(), examined, unmarked, unmapped, skipped.AsReadOnly())
+            { MatchedElements = matchedElements, SkippedTotal = skippedTotal };
     }
 
     internal static bool MatchesConditionExpression(IReadOnlyList<RuleCondition> conditions, IReadOnlyList<bool> matches)
@@ -247,6 +268,10 @@ public static class QuantityTakeoff
 
     private readonly record struct ReadKey(ParameterKind Kind, ParameterScope Scope, Guid SharedGuid,
         string Name, string Spec, string BuiltInId, string Unit);
+
+    private static string IdentificationState(TakeoffValue value) => value.TextState.Length > 0 ? value.TextState
+        : value.Text == null ? "Wert nicht geliefert (Parameterzustand unbekannt)"
+        : string.IsNullOrWhiteSpace(value.Text) ? "vorhanden, aber leer" : "Wert vorhanden";
 
     private static string? Identification(TakeoffValue value, ParameterSource source)
     {

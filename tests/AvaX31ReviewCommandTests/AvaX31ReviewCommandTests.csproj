@@ -17,7 +17,9 @@
     <Compile Include="../../Ava/Core/X31ElementSelectionPlanner.cs" Link="X31ElementSelectionPlanner.cs" />
     <Compile Include="../../Ava/Views/X31ReviewWindow.cs" Link="X31ReviewWindow.cs" />
     <Compile Include="../../Ava/Revit/X31ReviewViewCandidates.cs" Link="X31ReviewViewCandidates.cs" />
+    <Compile Include="../../Ava/Revit/AvaPhysicalModelCandidates.cs" Link="AvaPhysicalModelCandidates.cs" />
     <Compile Include="../../Ava/Revit/X31ReviewTransactionRecovery.cs" Link="X31ReviewTransactionRecovery.cs" />
     <Compile Include="../AvaRevitReaderTests/RevitDoubles.cs" Link="RevitDoubles.cs" />
+    <Compile Include="../AvaRevitReaderTests/SpatialDoubles.cs" Link="SpatialDoubles.cs" />
   </ItemGroup>
 </Project>

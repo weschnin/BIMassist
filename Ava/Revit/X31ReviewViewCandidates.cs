@@ -28,11 +28,10 @@ public static class X31ReviewViewCandidates
         var temporaryMode = view.IsInTemporaryViewMode(TemporaryViewMode.TemporaryHideIsolate);
         using var collector = new FilteredElementCollector(document, view.Id);
         return collector.WhereElementIsNotElementType()
-            .Where(element => element.Category?.CategoryType == CategoryType.Model
-                && element is not (RevitLinkInstance or ImportInstance { IsLinked: true })
+            .Where(element => AvaPhysicalModelCandidates.IsCandidate(element)
                 && !included.Contains(element.Id.Value)
                 && !element.IsHidden(view)
-                && !view.GetCategoryHidden(element.Category.Id)
+                && !view.GetCategoryHidden(element.Category!.Id)
                 && (!temporaryMode || view.IsElementVisibleInTemporaryViewMode(TemporaryViewMode.TemporaryHideIsolate, element.Id))
                 && inCrop(element))
             .Select(element => element.Id).Distinct().ToArray();

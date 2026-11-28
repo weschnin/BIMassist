@@ -307,7 +307,7 @@
 
         </DataGrid>
 
-        <StackPanel Orientation="Horizontal" Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="8" VerticalAlignment="Center" Height="23" Margin="5,0,5,3" HorizontalAlignment="Left">
+        <WrapPanel Grid.Column="2" Grid.ColumnSpan="2" Grid.Row="8" VerticalAlignment="Center" Margin="5,0,5,3" HorizontalAlignment="Left">
             <Button Style="{StaticResource ItemButtonStyle}" Command="{Binding AddTypenmarkierung}" ToolTip="neues Element hinzufügen" Margin="5,0,0,0" IsEnabled="{Binding SelectedNode.IsEffectivelyProtected, Converter={StaticResource BooleanNegationConverter}, FallbackValue=True}"
                     CommandParameter="{Binding SelectedNode, UpdateSourceTrigger=PropertyChanged}">
                 <Image Source="/BIMassist;component/Resources/add_32px.png"/>
@@ -337,7 +337,16 @@
                     ToolTip="Markierte BGK-Typen als 3D-Geometrie in einer Familie erzeugen oder ergänzen; der erste ausgewählte Typ wird platziert"
                     Margin="8,0,0,0" Padding="8,2" Height="23"/>
             <TextBlock Width="10" />
-        </StackPanel>
+            <Button Content="BGK aus Referenzprojekt übernehmen" Command="{Binding ImportBgkFromReference}"
+                    ToolTip="BGK aus einem geöffneten Referenzprojekt übernehmen: exakter, eindeutiger Familien-/Typname; nur ASSEMBLY_CODE"
+                    Margin="8,3,0,0" Padding="8,2" MinHeight="26">
+                <Button.ContentTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap"/>
+                    </DataTemplate>
+                </Button.ContentTemplate>
+            </Button>
+        </WrapPanel>
 
         <Border Grid.Column="0" Grid.ColumnSpan="5" Grid.Row="9" Margin="0,2,0,0" Background="#FFF3F3F3" BorderBrush="#FFDDDDDD" BorderThickness="1" Padding="6">
             <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" />

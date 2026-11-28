@@ -86,6 +86,9 @@ internal static class Program
         var link = new RevitLinkInstance { Id = new(10) }; link.VisibleInViews.Add(500); document.Elements.Add(link);
         var linkedImport = new ImportInstance { Id = new(11), IsLinked = true }; linkedImport.VisibleInViews.Add(500); document.Elements.Add(linkedImport);
         Add(12); // temporarily hidden
+        foreach (var id in new[] { 13032132L, 17810710L })
+            Add(id).Category!.CanAddSubcategory = false; // camera resources share CategoryType.Model
+        Add(13).ViewSpecific = true; // view-owned detail, not a physical host instance
         var first = new X31ReviewRow(1, "01", "a", X31ReviewRowKind.Quantity, "", "1=", "1", null, null, ["1"], false);
         var second = new X31ReviewRow(2, "02", "b", X31ReviewRowKind.Quantity, "", "1=", "2", null, null, ["2"], false);
         var review = new X31ReviewDocument("sample.x31", [first, second], []);
@@ -93,6 +96,22 @@ internal static class Program
         var candidates = X31ReviewViewCandidates.Find(document, view, included);
         Check(candidates.Select(id => id.Value).OrderBy(id => id).SequenceEqual([3L, 4L, 12L]),
             "Expected only missing visible model instances (including system families), excluding ALL review rows and hidden/non-model items.");
+        var physicalDocument = new Document();
+        var physicalView = new View { Id = new(900), Category = null };
+        physicalDocument.Elements.Add(physicalView);
+        foreach (var id in new[] { 19100416L, 19101312L, 19101376L })
+            physicalDocument.Elements.Add(new FamilyInstance { Id = new(id), VisibleInViews = { 900 } });
+        foreach (var id in new[] { 13032132L, 17810710L })
+            physicalDocument.Elements.Add(new Element { Id = new(id), VisibleInViews = { 900 },
+                Category = new() { Name = "Kameras", CanAddSubcategory = false } });
+        physicalDocument.Elements.Add(new Autodesk.Revit.DB.Mechanical.Zone { Id = new(570537), VisibleInViews = { 900 } });
+        physicalDocument.Elements.Add(new ModelLine { Id = new(6247427), VisibleInViews = { 900 } });
+        Check(X31ReviewViewCandidates.Find(physicalDocument, physicalView, [19100416L, 19101312L])
+                .Select(id => id.Value).SequenceEqual([19101376L]),
+            "Three physical beams plus cameras, HVAC zone and model line must select only the genuinely unmeasured beam.");
+        Check(X31ReviewViewCandidates.Find(physicalDocument, physicalView, []).Select(id => id.Value)
+                .SequenceEqual([19100416L, 19101312L, 19101376L]),
+            "With no included rows the missing scope must retain all three unmarked physical beams, never the resources.");
         // Crop-space bounding boxes, including a rotated view frame, use the
         // transformed corner extrema; disjoint and touching cases stay distinct.
         Check(!X31ReviewViewCandidates.OverlapsRectangle(0, 0, 10, 10, 11, 2, 12, 3),

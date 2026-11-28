@@ -25,7 +25,7 @@ internal static class Program
             ("Void family RFT picker", () => FamilyTemplates("Services/VoidGeometryFamilyBuilder.cs", 1)),
             ("Core geometry RFT pickers", () => FamilyTemplates("Core/FamilyGeometryTools.cs", 2)),
             ("AVA takeoff opens only JSON templates plus All Files", TakeoffOpen),
-            ("AVA takeoff saves X31 plus All Files", TakeoffSave),
+            ("AVA unified exports offer their exact type plus All Files without creating placeholders", TakeoffSave),
             ("AVA LV viewer opens GAEB X82 plus All Files", LvViewerOpen),
         };
         int failed = 0;
@@ -40,7 +40,7 @@ internal static class Program
 
     private static void TakeoffOpen()
     {
-        var dialog = Dialogs("Commands/AvaQuantityTakeoffCommand.cs", "Execute")
+        var dialog = Dialogs("Commands/AvaQuantityTakeoffCommand.cs")
             .Single(d => d.TypeName == "Microsoft.Win32.OpenFileDialog");
         ExpectFilter(dialog, ".json");
         Expect(dialog, "FilterIndex", 1);
@@ -50,15 +50,39 @@ internal static class Program
 
     private static void TakeoffSave()
     {
-        var dialog = Dialogs("Commands/AvaQuantityTakeoffCommand.cs", "Execute")
-            .Single(d => d.TypeName == "Autodesk.Revit.UI.FileSaveDialog"
-                && d.Creation.ArgumentList!.Arguments.Single().Expression.ToString().Contains("*.x31", StringComparison.Ordinal));
-        string filter = (string)((LiteralExpressionSyntax)dialog.Creation.ArgumentList!.Arguments.Single().Expression).Token.Value!;
-        string[] parts = filter.Split('|');
-        Check(parts.Length == 4 && parts[1] == "*.x31" && parts[3] == "*.*"
-            && parts[0].Contains("*.x31", StringComparison.Ordinal), "Native Revit picker must offer X31 and All Files");
-        Expect(dialog, "DefaultFilterEntry", "*.x31");
-        Expect(dialog, "InitialFileName", "Mengenermittlung.x31");
+        // Resolve the unified window's actual factory using its literal call arguments.
+        // Compile those settings against the real WPF API, without executing Revit.
+        var root = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(Root, "Commands/AvaX31ReviewCommand.cs"))).GetRoot();
+        var factory = root.DescendantNodes().OfType<MethodDeclarationSyntax>()
+            .Single(method => method.Identifier.ValueText == "CreateExportPicker");
+        var creation = (ImplicitObjectCreationExpressionSyntax)factory.ExpressionBody!.Expression;
+        var calls = root.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Where(call => call.Expression.ToString() == "CreateExportPicker").ToArray();
+        Check(calls.Length == 3, "X31, X82 and configured Excel must each use the checked shared picker");
+        var extensions = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var call in calls)
+        {
+            var arguments = factory.ParameterList.Parameters.Select((parameter, index) =>
+                (Name: parameter.Identifier.ValueText, Value: call.ArgumentList.Arguments[index].Expression))
+                .ToDictionary(argument => argument.Name, argument => argument.Value);
+            var initializer = creation.Initializer!;
+            initializer = initializer.ReplaceNodes(initializer.DescendantNodes().OfType<IdentifierNameSyntax>()
+                .Where(identifier => arguments.ContainsKey(identifier.Identifier.ValueText)),
+                (identifier, _) => arguments[identifier.Identifier.ValueText]);
+            var resolved = SyntaxFactory.ObjectCreationExpression(SyntaxFactory.ParseTypeName(factory.ReturnType.ToString()))
+                .WithArgumentList(creation.ArgumentList).WithInitializer(initializer);
+            var dialog = new Dialog("Unified export", factory.ReturnType.ToString(), resolved);
+            var extension = (string)Value(dialog, "DefaultExt");
+            extensions.Add(extension);
+            ExpectFilter(dialog, extension);
+            Expect(dialog, "FileName", "Mengenermittlung" + extension);
+            Expect(dialog, "FilterIndex", 1);
+            Expect(dialog, "AddExtension", true);
+            Expect(dialog, "CheckPathExists", true);
+            Expect(dialog, "CreateTestFile", false);
+            Expect(dialog, "OverwritePrompt", false);
+        }
+        Check(extensions.SetEquals([".x31", ".x82", ".xlsx"]), "Unexpected unified export file types");
     }
 
     private static void LvViewerOpen()

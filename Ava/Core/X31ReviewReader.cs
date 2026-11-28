@@ -26,6 +26,8 @@ public sealed record X31ReviewRow(
     public string FormulaNumber { get; init; } = "";
     public string Result { get; init; } = "";
     public string LogicalApproach { get; init; } = "";
+    public string RawRow { get; init; } = "";
+    public string Explanation { get; init; } = "";
 }
 
 /// <summary>Read-only catalog complement keyed by exact GAEB item identity, never by similar text.</summary>
@@ -67,6 +69,15 @@ public static class X31ReviewReader
 
     public static X31ReviewDocument ReadFile(string path, IReadOnlyDictionary<string, X31ReviewPosition>? positions = null,
         Func<string, decimal>? evaluateReb91 = null)
+        => ReadFileCore(path, positions, evaluateReb91, false);
+
+    /// <summary>File-only presentation: no Revit provenance interpretation or model preflight.</summary>
+    public static X31ReviewDocument ReadFileForViewer(string path, IReadOnlyDictionary<string, X31ReviewPosition>? positions = null,
+        Func<string, decimal>? evaluateReb91 = null)
+        => ReadFileCore(path, positions, evaluateReb91, true);
+
+    private static X31ReviewDocument ReadFileCore(string path, IReadOnlyDictionary<string, X31ReviewPosition>? positions,
+        Func<string, decimal>? evaluateReb91, bool fileOnly)
     {
         if (string.IsNullOrWhiteSpace(path)) throw new InvalidDataException("Es wurde keine X31-Datei ausgewählt.");
         var fullPath = Path.GetFullPath(path);
@@ -74,11 +85,19 @@ public static class X31ReviewReader
         if (!info.Exists) throw new FileNotFoundException("Die ausgewählte X31-Datei wurde nicht gefunden.", fullPath);
         if (info.Length > MaxBytes) throw new InvalidDataException("Die X31-Datei überschreitet die zulässige Größe von 32 MiB.");
         using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-        return Read(stream, fullPath, positions, evaluateReb91);
+        return ReadCore(stream, fullPath, positions, evaluateReb91, fileOnly);
     }
 
     public static X31ReviewDocument Read(Stream input, string sourceName = "X31",
         IReadOnlyDictionary<string, X31ReviewPosition>? positions = null, Func<string, decimal>? evaluateReb91 = null)
+        => ReadCore(input, sourceName, positions, evaluateReb91, false);
+
+    public static X31ReviewDocument ReadForFileViewer(Stream input, string sourceName = "X31",
+        IReadOnlyDictionary<string, X31ReviewPosition>? positions = null, Func<string, decimal>? evaluateReb91 = null)
+        => ReadCore(input, sourceName, positions, evaluateReb91, true);
+
+    private static X31ReviewDocument ReadCore(Stream input, string sourceName,
+        IReadOnlyDictionary<string, X31ReviewPosition>? positions, Func<string, decimal>? evaluateReb91, bool fileOnly)
     {
         ArgumentNullException.ThrowIfNull(input);
         if (input.CanSeek && input.Length > MaxBytes)
@@ -110,6 +129,8 @@ public static class X31ReviewReader
         var info = root.Element(Ns + "GAEBInfo");
         if ((string?)info?.Element(Ns + "Version") != "3.3" || (string?)info.Element(Ns + "VersDate") != "2023-01")
             throw new InvalidDataException("Unterstützt werden GAEB DA31/3.3-Dokumente (Version 3.3, VersDate 2023-01).");
+
+        if (fileOnly) return ReadFileRows(document, sourceName, positions, evaluateReb91);
 
         var rawRows = new List<MutableRow>();
         var groupMembership = new Dictionary<GroupKey, MutableGroup>();
@@ -276,6 +297,83 @@ public static class X31ReviewReader
             return result;
         }).ToArray();
         return new X31ReviewDocument(sourceName, rows, warnings.Distinct(StringComparer.Ordinal).ToArray());
+    }
+
+    private static X31ReviewDocument ReadFileRows(XDocument document, string sourceName,
+        IReadOnlyDictionary<string, X31ReviewPosition>? positions, Func<string, decimal>? evaluateReb91)
+    {
+        var rows = new List<X31ReviewRow>();
+        var warnings = new List<string>();
+        var itemIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in document.Descendants(Ns + "BoQ").Descendants(Ns + "Item"))
+        {
+            var itemId = (string?)item.Attribute("ID") ?? "";
+            if (itemId.Length == 0 || !itemIds.Add(itemId))
+                throw new InvalidDataException("Fehlende oder doppelte LV-Positionsidentität in X31: " + itemId);
+            var ordinal = GetPosition(item);
+            var outline = item.Element(Ns + "Description")?.Descendants(Ns + "OutlineText").FirstOrDefault();
+            var shortText = outline == null ? "" : string.Join(" ", string.Concat(outline.DescendantNodes().OfType<XText>()
+                .Select(text => text.Value)).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+            var unit = ((string?)item.Element(Ns + "QU"))?.Trim() ?? "";
+            if (positions != null && positions.TryGetValue(itemId, out var position))
+            {
+                var boqId = (string?)item.Ancestors(Ns + "BoQ").FirstOrDefault()?.Attribute("ID") ?? "";
+                if (boqId.Length > 0 && position.BoqId == boqId)
+                {
+                    if (shortText.Length == 0) shortText = position.ShortText;
+                    if (unit.Length == 0) unit = position.Unit;
+                }
+                else warnings.Add($"LV-Position {ordinal}: Katalogidentität stimmt nicht mit dem LV überein; keine Ergänzung.");
+            }
+            if (shortText.Length == 0 || unit.Length == 0)
+                warnings.Add($"LV-Position {ordinal}: Kurztext und/oder Einheit fehlen; leere Felder sind nicht verfügbar.");
+            int? approachStart = null;
+            void FinishApproach(bool complete)
+            {
+                if (approachStart is not { } start) return;
+                var logical = string.Concat(rows.Skip(start).Select(row => row.Formula));
+                try
+                {
+                    if (!complete) throw new InvalidDataException("Unvollständiger REB91-Ansatz (Abschlusszeichen fehlt).");
+                    if (rows.Skip(start).Any(row => row.RawRow[12] != ' ' || row.RawRow.Substring(22, 7).Trim().Length > 0))
+                        throw new InvalidDataException("REB-Faktor oder Kennzeichen wird vom verfügbaren Auswerter nicht unterstützt; Rohzeile bleibt sichtbar.");
+                    decimal value;
+                    if (evaluateReb91 != null) value = evaluateReb91(logical);
+                    else if (!decimal.TryParse(logical.TrimEnd('=').Trim().Replace(',', '.'),
+                        NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out value))
+                        throw new InvalidDataException("Für diesen REB91-Ansatz ist kein Auswerter verfügbar.");
+                    rows[start] = rows[start] with { LogicalApproach = logical,
+                        Result = decimal.Round(value, 3, MidpointRounding.AwayFromZero).ToString("0.###", CultureInfo.GetCultureInfo("de-DE")) };
+                }
+                catch (Exception ex) when (ex is InvalidDataException or FormatException or ArithmeticException or ArgumentException)
+                {
+                    warnings.Add($"Zeile {start + 1}: Ergebnis nicht verfügbar. {ex.Message}");
+                }
+                approachStart = null;
+            }
+            foreach (var takeoff in item.Element(Ns + "QtyDeterm")?.Elements(Ns + "QDetermItem") ?? [])
+            {
+                if (rows.Count >= MaxRows) throw new InvalidDataException("Die X31-Datei enthält mehr als 200.000 Zeilen.");
+                var raw = (string?)takeoff.Element(Ns + "QTakeoff")?.Attribute("Row");
+                if (raw == null || raw.Length < 69) throw new InvalidDataException($"Zeile {rows.Count + 1}: unvollständige REB-Zeile.");
+                var comment = raw[12] == '*';
+                var approach = comment ? "" : raw.Substring(31, 38).TrimEnd();
+                var method = comment ? "" : raw.Substring(29, 2).Trim();
+                if (comment || method != "91") FinishApproach(false);
+                var continuation = approachStart != null;
+                if (!comment && method == "91") approachStart ??= rows.Count;
+                rows.Add(new X31ReviewRow(rows.Count + 1, ordinal, itemId,
+                    comment ? X31ReviewRowKind.Comment : continuation ? X31ReviewRowKind.Continuation : X31ReviewRowKind.Quantity,
+                    raw.Substring(13, comment ? 56 : 9).TrimEnd(), approach, null, null, null, [], false)
+                    { FormulaNumber = method, LogicalApproach = approach, ShortText = shortText, Unit = unit,
+                        RawRow = raw, Explanation = (string?)takeoff.Element(XName.Get("Explanation", "BVBS")) ?? "" });
+                if (!comment && method != "91") warnings.Add($"Zeile {rows.Count}: REB-Formelnummer {method} nicht unterstützt; Ergebnis bleibt leer.");
+                if (method == "91" && approach.EndsWith('=')) FinishApproach(true);
+            }
+            FinishApproach(false);
+        }
+        if (itemIds.Count == 0) throw new InvalidDataException("Die X31-Datei enthält keine LV-Positionen.");
+        return new X31ReviewDocument(sourceName, rows, warnings);
     }
 
     private static MutableGroup GetGroup(Dictionary<GroupKey, MutableGroup> groups, string kind, string label)
